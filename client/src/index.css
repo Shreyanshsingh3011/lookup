@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-space-950: #05070d;
+  --color-space-900: #0a0e18;
+  --color-space-850: #0e1320;
+  --color-space-800: #131a2b;
+  --color-space-700: #1c2438;
+  --color-space-600: #2a3450;
+  --color-space-500: #3d4a6b;
+  --color-space-300: #8b95b3;
+  --color-space-200: #b8c0d9;
+  --color-space-100: #e2e6f2;
+
+  --color-glow-400: #5eead4;
+  --color-glow-500: #2dd4bf;
+  --color-glow-600: #14b8a6;
+
+  --color-amber-glow: #fbbf24;
+
+  --font-display: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Consolas, monospace;
+
+  --shadow-glow: 0 0 24px -4px rgba(45, 212, 191, 0.35);
+  --shadow-glow-sm: 0 0 12px -2px rgba(45, 212, 191, 0.3);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -10%, rgba(45, 212, 191, 0.08), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 90% 10%, rgba(123, 97, 255, 0.06), transparent 50%),
+    var(--color-space-950);
+  color: var(--color-space-100);
+  font-family: var(--font-display);
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-space-600);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-space-500);
+}
+
+.glass-panel {
+  background: linear-gradient(180deg, rgba(19, 26, 43, 0.72), rgba(10, 14, 24, 0.72));
+  border: 1px solid rgba(139, 149, 179, 0.14);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.text-glow {
+  text-shadow: 0 0 16px rgba(45, 212, 191, 0.5);
+}

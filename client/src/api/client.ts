@@ -1,0 +1,22 @@
+import type { Observer, PassesResponse } from '../types';
+
+async function apiFetch<T>(path: string): Promise<T> {
+  const res = await fetch(path);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export function fetchPasses(observer: Observer, opts: { groups?: string[]; days?: number; minElevationDeg?: number } = {}): Promise<PassesResponse> {
+  const params = new URLSearchParams({
+    lat: String(observer.latitude),
+    lon: String(observer.longitude),
+    alt: String(observer.elevation),
+    groups: (opts.groups ?? ['stations']).join(','),
+    days: String(opts.days ?? 10),
+    minEl: String(opts.minElevationDeg ?? 10),
+  });
+  return apiFetch<PassesResponse>(`/api/passes?${params.toString()}`);
+}
