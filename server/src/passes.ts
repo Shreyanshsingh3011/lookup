@@ -234,19 +234,44 @@ export function computeVisiblePasses(
         if (!current) current = [];
         current.push(sample);
       } else if (current) {
-        finalizePass(current, tle, opts, passes);
+        // This sample is why the pass ended, so it carries the reason.
+        finalizePass(current, tle, opts, passes, sample);
         current = null;
       }
     }
     if (current) {
-      finalizePass(current, tle, opts, passes);
+      finalizePass(current, tle, opts, passes, null);
     }
   }
 
   return passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
 }
 
-function finalizePass(samples: Sample[], tle: TleRecord, opts: PassOptions, out: Pass[]): void {
+/**
+ * Why a pass stopped being visible, derived from the first sample that failed
+ * the visibility test.
+ *
+ * It has to come from the terminating sample, not the last visible one: every
+ * sample inside a pass is illuminated and above the horizon by construction, so
+ * inspecting the last visible sample can only ever report "set". Distinguishing
+ * these matters — a satellite fading out at 40 degrees elevation because it
+ * entered Earth's shadow looks like it vanished, and is worth flagging.
+ */
+function endReasonFor(terminator: Sample | null): Pass["endReason"] {
+  if (!terminator) return "set"; // ran past the end of the search window
+  if (terminator.elevationDeg <= 0) return "set";
+  if (!terminator.illuminated) return "shadow";
+  if (!terminator.observerDark) return "daylight";
+  return "set";
+}
+
+function finalizePass(
+  samples: Sample[],
+  tle: TleRecord,
+  opts: PassOptions,
+  out: Pass[],
+  terminator: Sample | null
+): void {
   let maxSample = samples[0];
   for (const s of samples) {
     if (s.elevationDeg > maxSample.elevationDeg) maxSample = s;
@@ -265,6 +290,6 @@ function finalizePass(samples: Sample[], tle: TleRecord, opts: PassOptions, out:
     end: toPassEvent(end),
     magnitude: Math.round(brightest * 10) / 10,
     durationSeconds: Math.round((end.date.getTime() - start.date.getTime()) / 1000),
-    endReason: !end.illuminated ? "shadow" : "set",
+    endReason: endReasonFor(terminator),
   });
 }

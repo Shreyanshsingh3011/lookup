@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchPasses, fetchTles } from './api/client';
 import { LocationPicker } from './components/LocationPicker';
+import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
 import { SourceBanner } from './components/SourceBanner';
 import { TimeScrubber } from './components/TimeScrubber';
@@ -20,6 +21,15 @@ function App() {
   const [tles, setTles] = useState<TleRecord[]>([]);
   const [tlesLoading, setTlesLoading] = useState(true);
   const [dataSource, setDataSource] = useState<TleSource | null>(null);
+  const [selectedPass, setSelectedPass] = useState<Pass | null>(null);
+
+  const skySectionRef = useRef<HTMLElement>(null);
+
+  const showPassInSky = (pass: Pass) => {
+    // Start a couple of minutes before the pass so the approach is visible.
+    time.goToTime(new Date(pass.start.time));
+    skySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   // Orbital elements drive the 3D dome; the client propagates them locally so
   // positions can update every frame without hitting the server.
@@ -52,6 +62,8 @@ function App() {
         if (cancelled) return;
         setPasses(res.passes);
         setDataSource(res.source);
+        // The previous selection belongs to the old location's predictions.
+        setSelectedPass(null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -68,7 +80,7 @@ function App() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-space-800/80 sticky top-0 z-20 backdrop-blur-lg bg-space-950/70">
+      <header className="border-b border-space-800/80 sticky top-0 z-20 backdrop-blur-lg bg-space-950/70 print:hidden">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-glow">Lookup</h1>
@@ -88,7 +100,7 @@ function App() {
       <main className="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-6">
         <SourceBanner source={dataSource} />
 
-        <section className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2 print:hidden" ref={skySectionRef}>
           <div className="flex items-baseline justify-between">
             <h2 className="text-lg font-medium text-space-100">What's up right now</h2>
             <p className="text-xs text-space-300 hidden sm:block">Interactive sky dome · your horizon</p>
@@ -103,12 +115,31 @@ function App() {
           <TimeScrubber control={time} />
         </section>
 
-        <section>
+        {selectedPass && (
+          <PassDetail
+            pass={selectedPass}
+            observer={observer}
+            tles={tles}
+            onClose={() => setSelectedPass(null)}
+            onShowInSky={showPassInSky}
+          />
+        )}
+
+        <section className="print:hidden">
           <div className="flex items-baseline justify-between mb-3">
             <h2 className="text-lg font-medium text-space-100">Upcoming visible passes</h2>
-            <p className="text-xs text-space-300">Next 10 days · ISS &amp; space stations</p>
+            <p className="text-xs text-space-300">
+              Next 10 days · ISS &amp; space stations
+              <span className="hidden sm:inline"> · click a pass for its sky track</span>
+            </p>
           </div>
-          <PassTable passes={passes} loading={passesLoading} error={passesError} />
+          <PassTable
+            passes={passes}
+            loading={passesLoading}
+            error={passesError}
+            selectedPass={selectedPass}
+            onSelectPass={setSelectedPass}
+          />
         </section>
       </main>
     </div>

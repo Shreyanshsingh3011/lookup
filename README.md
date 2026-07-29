@@ -8,9 +8,11 @@ A Heavens-Above-style satellite tracker: visible pass predictions, an interactiv
 
 **Milestone 2:** interactive 3D sky dome with procedural satellite models, fading orbital trails, click/hover detail labels, camera aiming, and a 24-hour time scrubber with playback.
 
-**Milestone 3 (this commit):** planetarium layers — 5,044 stars to magnitude 6 with colour-index tinting, 88 constellation figures, named bright stars, and the naked-eye planets plus Sun and Moon, all toggleable.
+**Milestone 3:** planetarium layers — 5,044 stars to magnitude 6 with colour-index tinting, 88 constellation figures, named bright stars, and the naked-eye planets plus Sun and Moon, all toggleable.
 
-Not yet built: additional satellite groups (Starlink trains, visual-brightest) in the UI, the 2D polar pass-detail chart, cloud-cover flagging via Open-Meteo, and NASA `.glb` spacecraft models.
+**Milestone 4 (this commit):** click a pass for its 2D polar sky-track chart, with a print view, and a "Show in 3D" jump that drives the dome to that pass.
+
+Not yet built: additional satellite groups (Starlink trains, visual-brightest) in the UI, cloud-cover flagging via Open-Meteo, and NASA `.glb` spacecraft models.
 
 ## Structure
 
@@ -51,6 +53,7 @@ Lives in `server/src/passes.ts`:
 - Darkness windows are found by scanning observer sun altitude (astronomy-engine) coarsely, then satellite elevation is scanned finely inside those windows (satellite.js SGP4).
 - Illumination uses satellite.js's `shadowFraction`, which models the penumbra rather than a hard cylindrical shadow, so a satellite fading into eclipse mid-pass is captured.
 - Apparent magnitude approximates range, phase angle, and a per-satellite standard magnitude, then dims by the eclipsed fraction of the Sun's disc.
+- A pass reports *why* it ended — `set`, `shadow`, or `daylight` — taken from the first sample that failed the visibility test. It has to come from that terminating sample rather than the last visible one: every sample inside a pass is illuminated and above the horizon by construction, so inspecting the last visible sample could only ever report `set`.
 - Sun position for satellite illumination comes from satellite.js (same TEME frame as the SGP4 output, so the two stay self-consistent); astronomy-engine handles observer twilight, where its topocentric horizon model with refraction is the better tool.
 
 ## 3D sky dome
@@ -100,6 +103,33 @@ per frame (seven bodies is far too cheap to bother optimising), with apparent
 magnitude and, for the Moon, illuminated fraction. Uranus and Neptune are
 omitted: at magnitude 5.7+ they add clutter without being what anyone scanning
 the sky is looking for.
+
+## Pass detail and sky-track chart
+
+Clicking a row in the pass table opens a detail panel with a 2D polar chart:
+zenith at the centre, horizon at the rim, radius linear in elevation.
+
+Orientation is the **looking-up** convention — north at the top, east to the
+**left** — so the chart matches the sky when held overhead with the top pointing
+north. (A map of the ground would mirror it; all eight compass points are
+labelled, so it is unambiguous either way.)
+
+The track is computed in the browser from the TLEs already fetched for the dome,
+so there is no extra round trip. It draws the *entire* above-horizon arc rather
+than only the reported visible window: the bright segment is when the satellite
+is sunlit and the observer is dark, and the dashed remainder shows where it is
+above the horizon but invisible. That is what makes a satellite disappearing
+mid-sky legible.
+
+`@media print` restates the palette as black-on-white and hides the header, dome
+and table, so the browser's print command yields a single clean sheet — an
+astronomy tool's dark theme wastes ink and reads poorly on paper.
+
+**Show in 3D** re-anchors the timeline to the selected pass and scrolls to the
+dome. Passes are predicted 10 days out, well beyond the scrubber's 24-hour
+range, so this re-anchors the timeline's zero point rather than offsetting from
+the present instant — at which point the scrubber shows the date instead of
+"+2h from now", which would be a lie.
 
 ## Time scrubber
 

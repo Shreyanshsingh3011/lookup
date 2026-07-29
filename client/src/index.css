@@ -65,3 +65,101 @@ body {
 .text-glow {
   text-shadow: 0 0 16px rgba(45, 212, 191, 0.5);
 }
+
+/* --- Polar sky chart -------------------------------------------------------
+   Styled here rather than inline so the print rules below can restate the
+   whole palette in one place. */
+.polar-chart .chart-grid {
+  stroke: var(--color-space-600);
+  stroke-width: 1;
+}
+.polar-chart .chart-horizon {
+  stroke: var(--color-glow-600);
+  stroke-width: 1.5;
+}
+.polar-chart .chart-tick,
+.polar-chart .chart-cardinal {
+  fill: var(--color-space-300);
+  font-size: 9px;
+  font-weight: 500;
+}
+.polar-chart .chart-cardinal-major {
+  fill: var(--color-glow-400);
+  font-size: 12px;
+  font-weight: 600;
+}
+.polar-chart .chart-track-visible {
+  stroke: var(--color-glow-400);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.polar-chart .chart-track-dim {
+  stroke: var(--color-space-500);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+.polar-chart .chart-marker {
+  fill: var(--color-space-900);
+  stroke: var(--color-glow-400);
+  stroke-width: 2;
+}
+.polar-chart .chart-marker-max {
+  fill: var(--color-glow-400);
+  stroke: var(--color-space-950);
+  stroke-width: 1.5;
+}
+.polar-chart .chart-marker-label {
+  fill: var(--color-space-200);
+  font-size: 9px;
+  font-family: var(--font-mono);
+}
+
+/* Printing an astronomy tool's dark theme wastes ink and reads poorly, so the
+   pass detail becomes a black-on-white sheet. */
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .glass-panel {
+    background: #fff !important;
+    border-color: #999 !important;
+    backdrop-filter: none !important;
+  }
+  .polar-chart .chart-grid {
+    stroke: #bbb;
+  }
+  .polar-chart .chart-horizon {
+    stroke: #333;
+  }
+  .polar-chart .chart-tick,
+  .polar-chart .chart-cardinal {
+    fill: #555;
+  }
+  .polar-chart .chart-cardinal-major {
+    fill: #000;
+  }
+  .polar-chart .chart-track-visible {
+    stroke: #000;
+  }
+  .polar-chart .chart-track-dim {
+    stroke: #999;
+  }
+  .polar-chart .chart-marker {
+    fill: #fff;
+    stroke: #000;
+  }
+  .polar-chart .chart-marker-max {
+    fill: #000;
+    stroke: #fff;
+  }
+  .polar-chart .chart-marker-label,
+  .polar-chart figcaption {
+    fill: #000;
+    color: #000 !important;
+  }
+  .print-invert-text,
+  .print-invert-text * {
+    color: #000 !important;
+  }
+}

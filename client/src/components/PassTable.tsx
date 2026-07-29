@@ -8,6 +8,8 @@ interface Props {
   passes: Pass[];
   loading: boolean;
   error: string | null;
+  selectedPass: Pass | null;
+  onSelectPass: (pass: Pass | null) => void;
 }
 
 const dateFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -15,6 +17,11 @@ const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2
 
 function formatTime(iso: string) {
   return timeFmt.format(new Date(iso));
+}
+
+/** Passes are plain objects rebuilt on each fetch, so compare by identity keys. */
+function isSame(a: Pass, b: Pass | null): boolean {
+  return b !== null && a.satnum === b.satnum && a.start.time === b.start.time;
 }
 
 function magClass(mag: number | null) {
@@ -38,10 +45,9 @@ function SortHeader({ label, sortKey, active, dir, onSort }: { label: string; so
   );
 }
 
-export function PassTable({ passes, loading, error }: Props) {
+export function PassTable({ passes, loading, error, selectedPass, onSelectPass }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('start');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [selected, setSelected] = useState<Pass | null>(null);
 
   function handleSort(key: SortKey) {
     if (key === sortKey) {
@@ -123,8 +129,9 @@ export function PassTable({ passes, loading, error }: Props) {
             {sorted.map((p, i) => (
               <tr
                 key={`${p.satnum}-${p.start.time}`}
-                onClick={() => setSelected(p)}
-                className={`cursor-pointer border-b border-space-800/80 hover:bg-space-800/50 transition ${i % 2 === 1 ? 'bg-space-900/30' : ''} ${selected === p ? 'bg-glow-600/10 hover:bg-glow-600/10' : ''}`}
+                onClick={() => onSelectPass(isSame(p, selectedPass) ? null : p)}
+                aria-selected={isSame(p, selectedPass)}
+                className={`cursor-pointer border-b border-space-800/80 hover:bg-space-800/50 transition ${i % 2 === 1 ? 'bg-space-900/30' : ''} ${isSame(p, selectedPass) ? 'bg-glow-600/10 hover:bg-glow-600/10' : ''}`}
               >
                 <td className="px-4 py-3 whitespace-nowrap text-space-200">{dateFmt.format(new Date(p.start.time))}</td>
                 <td className="px-3 py-3 whitespace-nowrap font-medium text-space-100">{p.name.replace(/\s*\(.*?\)\s*/g, '')}</td>
@@ -146,19 +153,6 @@ export function PassTable({ passes, loading, error }: Props) {
         </table>
       </div>
 
-      {selected && (
-        <div className="border-t border-space-700/70 p-4 bg-space-900/40">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-space-200">
-              Selected: <span className="text-glow-400 font-medium">{selected.name}</span> pass on {dateFmt.format(new Date(selected.start.time))}
-            </p>
-            <button type="button" onClick={() => setSelected(null)} className="text-xs text-space-300 hover:text-space-100">
-              Close
-            </button>
-          </div>
-          <p className="text-xs text-space-300 mt-2">Detailed sky-track chart coming in the next milestone — this will show a 2D polar plot of the pass.</p>
-        </div>
-      )}
     </div>
   );
 }

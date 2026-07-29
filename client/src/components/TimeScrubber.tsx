@@ -22,8 +22,21 @@ function speedLabel(speed: PlaybackSpeed): string {
   return `${speed / 60}×`;
 }
 
+const dateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
 export function TimeScrubber({ control }: { control: TimeControl }) {
-  const { displayTime, offsetMs, live, playing, speed, setOffsetMs, setSpeed, togglePlay, resetToNow } = control;
+  const {
+    displayTime,
+    offsetMs,
+    live,
+    playing,
+    speed,
+    anchoredToNow,
+    setOffsetMs,
+    setSpeed,
+    togglePlay,
+    resetToNow,
+  } = control;
   const progress = (offsetMs / TIME_RANGE_MS) * 100;
 
   return (
@@ -52,8 +65,12 @@ export function TimeScrubber({ control }: { control: TimeControl }) {
           <div className="text-[10px] text-space-300">
             {live ? (
               <span className="text-glow-400">● live</span>
-            ) : (
+            ) : anchoredToNow ? (
               <span>{formatOffset(offsetMs)} from now</span>
+            ) : (
+              // The timeline was re-anchored to a specific event, so an offset
+              // "from now" would be meaningless — show the date instead.
+              <span>{dateFmt.format(displayTime)}</span>
             )}
           </div>
         </div>
@@ -86,7 +103,7 @@ export function TimeScrubber({ control }: { control: TimeControl }) {
         <button
           type="button"
           onClick={resetToNow}
-          disabled={live}
+          disabled={live && anchoredToNow}
           className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-space-700/60 text-space-200 border border-space-600 hover:bg-space-700 transition disabled:opacity-40 disabled:hover:bg-space-700/60"
         >
           Now

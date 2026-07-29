@@ -9,16 +9,26 @@ export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
 /** Cap recomputation during playback; 60fps propagation is wasted work. */
 const PLAYBACK_TICK_MS = 40;
 
+/** Lead-in when jumping to an event, so the approach is visible first. */
+const GOTO_LEAD_MS = 2 * 60 * 1000;
+
 export interface TimeControl {
   displayTime: Date;
   offsetMs: number;
   live: boolean;
   playing: boolean;
   speed: PlaybackSpeed;
+  /**
+   * Whether the timeline's zero point is the real "now". Jumping to a specific
+   * event re-anchors it, at which point "+2h from now" would be a lie.
+   */
+  anchoredToNow: boolean;
   setOffsetMs: (ms: number) => void;
   setSpeed: (speed: PlaybackSpeed) => void;
   togglePlay: () => void;
   resetToNow: () => void;
+  /** Jump the display time to a specific instant, however far ahead it is. */
+  goToTime: (date: Date) => void;
 }
 
 /**
@@ -34,6 +44,7 @@ export function useTimeControl(): TimeControl {
   const [live, setLive] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaybackSpeed>(60);
+  const [anchoredToNow, setAnchoredToNow] = useState(true);
 
   // Live mode: follow the real clock.
   useEffect(() => {
@@ -73,11 +84,15 @@ export function useTimeControl(): TimeControl {
     return () => cancelAnimationFrame(raf);
   }, [playing, speed]);
 
-  const setOffsetMs = useCallback((ms: number) => {
-    setLive(ms === 0);
-    setPlaying(false);
-    setOffsetMsState(Math.max(0, Math.min(ms, TIME_RANGE_MS)));
-  }, []);
+  const setOffsetMs = useCallback(
+    (ms: number) => {
+      // Scrubbing back to zero only means "live" if zero still represents now.
+      setLive(ms === 0 && anchoredToNow);
+      setPlaying(false);
+      setOffsetMsState(Math.max(0, Math.min(ms, TIME_RANGE_MS)));
+    },
+    [anchoredToNow]
+  );
 
   const togglePlay = useCallback(() => {
     setPlaying((p) => {
@@ -93,9 +108,35 @@ export function useTimeControl(): TimeControl {
     setOffsetMsState(0);
     setLive(true);
     setPlaying(false);
+    setAnchoredToNow(true);
+  }, []);
+
+  /**
+   * Re-anchor the timeline just before `date` rather than offsetting from now.
+   * Passes are predicted up to 10 days out, well beyond the 24-hour scrub
+   * range, so an offset from the present instant could not reach them.
+   */
+  const goToTime = useCallback((date: Date) => {
+    setAnchor(date.getTime() - GOTO_LEAD_MS);
+    setOffsetMsState(GOTO_LEAD_MS);
+    setLive(false);
+    setPlaying(false);
+    setAnchoredToNow(false);
   }, []);
 
   const displayTime = useMemo(() => new Date(anchor + offsetMs), [anchor, offsetMs]);
 
-  return { displayTime, offsetMs, live, playing, speed, setOffsetMs, setSpeed, togglePlay, resetToNow };
+  return {
+    displayTime,
+    offsetMs,
+    live,
+    playing,
+    speed,
+    anchoredToNow,
+    setOffsetMs,
+    setSpeed,
+    togglePlay,
+    resetToNow,
+    goToTime,
+  };
 }
