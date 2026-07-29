@@ -6,9 +6,11 @@ A Heavens-Above-style satellite tracker: visible pass predictions, an interactiv
 
 **Milestone 1:** project scaffold, Celestrak TLE proxy/cache backend, satellite.js + astronomy-engine visible-pass prediction, and a pass-table UI for the ISS/space-stations group.
 
-**Milestone 2 (this commit):** interactive 3D sky dome with procedural satellite models, fading orbital trails, click/hover detail labels, camera aiming, and a 24-hour time scrubber with playback.
+**Milestone 2:** interactive 3D sky dome with procedural satellite models, fading orbital trails, click/hover detail labels, camera aiming, and a 24-hour time scrubber with playback.
 
-Not yet built: star chart / constellation layer, additional satellite groups (Starlink trains, visual-brightest) in the UI, the 2D polar pass-detail chart, cloud-cover flagging via Open-Meteo, and NASA `.glb` spacecraft models.
+**Milestone 3 (this commit):** planetarium layers — 5,044 stars to magnitude 6 with colour-index tinting, 88 constellation figures, named bright stars, and the naked-eye planets plus Sun and Moon, all toggleable.
+
+Not yet built: additional satellite groups (Starlink trains, visual-brightest) in the UI, the 2D polar pass-detail chart, cloud-cover flagging via Open-Meteo, and NASA `.glb` spacecraft models.
 
 ## Structure
 
@@ -59,6 +61,46 @@ Lives in `server/src/passes.ts`:
 - **Aiming.** The view swings to whatever is highest above the horizon when the sky goes from empty to occupied, and to any satellite you select; grabbing the sky cancels the animation so you never fight the camera.
 - Satellite models are procedural low-poly (an ISS-shaped truss with four array pairs, and a generic box-plus-wings bus). NASA's `.glb` models are a later addition.
 
+## Planetarium layers
+
+Four independently toggleable layers: satellites, stars, constellations, planets.
+
+### Star field
+
+The catalogue is generated at build time from d3-celestial's data files by
+`scripts/build-sky-catalog.mjs` (`npm run build:catalog`) into a compact
+`client/src/data/skyCatalog.json` — 5,044 stars to magnitude 6, 88 constellation
+figures, and proper names for 65 bright stars, in flat parallel arrays. Only the
+generated subset ships; d3-celestial itself stays a devDependency. See
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for attribution.
+
+All stars render as a single `Points` draw call, and all constellation figures as
+a single `LineSegments` call. Star size derives from magnitude and colour from
+B−V index, so Betelgeuse reads orange and Rigel blue-white.
+
+**The key trick** is in `lib/celestial.ts`: rather than converting every star to
+horizontal coordinates each frame, the whole celestial sphere is one rigid
+rotation away from scene coordinates. The geometry is built once from fixed
+RA/Dec, and only a single 3×3 matrix changes as time advances or the observer
+moves — O(1) per frame instead of O(5044). The derivation is documented in
+`equatorialToSceneMatrix`, and it was cross-checked against astronomy-engine's
+independent `Horizon()` implementation: agreement within 0.002° across 180
+star/site/time combinations spanning the equator, the arctic, and both
+hemispheres.
+
+Coordinates are J2000 and are not precessed to the epoch of date, which is a
+sub-arcminute effect at present — smaller than a rendered star glyph.
+Atmospheric refraction is deliberately not applied, matching how satellite
+elevations are computed elsewhere in the app.
+
+### Planets
+
+Sun, Moon, Mercury, Venus, Mars, Jupiter and Saturn come from astronomy-engine
+per frame (seven bodies is far too cheap to bother optimising), with apparent
+magnitude and, for the Moon, illuminated fraction. Uranus and Neptune are
+omitted: at magnitude 5.7+ they add clutter without being what anyone scanning
+the sky is looking for.
+
 ## Time scrubber
 
 `useTimeControl` decouples display time from wall-clock time. In live mode an anchor follows the real clock each second; scrubbing or playing freezes the anchor and moves an offset over a 24-hour range. Playback advances at 1×/60×/300×/1800×, throttled to 25 Hz so propagation isn't recomputed 60 times a second.
@@ -66,7 +108,8 @@ Lives in `server/src/passes.ts`:
 ## Notes on dependencies
 
 - **satellite.js v7** is used in both workspaces. Its entry point re-exports an optional WASM backend whose pthreads build uses top-level await and `node:worker_threads`; a small Vite plugin (`stubSatelliteWasm`) keeps that barrel out of the browser bundle, since only the pure-JS SGP4 API is used.
-- **astronomy-engine** ships a CJS build exposing its API directly and an ESM build nesting the same API under `default`. Which one a loader picks varies, so `server/src/passes.ts` normalises both shapes.
+- **astronomy-engine** ships a CJS build exposing its API directly and an ESM build nesting the same API under `default`. Which one a loader picks varies, so `server/src/passes.ts` and `client/src/lib/astronomy.ts` normalise both shapes.
+- The client bundle is ~1.4 MB (~430 KB gzipped), dominated by three.js, astronomy-engine and the star catalogue. Code-splitting it is a worthwhile follow-up.
 
 ### Known environment constraint
 
@@ -74,7 +117,7 @@ Lives in `server/src/passes.ts`:
 
 ## Next steps
 
-1. Star / constellation / planet layer as a toggleable dome layer
-2. 2D polar sky-track chart for a selected pass (print/fallback view)
-3. More satellite groups in the UI (Starlink trains, visual-brightest) with filtering
-4. Optional Open-Meteo cloud-cover flagging
+1. 2D polar sky-track chart for a selected pass (print/fallback view)
+2. More satellite groups in the UI (Starlink trains, visual-brightest) with filtering
+3. Optional Open-Meteo cloud-cover flagging
+4. Code-splitting to cut the initial bundle

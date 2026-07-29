@@ -3,12 +3,20 @@ import * as AstronomyModule from "astronomy-engine";
 import type { TleRecord } from "./celestrak.js";
 import type { Observer, Pass, PassEvent } from "./types.js";
 
-// astronomy-engine ships a CJS build that exposes its API directly and an ESM
-// build that nests the same API under `default`. Which one a loader picks
-// varies (tsx vs. plain node, ESM vs. CJS caller), so normalize both shapes
-// into a single value binding. Types come from the namespace either way.
+// astronomy-engine's ESM build exposes real named exports, while a loader that
+// resolves its CJS build hands back a namespace whose whole API sits under
+// `default`. Which one we get varies (tsx vs. plain node, ESM vs. CJS caller),
+// so normalize both shapes into a single value binding. Types come from the
+// namespace either way.
+//
+// The `default` lookup is deliberately computed rather than written as
+// `AstronomyModule.default`: against the ESM build that named export genuinely
+// does not exist, and a static reference makes bundlers warn about an import
+// that "will always be undefined".
+const DEFAULT_EXPORT = "default";
+const astronomyNamespace = AstronomyModule as unknown as Record<string, unknown>;
 const Astronomy: typeof AstronomyModule =
-  (AstronomyModule as unknown as { default?: typeof AstronomyModule }).default ?? AstronomyModule;
+  (astronomyNamespace[DEFAULT_EXPORT] as typeof AstronomyModule | undefined) ?? AstronomyModule;
 
 type AstroObserver = AstronomyModule.Observer;
 

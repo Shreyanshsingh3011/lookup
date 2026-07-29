@@ -1,29 +1,36 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 /**
- * An `Html` overlay that hides itself when its anchor is behind the camera.
+ * An `Html` overlay that only mounts while its anchor is actually on screen.
  *
  * drei's `Html` positions elements by projecting them to screen space, and a
  * perspective projection maps points behind the camera back onto the viewport
- * inverted — so without this guard the southern cardinal labels appear on
- * screen while you're facing north.
+ * inverted — so without a guard the southern cardinal labels appear while
+ * you're facing north.
  *
- * The camera sits at the dome's centre, so a point's direction from the origin
- * is also its direction from the camera, making this a cheap dot product.
+ * The test projects the anchor's *world* position and checks it lands within
+ * the viewport. That beats a fixed "is it roughly in front" dot product on two
+ * counts: it adapts automatically to zoom and aspect ratio, and it keeps DOM
+ * nodes from being created for objects far outside the frame.
+ *
+ * World position, not the `position` prop: these labels are usually mounted
+ * inside an already-positioned group (a satellite, a planet) with a local
+ * offset of zero.
  */
 export function FrontFacingHtml({
-  position,
+  position = [0, 0, 0],
   children,
-  threshold = 0.15,
+  margin = 1.15,
   zIndexRange,
   offsetYPx = 0,
 }: {
-  position: [number, number, number];
+  position?: [number, number, number];
   children: ReactNode;
-  threshold?: number;
+  /** Normalised-device slack, so labels don't pop exactly at the frame edge. */
+  margin?: number;
   zIndexRange?: [number, number];
   /**
    * Screen-space nudge, applied after projection. Offsetting a label in world
@@ -32,21 +39,39 @@ export function FrontFacingHtml({
    */
   offsetYPx?: number;
 }) {
-  const [inFront, setInFront] = useState(true);
-  const direction = useMemo(() => new THREE.Vector3(...position).normalize(), [position]);
-  const forward = useRef(new THREE.Vector3());
+  const [onScreen, setOnScreen] = useState(false);
+  const anchorRef = useRef<THREE.Group>(null);
+  const worldPos = useRef(new THREE.Vector3());
+  const projected = useRef(new THREE.Vector3());
 
   useFrame(({ camera }) => {
-    camera.getWorldDirection(forward.current);
-    const visible = forward.current.dot(direction) > threshold;
-    setInFront((prev) => (prev === visible ? prev : visible));
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+
+    anchor.getWorldPosition(worldPos.current);
+
+    // Camera space first: the camera looks down -Z, so anything with z >= 0 is
+    // behind it and must be rejected before trusting projected coordinates.
+    projected.current.copy(worldPos.current).applyMatrix4(camera.matrixWorldInverse);
+    const inFrontOfCamera = projected.current.z < 0;
+
+    let visible = false;
+    if (inFrontOfCamera) {
+      projected.current.copy(worldPos.current).project(camera);
+      visible =
+        Math.abs(projected.current.x) <= margin && Math.abs(projected.current.y) <= margin;
+    }
+
+    setOnScreen((prev) => (prev === visible ? prev : visible));
   });
 
-  if (!inFront) return null;
-
   return (
-    <Html position={position} center style={{ pointerEvents: 'none', userSelect: 'none' }} zIndexRange={zIndexRange}>
-      <div style={offsetYPx ? { transform: `translateY(${offsetYPx}px)` } : undefined}>{children}</div>
-    </Html>
+    <group ref={anchorRef} position={position}>
+      {onScreen && (
+        <Html center style={{ pointerEvents: 'none', userSelect: 'none' }} zIndexRange={zIndexRange}>
+          <div style={offsetYPx ? { transform: `translateY(${offsetYPx}px)` } : undefined}>{children}</div>
+        </Html>
+      )}
+    </group>
   );
 }

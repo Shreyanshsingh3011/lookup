@@ -1,13 +1,19 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { localSiderealTime } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
 import { useSkyObjects } from '../../hooks/useSkyObjects';
 import { CameraAim, type AimTarget } from './CameraAim';
 import { DomeShell } from './DomeShell';
+import { PlanetLayer } from './PlanetLayer';
 import { SatelliteMarker } from './SatelliteMarker';
+import { StarLayer } from './StarLayer';
 import type { Observer, Pass, TleRecord } from '../../types';
+
+/** Stable empty array, so toggling the layer off doesn't churn memoisation. */
+const EMPTY_SATELLITES: ReturnType<typeof useSkyObjects> = [];
 
 /**
  * The camera orbits at a tiny fixed radius around the dome's centre, so the
@@ -95,6 +101,13 @@ function DevProbe({ satellites }: { satellites: ReturnType<typeof useSkyObjects>
   return null;
 }
 
+export interface SkyLayers {
+  satellites: boolean;
+  stars: boolean;
+  constellations: boolean;
+  planets: boolean;
+}
+
 interface SceneProps {
   tles: TleRecord[];
   observer: Observer;
@@ -104,6 +117,7 @@ interface SceneProps {
   onSelect: (satnum: string | null) => void;
   onCountChange: (count: number) => void;
   aimRequest: number;
+  layers: SkyLayers;
 }
 
 function SkyScene({
@@ -115,8 +129,15 @@ function SkyScene({
   onSelect,
   onCountChange,
   aimRequest,
+  layers,
 }: SceneProps) {
-  const satellites = useSkyObjects(tles, observer, displayTime, passes);
+  const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
+  const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
+
+  const lstRad = useMemo(
+    () => localSiderealTime(displayTime, observer.longitude),
+    [displayTime, observer.longitude]
+  );
   const [aimTarget, setAimTarget] = useState<AimTarget | null>(null);
   const autoAimedRef = useRef(false);
 
@@ -163,6 +184,25 @@ function SkyScene({
 
       <DomeShell />
 
+      {(layers.stars || layers.constellations) && (
+        <StarLayer
+          displayTime={displayTime}
+          latitude={observer.latitude}
+          lstRad={lstRad}
+          showStars={layers.stars}
+          showConstellations={layers.constellations}
+        />
+      )}
+
+      {layers.planets && (
+        <PlanetLayer
+          displayTime={displayTime}
+          observerLatitude={observer.latitude}
+          observerLongitude={observer.longitude}
+          observerElevation={observer.elevation}
+        />
+      )}
+
       {satellites.map((sat) => (
         <SatelliteMarker
           key={sat.satnum}
@@ -200,10 +240,26 @@ interface Props {
   loading: boolean;
 }
 
+const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
+  { key: 'satellites', label: 'Satellites' },
+  { key: 'stars', label: 'Stars' },
+  { key: 'constellations', label: 'Constellations' },
+  { key: 'planets', label: 'Planets' },
+];
+
 export function SkyDome({ tles, observer, displayTime, passes, loading }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
   const [aimRequest, setAimRequest] = useState(0);
+  const [layers, setLayers] = useState<SkyLayers>({
+    satellites: true,
+    stars: true,
+    constellations: true,
+    planets: true,
+  });
+
+  const toggleLayer = (key: keyof SkyLayers) =>
+    setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <div className="relative w-full h-[clamp(360px,58vh,620px)] rounded-xl overflow-hidden glass-panel">
@@ -230,6 +286,7 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
               onSelect={setSelected}
               onCountChange={setVisibleCount}
               aimRequest={aimRequest}
+              layers={layers}
             />
           </Suspense>
         </Canvas>
@@ -260,15 +317,33 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
           </div>
         </div>
 
-        {!loading && visibleCount === 0 && (
+        {!loading && layers.satellites && visibleCount === 0 && (
           <div className="self-center glass-panel rounded-lg px-4 py-2.5 text-center max-w-xs">
-            <p className="text-sm text-space-200 font-medium">Nothing overhead right now</p>
+            <p className="text-sm text-space-200 font-medium">No satellites overhead right now</p>
             <p className="text-xs text-space-300 mt-0.5">
               Scrub or play the timeline below to find the next pass.
             </p>
           </div>
         )}
-        <div />
+
+        {/* Layer toggles */}
+        <div className="flex flex-wrap gap-1.5">
+          {LAYER_LABELS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => toggleLayer(key)}
+              aria-pressed={layers[key]}
+              className={`pointer-events-auto text-[11px] px-2.5 py-1 rounded-lg border transition backdrop-blur-md ${
+                layers[key]
+                  ? 'bg-glow-600/20 text-glow-400 border-glow-600/40'
+                  : 'bg-space-900/60 text-space-300 border-space-700 hover:text-space-200 hover:border-space-600'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
