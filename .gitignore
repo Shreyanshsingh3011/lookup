@@ -5,3 +5,7 @@ build/
 .env.local
 *.log
 .DS_Store
+
+# Point-in-time element snapshots: these age silently, so they stay local.
+server/elements.txt
+server/*.tle

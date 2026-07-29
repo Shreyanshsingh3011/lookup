@@ -36,6 +36,12 @@ export interface PassOptions {
   sunAltitudeThresholdDeg: number; // observer is "dark" when sun altitude is below this
   coarseStepMinutes: number; // resolution for the darkness scan
   fineStepSeconds: number; // resolution for the pass scan inside dark windows
+  /**
+   * Faintest peak magnitude still reported. Roughly the naked-eye limit under
+   * suburban skies — without it, "visible passes" would include objects no
+   * observer could actually pick out.
+   */
+  maxMagnitude: number;
 }
 
 export const DEFAULT_PASS_OPTIONS: PassOptions = {
@@ -44,23 +50,48 @@ export const DEFAULT_PASS_OPTIONS: PassOptions = {
   sunAltitudeThresholdDeg: -6, // civil twilight
   coarseStepMinutes: 5,
   fineStepSeconds: 10,
+  maxMagnitude: 5.5,
 };
+
+export interface PassSearchResult {
+  passes: Pass[];
+  /** Geometrically valid passes rejected for being fainter than the cutoff. */
+  tooFaintCount: number;
+  /** Brightest magnitude among the rejected passes, if any were rejected. */
+  brightestRejectedMagnitude: number | null;
+}
 
 function azToCompass(azDeg: number): string {
   const idx = Math.round(((azDeg % 360) + 360) % 360 / 22.5) % 16;
   return COMPASS[idx];
 }
 
-// Standard magnitude (apparent mag at 1000km range, 90deg phase angle) used
-// as the base for the approximate brightness formula. Real values vary by
-// satellite orientation/attitude; these are reasonable ballpark figures.
+/**
+ * Standard magnitude: apparent brightness at 1000 km range and 90 degree phase
+ * angle, used as the base for the approximate brightness formula. Real values
+ * vary with orientation and attitude; these are ballpark figures.
+ *
+ * Size matters enormously here. Celestrak's groups mix genuine spacecraft with
+ * debris fragments and spent upper stages, and a fragment is orders of magnitude
+ * fainter than a station. Treating an unknown object as bright as a 3rd
+ * magnitude star would have the app confidently list passes of things nobody
+ * could ever see.
+ */
 function standardMagnitude(name: string): number {
   const n = name.toUpperCase();
-  if (n.includes("ZARYA") || n.includes("ISS")) return -1.8;
-  if (n.includes("TIANGONG") || n.includes("CSS")) return 0.8;
+
+  if (n.includes("ZARYA") || /\bISS\b/.test(n)) return -1.8;
+  if (n.includes("TIANGONG") || /\bCSS\b/.test(n) || n.includes("TIANHE")) return 0.8;
   if (n.includes("HST") || n.includes("HUBBLE")) return 1.5;
   if (n.includes("STARLINK")) return 4.5;
-  return 3.0;
+
+  // Debris fragments: small, tumbling, effectively invisible to the eye.
+  if (/\bDEB\b|DEBRIS|\bFRAG\b/.test(n)) return 8.0;
+  // Spent upper stages are large cylinders and often naked-eye objects.
+  if (/R\/B|ROCKET BODY|\bAKM\b|CENTAUR|\bBREEZE\b|\bFREGAT\b/.test(n)) return 3.5;
+
+  // Unknown: assume a small satellite rather than a large one.
+  return 4.5;
 }
 
 interface Vec3 {
@@ -203,7 +234,7 @@ export function computeVisiblePasses(
   tle: TleRecord,
   observer: Observer,
   options: Partial<PassOptions> = {}
-): Pass[] {
+): PassSearchResult {
   const opts: PassOptions = { ...DEFAULT_PASS_OPTIONS, ...options };
   const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
 
@@ -219,6 +250,7 @@ export function computeVisiblePasses(
   const darkWindows = findDarkWindows(astroObserver, now, end, opts);
 
   const passes: Pass[] = [];
+  const rejected: number[] = [];
   const stepMs = opts.fineStepSeconds * 1000;
 
   for (const [winStart, winEnd] of darkWindows) {
@@ -235,16 +267,21 @@ export function computeVisiblePasses(
         current.push(sample);
       } else if (current) {
         // This sample is why the pass ended, so it carries the reason.
-        finalizePass(current, tle, opts, passes, sample);
+        finalizePass(current, tle, opts, passes, rejected, sample);
         current = null;
       }
     }
     if (current) {
-      finalizePass(current, tle, opts, passes, null);
+      finalizePass(current, tle, opts, passes, rejected, null);
     }
   }
 
-  return passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
+  passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
+  return {
+    passes,
+    tooFaintCount: rejected.length,
+    brightestRejectedMagnitude: rejected.length ? Math.min(...rejected) : null,
+  };
 }
 
 /**
@@ -270,6 +307,7 @@ function finalizePass(
   tle: TleRecord,
   opts: PassOptions,
   out: Pass[],
+  rejectedMagnitudes: number[],
   terminator: Sample | null
 ): void {
   let maxSample = samples[0];
@@ -281,6 +319,13 @@ function finalizePass(
   const start = samples[0];
   const end = samples[samples.length - 1];
   const brightest = samples.reduce((min, s) => (s.magnitude < min ? s.magnitude : min), maxSample.magnitude);
+
+  // Geometry is fine but nobody could see it: record it so the caller can say
+  // so, rather than silently returning an empty list.
+  if (brightest > opts.maxMagnitude) {
+    rejectedMagnitudes.push(Math.round(brightest * 10) / 10);
+    return;
+  }
 
   out.push({
     satnum: tle.satnum,

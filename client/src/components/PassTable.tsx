@@ -10,6 +10,10 @@ interface Props {
   error: string | null;
   selectedPass: Pass | null;
   onSelectPass: (pass: Pass | null) => void;
+  /** Why the list may be empty: passes omitted for being too faint to see. */
+  tooFaintCount?: number;
+  brightestRejectedMagnitude?: number | null;
+  satelliteCount?: number;
 }
 
 const dateFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -45,7 +49,16 @@ function SortHeader({ label, sortKey, active, dir, onSort }: { label: string; so
   );
 }
 
-export function PassTable({ passes, loading, error, selectedPass, onSelectPass }: Props) {
+export function PassTable({
+  passes,
+  loading,
+  error,
+  selectedPass,
+  onSelectPass,
+  tooFaintCount = 0,
+  brightestRejectedMagnitude = null,
+  satelliteCount = 0,
+}: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('start');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
@@ -102,10 +115,21 @@ export function PassTable({ passes, loading, error, selectedPass, onSelectPass }
   if (passes.length === 0) {
     return (
       <div className="glass-panel rounded-xl p-8 text-center">
-        <p className="text-space-200 font-medium">No visible passes found</p>
-        <p className="text-space-300 text-sm mt-1">
-          No passes above the minimum elevation were found for this location in the selected window.
-        </p>
+        <p className="text-space-200 font-medium">No visible passes in the next 10 days</p>
+        {tooFaintCount > 0 ? (
+          <p className="text-space-300 text-sm mt-2 max-w-lg mx-auto leading-relaxed">
+            {satelliteCount > 0 && <>Tracked {satelliteCount} objects. </>}
+            {tooFaintCount} pass{tooFaintCount === 1 ? '' : 'es'} occur overhead during darkness, but
+            the brightest reaches only magnitude{' '}
+            <span className="font-mono text-space-200">{brightestRejectedMagnitude?.toFixed(1)}</span>{' '}
+            — fainter than the naked eye can see. Everything else passes in daylight.
+          </p>
+        ) : (
+          <p className="text-space-300 text-sm mt-1 max-w-lg mx-auto leading-relaxed">
+            Nothing reaches the minimum elevation during darkness from this location in the selected
+            window. Satellite visibility comes in seasons, so this can change within a week or two.
+          </p>
+        )}
       </div>
     );
   }

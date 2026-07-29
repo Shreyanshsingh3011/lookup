@@ -1,15 +1,18 @@
 /**
- * End-to-end check that live Celestrak data works: fetch real elements, parse
- * them, and predict passes from them.
+ * End-to-end check that real element data works: load it, parse it, and predict
+ * passes from it.
  *
- * Run with `npm run check:live -w server`. The fixture fallback is force-
- * disabled so a network failure surfaces as a failure instead of quietly
+ * Run with `npm run check:live -w server`. Normally this verifies the live
+ * Celestrak path; if TLE_FILE is set, the intent is clearly to validate those
+ * elements instead, so `source: "file"` is accepted too. Either way the fixture
+ * fallback is force-disabled, so a failure surfaces rather than quietly
  * degrading to bundled 2024-epoch elements.
  */
 process.env.ALLOW_TLE_FIXTURE = "0";
 
 const { getTleGroup } = await import("./celestrak.js");
 const { computeVisiblePasses } = await import("./passes.js");
+const { elementFilePath } = await import("./elements.js");
 
 const OBSERVER = { latitude: 51.4769, longitude: -0.0005, elevation: 45 }; // Greenwich
 
@@ -19,7 +22,12 @@ function fail(message: string, hint?: string): never {
   process.exit(1);
 }
 
-console.log("Fetching the 'stations' group from celestrak.org …");
+const fromFile = elementFilePath();
+console.log(
+  fromFile
+    ? `Loading the 'stations' group from TLE_FILE (${fromFile}) …`
+    : "Fetching the 'stations' group from celestrak.org …"
+);
 
 let result;
 try {
@@ -35,8 +43,14 @@ try {
   );
 }
 
-if (result.source !== "live") {
-  fail(`Expected live elements but got source="${result.source}".`);
+const acceptable = fromFile ? ["file"] : ["live"];
+if (!acceptable.includes(result.source)) {
+  fail(
+    `Expected source="${acceptable[0]}" but got source="${result.source}".`,
+    result.source === "cache"
+      ? "Celestrak was unreachable and a stale cache entry was served."
+      : undefined
+  );
 }
 
 const ageHours = (Date.now() - result.fetchedAt) / 3_600_000;
@@ -60,8 +74,18 @@ if (epochAgeDays > 14 || epochAgeDays < -1) {
 }
 
 console.log("\nPredicting visible passes for Greenwich over the next 10 days …");
-const passes = computeVisiblePasses(iss, OBSERVER, { days: 10, minElevationDeg: 10 });
-console.log(`✓ ${passes.length} visible pass(es)\n`);
+const { passes, tooFaintCount, brightestRejectedMagnitude } = computeVisiblePasses(iss, OBSERVER, {
+  days: 10,
+  minElevationDeg: 10,
+});
+console.log(`✓ ${passes.length} visible pass(es)`);
+if (tooFaintCount > 0) {
+  console.log(
+    `  (${tooFaintCount} further pass(es) were geometrically valid but too faint to see; ` +
+      `brightest was magnitude ${brightestRejectedMagnitude})`
+  );
+}
+console.log();
 
 for (const p of passes.slice(0, 5)) {
   const start = new Date(p.start.time).toISOString().replace("T", " ").slice(0, 19);
@@ -72,4 +96,4 @@ for (const p of passes.slice(0, 5)) {
   );
 }
 
-console.log("\n✓ Live data path is working end to end.");
+console.log(`\n✓ ${fromFile ? "Operator-supplied" : "Live"} element path is working end to end.`);

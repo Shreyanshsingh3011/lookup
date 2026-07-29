@@ -40,10 +40,14 @@ export interface PassesResponse {
   observer: Observer;
   days: number;
   minElevationDeg: number;
+  maxMagnitude: number;
   source: TleSource;
   epoch: EpochSpan | null;
   satelliteCount: number;
   passCount: number;
+  /** Geometrically valid passes omitted for being fainter than the cutoff. */
+  tooFaintCount: number;
+  brightestRejectedMagnitude: number | null;
   passes: Pass[];
 }
 

@@ -23,6 +23,11 @@ function App() {
   const [dataSource, setDataSource] = useState<TleSource | null>(null);
   const [dataEpoch, setDataEpoch] = useState<EpochSpan | null>(null);
   const [selectedPass, setSelectedPass] = useState<Pass | null>(null);
+  const [passSummary, setPassSummary] = useState<{
+    tooFaintCount: number;
+    brightestRejectedMagnitude: number | null;
+    satelliteCount: number;
+  } | null>(null);
 
   const skySectionRef = useRef<HTMLElement>(null);
 
@@ -65,6 +70,11 @@ function App() {
         setPasses(res.passes);
         setDataSource(res.source);
         setDataEpoch(res.epoch);
+        setPassSummary({
+          tooFaintCount: res.tooFaintCount,
+          brightestRejectedMagnitude: res.brightestRejectedMagnitude,
+          satelliteCount: res.satelliteCount,
+        });
         // The previous selection belongs to the old location's predictions.
         setSelectedPass(null);
       })
@@ -142,6 +152,9 @@ function App() {
             error={passesError}
             selectedPass={selectedPass}
             onSelectPass={setSelectedPass}
+            tooFaintCount={passSummary?.tooFaintCount}
+            brightestRejectedMagnitude={passSummary?.brightestRejectedMagnitude}
+            satelliteCount={passSummary?.satelliteCount}
           />
         </section>
       </main>

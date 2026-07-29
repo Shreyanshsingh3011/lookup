@@ -89,13 +89,39 @@ app.get("/api/passes", async (req, res) => {
       }
     }
 
+    const maxMagnitude =
+      req.query.maxMag !== undefined ? Number(req.query.maxMag) : DEFAULT_PASS_OPTIONS.maxMagnitude;
+
     const passes: Pass[] = [];
+    let tooFaintCount = 0;
+    let brightestRejected: number | null = null;
     for (const tle of tles) {
-      passes.push(...computeVisiblePasses(tle, observer, { days, minElevationDeg }));
+      const result = computeVisiblePasses(tle, observer, { days, minElevationDeg, maxMagnitude });
+      passes.push(...result.passes);
+      tooFaintCount += result.tooFaintCount;
+      if (
+        result.brightestRejectedMagnitude !== null &&
+        (brightestRejected === null || result.brightestRejectedMagnitude < brightestRejected)
+      ) {
+        brightestRejected = result.brightestRejectedMagnitude;
+      }
     }
     passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
 
-    res.json({ observer, days, minElevationDeg, source, epoch, satelliteCount: tles.length, passCount: passes.length, passes });
+    res.json({
+      observer,
+      days,
+      minElevationDeg,
+      maxMagnitude,
+      source,
+      epoch,
+      satelliteCount: tles.length,
+      passCount: passes.length,
+      // Reported so an empty list can explain itself rather than looking broken.
+      tooFaintCount,
+      brightestRejectedMagnitude: brightestRejected,
+      passes,
+    });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
   }
