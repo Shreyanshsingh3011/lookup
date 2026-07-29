@@ -1,3 +1,5 @@
+import { FIXTURE_TLES, fixtureEnabled } from "./fixtures.js";
+
 const CELESTRAK_BASE = "https://celestrak.org/NORAD/elements/gp.php";
 
 // How long a cached group is considered fresh before we re-fetch from Celestrak.
@@ -62,11 +64,26 @@ async function fetchGroup(celestrakGroup: string): Promise<TleRecord[]> {
 }
 
 /**
+ * Where a TLE response came from:
+ *  - "live"    fresh from Celestrak (or served from a still-fresh cache)
+ *  - "cache"   Celestrak unreachable, serving a cache entry past its TTL
+ *  - "fixture" Celestrak unreachable and nothing cached; bundled dev-only
+ *              elements with a stale epoch. NOT usable for real predictions.
+ */
+export type TleSource = "live" | "cache" | "fixture";
+
+export interface TleGroupResult {
+  tles: TleRecord[];
+  fetchedAt: number;
+  source: TleSource;
+}
+
+/**
  * Get TLEs for a named group, serving from cache when fresh. Concurrent
  * requests for the same stale group are coalesced into a single upstream
  * fetch.
  */
-export async function getTleGroup(groupKey: string): Promise<{ tles: TleRecord[]; fetchedAt: number; stale: boolean }> {
+export async function getTleGroup(groupKey: string): Promise<TleGroupResult> {
   const celestrakGroup = TLE_GROUPS[groupKey];
   if (!celestrakGroup) {
     throw new Error(`Unknown TLE group: ${groupKey}`);
@@ -75,7 +92,7 @@ export async function getTleGroup(groupKey: string): Promise<{ tles: TleRecord[]
   const cached = cache.get(celestrakGroup);
   const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
   if (isFresh) {
-    return { tles: cached.tles, fetchedAt: cached.fetchedAt, stale: false };
+    return { tles: cached.tles, fetchedAt: cached.fetchedAt, source: "live" };
   }
 
   let pending = inFlight.get(celestrakGroup);
@@ -93,11 +110,18 @@ export async function getTleGroup(groupKey: string): Promise<{ tles: TleRecord[]
 
   try {
     const tles = await pending;
-    return { tles, fetchedAt: Date.now(), stale: false };
+    return { tles, fetchedAt: Date.now(), source: "live" };
   } catch (err) {
-    // Upstream failed — fall back to a stale cache entry rather than erroring out.
+    // Upstream failed — degrade rather than erroring out, most-accurate first.
     if (cached) {
-      return { tles: cached.tles, fetchedAt: cached.fetchedAt, stale: true };
+      return { tles: cached.tles, fetchedAt: cached.fetchedAt, source: "cache" };
+    }
+    if (fixtureEnabled()) {
+      console.warn(
+        `[tle] Celestrak unreachable and no cache for '${groupKey}'; serving bundled dev fixture. ` +
+          `Predictions from this data are NOT accurate.`
+      );
+      return { tles: FIXTURE_TLES, fetchedAt: 0, source: "fixture" };
     }
     throw err;
   }

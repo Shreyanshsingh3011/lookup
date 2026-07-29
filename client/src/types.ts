@@ -23,11 +23,33 @@ export interface Pass {
   endReason: 'set' | 'shadow' | 'daylight';
 }
 
+/**
+ * Provenance of the orbital elements behind a response.
+ * "fixture" means bundled dev-only elements — not valid for real predictions.
+ */
+export type TleSource = 'live' | 'cache' | 'fixture';
+
 export interface PassesResponse {
   observer: Observer;
   days: number;
   minElevationDeg: number;
+  source: TleSource;
   satelliteCount: number;
   passCount: number;
   passes: Pass[];
+}
+
+export interface TleRecord {
+  name: string;
+  satnum: string;
+  line1: string;
+  line2: string;
+}
+
+export interface TleResponse {
+  group: string;
+  count: number;
+  fetchedAt: string;
+  source: TleSource;
+  tles: TleRecord[];
 }

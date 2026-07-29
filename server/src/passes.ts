@@ -1,14 +1,26 @@
 import * as satellite from "satellite.js";
-import * as Astronomy from "astronomy-engine";
+import * as AstronomyModule from "astronomy-engine";
 import type { TleRecord } from "./celestrak.js";
 import type { Observer, Pass, PassEvent } from "./types.js";
 
+// astronomy-engine ships a CJS build that exposes its API directly and an ESM
+// build that nests the same API under `default`. Which one a loader picks
+// varies (tsx vs. plain node, ESM vs. CJS caller), so normalize both shapes
+// into a single value binding. Types come from the namespace either way.
+const Astronomy: typeof AstronomyModule =
+  (AstronomyModule as unknown as { default?: typeof AstronomyModule }).default ?? AstronomyModule;
+
+type AstroObserver = AstronomyModule.Observer;
+
 const AU_KM = 149597870.7;
-const EARTH_RADIUS_KM = 6371;
 const COMPASS = [
   "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
   "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
 ];
+
+// Above this fraction of the Sun's disc being covered by Earth, we treat the
+// satellite as eclipsed rather than merely dimmed in the penumbra.
+const ECLIPSE_THRESHOLD = 0.99;
 
 export interface PassOptions {
   days: number; // how many days ahead to search
@@ -25,10 +37,6 @@ export const DEFAULT_PASS_OPTIONS: PassOptions = {
   coarseStepMinutes: 5,
   fineStepSeconds: 10,
 };
-
-function radToDeg(rad: number): number {
-  return (rad * 180) / Math.PI;
-}
 
 function azToCompass(azDeg: number): string {
   const idx = Math.round(((azDeg % 360) + 360) % 360 / 22.5) % 16;
@@ -65,40 +73,35 @@ function mag(a: Vec3): number {
   return Math.sqrt(dot(a, a));
 }
 
-function scale(a: Vec3, s: number): Vec3 {
-  return { x: a.x * s, y: a.y * s, z: a.z * s };
-}
-
-/** Geocentric equatorial (~ECI) position of the Sun in km. */
-function sunEciKm(date: Date): Vec3 {
-  const v = Astronomy.GeoVector(Astronomy.Body.Sun, date, false);
-  return { x: v.x * AU_KM, y: v.y * AU_KM, z: v.z * AU_KM };
-}
-
-/** Simple cylindrical shadow model: is the satellite lit by the sun? */
-function isIlluminated(satEci: Vec3, sunEci: Vec3): boolean {
-  const sunDist = mag(sunEci);
-  const sunUnit = scale(sunEci, 1 / sunDist);
-  const satDotSun = dot(satEci, sunUnit);
-  if (satDotSun > 0) return true; // day side of Earth
-  const perp = sub(satEci, scale(sunUnit, satDotSun));
-  return mag(perp) > EARTH_RADIUS_KM;
-}
-
-/** Apparent visual magnitude approximation. Lower (more negative) = brighter. */
-function apparentMagnitude(name: string, satEci: Vec3, sunEci: Vec3, obsEci: Vec3): number {
-  const satToSun = sub(sunEci, satEci);
+/**
+ * Apparent visual magnitude approximation. Lower (more negative) = brighter.
+ * `shadowFrac` dims the satellite as it crosses the penumbra into eclipse.
+ */
+function apparentMagnitude(
+  name: string,
+  satEci: Vec3,
+  sunEciKm: Vec3,
+  obsEci: Vec3,
+  shadowFrac: number
+): number {
+  const satToSun = sub(sunEciKm, satEci);
   const satToObs = sub(obsEci, satEci);
   const rangeKm = mag(satToObs);
   const cosPhase = dot(satToSun, satToObs) / (mag(satToSun) * rangeKm);
   const phaseAngle = Math.acos(Math.min(1, Math.max(-1, cosPhase)));
   const term = Math.sin(phaseAngle) + (Math.PI - phaseAngle) * Math.cos(phaseAngle);
   if (term <= 0) return 99; // essentially unlit from observer's viewpoint
+
   const stdMag = standardMagnitude(name);
-  return stdMag - 15 + 5 * Math.log10(rangeKm) - 2.5 * Math.log10(term);
+  const base = stdMag - 15 + 5 * Math.log10(rangeKm) - 2.5 * Math.log10(term);
+
+  // Penumbral dimming: only a fraction (1 - shadowFrac) of the Sun's disc
+  // still illuminates the satellite.
+  const litFraction = Math.max(1 - shadowFrac, 1e-3);
+  return base - 2.5 * Math.log10(litFraction);
 }
 
-function sunAltitudeDeg(date: Date, astroObserver: Astronomy.Observer): number {
+function sunAltitudeDeg(date: Date, astroObserver: AstroObserver): number {
   const eq = Astronomy.Equator(Astronomy.Body.Sun, date, astroObserver, true, true);
   const hor = Astronomy.Horizon(date, astroObserver, eq.ra, eq.dec, "normal");
   return hor.altitude;
@@ -116,28 +119,37 @@ interface Sample {
 function sampleAt(
   satrec: satellite.SatRec,
   name: string,
-  observerGd: { longitude: number; latitude: number; height: number },
-  astroObserver: Astronomy.Observer,
-  date: Date
+  observerGd: satellite.GeodeticLocation,
+  astroObserver: AstroObserver,
+  date: Date,
+  opts: PassOptions
 ): Sample | null {
   const pv = satellite.propagate(satrec, date);
-  if (!pv.position || typeof pv.position === "boolean") return null;
+  if (!pv) return null; // decayed or SGP4 error
 
   const gmst = satellite.gstime(date);
   const positionEcf = satellite.eciToEcf(pv.position, gmst);
   const look = satellite.ecfToLookAngles(observerGd, positionEcf);
-  const elevationDeg = radToDeg(look.elevation);
-  const azimuthDeg = radToDeg(look.azimuth);
+  const elevationDeg = satellite.radiansToDegrees(look.elevation);
+  const azimuthDeg = satellite.radiansToDegrees(look.azimuth);
 
-  const satEci: Vec3 = pv.position;
-  const sunEci = sunEciKm(date);
-  const illuminated = isIlluminated(satEci, sunEci);
+  // Sun position and shadow are computed in satellite.js's own (TEME) frame so
+  // they stay self-consistent with the SGP4 output above.
+  const sun = satellite.sunPos(satellite.jday(date));
+  const shadowFrac = satellite.shadowFraction(sun.rsun, pv.position);
+  const illuminated = shadowFrac < ECLIPSE_THRESHOLD;
+
+  const sunEciKm: Vec3 = {
+    x: sun.rsun.x * AU_KM,
+    y: sun.rsun.y * AU_KM,
+    z: sun.rsun.z * AU_KM,
+  };
 
   const obsEcf = satellite.geodeticToEcf(observerGd);
   const obsEci = satellite.ecfToEci(obsEcf, gmst);
 
-  const observerDark = sunAltitudeDeg(date, astroObserver) < DEFAULT_PASS_OPTIONS.sunAltitudeThresholdDeg;
-  const magnitude = apparentMagnitude(name, satEci, sunEci, obsEci);
+  const observerDark = sunAltitudeDeg(date, astroObserver) < opts.sunAltitudeThresholdDeg;
+  const magnitude = apparentMagnitude(name, pv.position, sunEciKm, obsEci, shadowFrac);
 
   return { date, azimuthDeg, elevationDeg, illuminated, observerDark, magnitude };
 }
@@ -157,7 +169,7 @@ function toPassEvent(s: Sample): PassEvent {
  * search period, expanded with a buffer so fine-grained pass scanning
  * doesn't clip passes that start/end right at the window edge.
  */
-function findDarkWindows(astroObserver: Astronomy.Observer, start: Date, end: Date, opts: PassOptions): Array<[Date, Date]> {
+function findDarkWindows(astroObserver: AstroObserver, start: Date, end: Date, opts: PassOptions): Array<[Date, Date]> {
   const stepMs = opts.coarseStepMinutes * 60 * 1000;
   const bufferMs = 15 * 60 * 1000;
   const windows: Array<[Date, Date]> = [];
@@ -187,7 +199,7 @@ export function computeVisiblePasses(
   const opts: PassOptions = { ...DEFAULT_PASS_OPTIONS, ...options };
   const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
 
-  const observerGd = {
+  const observerGd: satellite.GeodeticLocation = {
     longitude: satellite.degreesToRadians(observer.longitude),
     latitude: satellite.degreesToRadians(observer.latitude),
     height: observer.elevation / 1000,
@@ -205,7 +217,7 @@ export function computeVisiblePasses(
     let current: Sample[] | null = null;
 
     for (let t = winStart.getTime(); t <= winEnd.getTime(); t += stepMs) {
-      const sample = sampleAt(satrec, tle.name, observerGd, astroObserver, new Date(t));
+      const sample = sampleAt(satrec, tle.name, observerGd, astroObserver, new Date(t), opts);
       if (!sample) continue;
 
       const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;

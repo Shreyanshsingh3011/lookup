@@ -1,4 +1,4 @@
-import type { Observer, PassesResponse } from '../types';
+import type { Observer, PassesResponse, TleResponse } from '../types';
 
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -19,4 +19,8 @@ export function fetchPasses(observer: Observer, opts: { groups?: string[]; days?
     minEl: String(opts.minElevationDeg ?? 10),
   });
   return apiFetch<PassesResponse>(`/api/passes?${params.toString()}`);
+}
+
+export function fetchTles(group = 'stations'): Promise<TleResponse> {
+  return apiFetch<TleResponse>(`/api/tle/${encodeURIComponent(group)}`);
 }
