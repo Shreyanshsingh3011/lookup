@@ -10,7 +10,9 @@ A Heavens-Above-style satellite tracker: visible pass predictions, an interactiv
 
 **Milestone 3:** planetarium layers — 5,044 stars to magnitude 6 with colour-index tinting, 88 constellation figures, named bright stars, and the naked-eye planets plus Sun and Moon, all toggleable.
 
-**Milestone 4 (this commit):** click a pass for its 2D polar sky-track chart, with a print view, and a "Show in 3D" jump that drives the dome to that pass.
+**Milestone 4:** click a pass for its 2D polar sky-track chart, with a print view, and a "Show in 3D" jump that drives the dome to that pass.
+
+**Milestone 5 (this commit):** operator-supplied elements via `TLE_FILE`, element-age reporting on every response, and tests for the TLE parser and epoch decoder.
 
 Not yet built: additional satellite groups (Starlink trains, visual-brightest) in the UI, cloud-cover flagging via Open-Meteo, and NASA `.glb` spacecraft models.
 
@@ -41,10 +43,33 @@ Both responses carry a `source` field describing element provenance, which the U
 | `source`  | Meaning |
 | --------- | ------- |
 | `live`    | Fresh from Celestrak, or a still-fresh cache entry |
+| `file`    | Operator-supplied elements from `TLE_FILE`; takes precedence over the network |
 | `cache`   | Celestrak unreachable; serving a cache entry past its TTL |
-| `fixture` | Celestrak unreachable and nothing cached; bundled dev-only elements. **Not valid for real predictions** — the UI shows a warning banner |
+| `fixture` | Celestrak unreachable and nothing cached; bundled dev-only elements. **Not valid for real predictions** |
+
+Responses also carry `epoch: { newestAgeDays, oldestAgeDays }`, because *how old
+the elements are* matters independently of where they came from — a successful
+live fetch of week-old elements is no more trustworthy than a cached copy of the
+same. The UI banner reports provenance and age together, and warns past seven
+days whatever the source.
 
 The fixture fallback is disabled when `NODE_ENV=production`; override either way with `ALLOW_TLE_FIXTURE=1` / `=0`.
+
+### Supplying elements without network access
+
+Point `TLE_FILE` at a Celestrak-format file (repeating name / line 1 / line 2
+triples) to run against real elements offline:
+
+```
+TLE_FILE=./elements.txt npm run dev -w server
+```
+
+This is the intended path for air-gapped deployments, reproducible predictions in
+tests, and for working in an environment whose egress policy blocks
+`celestrak.org`. An explicit file wins over a live fetch — whoever set it meant
+it — and the response says `source: "file"` rather than passing the elements off
+as live. A missing file or one containing no parseable elements fails loudly
+instead of silently falling back.
 
 ### Visibility and brightness model
 
@@ -147,6 +172,9 @@ the present instant — at which point the scrubber shows the date instead of
 npm test -w server            # TLE parser against realistic Celestrak output
 npm run check:live -w server  # end-to-end: real fetch -> parse -> pass prediction
 ```
+
+`test` covers the TLE parser and the epoch decoder (including the NORAD two-digit
+year pivot, where prefixing "20" would misdate historical elements by a century).
 
 `check:live` force-disables the fixture fallback, checks the ISS element epoch is
 recent (a stale epoch is the biggest source of silently wrong predictions), and

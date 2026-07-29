@@ -25,15 +25,23 @@ export interface Pass {
 
 /**
  * Provenance of the orbital elements behind a response.
- * "fixture" means bundled dev-only elements — not valid for real predictions.
+ * "file" means operator-supplied via TLE_FILE; "fixture" means bundled dev-only
+ * elements, which are not valid for real predictions.
  */
-export type TleSource = 'live' | 'cache' | 'fixture';
+export type TleSource = 'live' | 'file' | 'cache' | 'fixture';
+
+/** How old the elements are, independently of where they came from. */
+export interface EpochSpan {
+  newestAgeDays: number;
+  oldestAgeDays: number;
+}
 
 export interface PassesResponse {
   observer: Observer;
   days: number;
   minElevationDeg: number;
   source: TleSource;
+  epoch: EpochSpan | null;
   satelliteCount: number;
   passCount: number;
   passes: Pass[];
@@ -51,5 +59,6 @@ export interface TleResponse {
   count: number;
   fetchedAt: string;
   source: TleSource;
+  epoch: EpochSpan | null;
   tles: TleRecord[];
 }

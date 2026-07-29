@@ -8,7 +8,7 @@ import { TimeScrubber } from './components/TimeScrubber';
 import { SkyDome } from './components/sky/SkyDome';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
-import type { Pass, TleRecord, TleSource } from './types';
+import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 function App() {
   const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } = useLocation();
@@ -21,6 +21,7 @@ function App() {
   const [tles, setTles] = useState<TleRecord[]>([]);
   const [tlesLoading, setTlesLoading] = useState(true);
   const [dataSource, setDataSource] = useState<TleSource | null>(null);
+  const [dataEpoch, setDataEpoch] = useState<EpochSpan | null>(null);
   const [selectedPass, setSelectedPass] = useState<Pass | null>(null);
 
   const skySectionRef = useRef<HTMLElement>(null);
@@ -41,6 +42,7 @@ function App() {
         if (cancelled) return;
         setTles(res.tles);
         setDataSource(res.source);
+        setDataEpoch(res.epoch);
       })
       .catch(() => {
         if (!cancelled) setTles([]);
@@ -62,6 +64,7 @@ function App() {
         if (cancelled) return;
         setPasses(res.passes);
         setDataSource(res.source);
+        setDataEpoch(res.epoch);
         // The previous selection belongs to the old location's predictions.
         setSelectedPass(null);
       })
@@ -98,7 +101,7 @@ function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-6">
-        <SourceBanner source={dataSource} />
+        <SourceBanner source={dataSource} epoch={dataEpoch} />
 
         <section className="flex flex-col gap-2 print:hidden" ref={skySectionRef}>
           <div className="flex items-baseline justify-between">

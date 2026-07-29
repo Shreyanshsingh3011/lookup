@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
+import type { EpochSpan } from "./elements.js";
 import { computeVisiblePasses, DEFAULT_PASS_OPTIONS } from "./passes.js";
 import type { Observer, Pass } from "./types.js";
 
@@ -21,8 +22,15 @@ app.get("/api/tle/:group", async (req, res) => {
     return;
   }
   try {
-    const { tles, fetchedAt, source } = await getTleGroup(group);
-    res.json({ group, count: tles.length, fetchedAt: new Date(fetchedAt).toISOString(), source, tles });
+    const { tles, fetchedAt, source, epoch } = await getTleGroup(group);
+    res.json({
+      group,
+      count: tles.length,
+      fetchedAt: new Date(fetchedAt).toISOString(),
+      source,
+      epoch,
+      tles,
+    });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to fetch TLE data" });
   }
@@ -63,10 +71,16 @@ app.get("/api/passes", async (req, res) => {
     const tles: TleRecord[] = [];
     // Report the least-trustworthy source across the requested groups.
     let source: TleSource = "live";
+    let epoch: EpochSpan | null = null;
     for (const g of groupKeys) {
-      const { tles: groupTles, source: groupSource } = await getTleGroup(g);
+      const { tles: groupTles, source: groupSource, epoch: groupEpoch } = await getTleGroup(g);
       if (groupSource === "fixture") source = "fixture";
+      else if (groupSource === "file") source = "file";
       else if (groupSource === "cache" && source !== "fixture") source = "cache";
+      // Report the oldest elements across the requested groups.
+      if (groupEpoch && (!epoch || groupEpoch.newestAgeDays > epoch.newestAgeDays)) {
+        epoch = groupEpoch;
+      }
       for (const t of groupTles) {
         if (seen.has(t.satnum)) continue;
         if (satnumFilter && !satnumFilter.has(t.satnum)) continue;
@@ -81,7 +95,7 @@ app.get("/api/passes", async (req, res) => {
     }
     passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
 
-    res.json({ observer, days, minElevationDeg, source, satelliteCount: tles.length, passCount: passes.length, passes });
+    res.json({ observer, days, minElevationDeg, source, epoch, satelliteCount: tles.length, passCount: passes.length, passes });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
   }

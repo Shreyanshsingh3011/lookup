@@ -1,4 +1,5 @@
 import { FIXTURE_TLES, fixtureEnabled } from "./fixtures.js";
+import { elementFilePath, epochSpan, readElementFile, type EpochSpan } from "./elements.js";
 
 const CELESTRAK_BASE = "https://celestrak.org/NORAD/elements/gp.php";
 
@@ -73,16 +74,27 @@ async function fetchGroup(celestrakGroup: string): Promise<TleRecord[]> {
 /**
  * Where a TLE response came from:
  *  - "live"    fresh from Celestrak (or served from a still-fresh cache)
+ *  - "file"    operator-supplied elements via TLE_FILE; overrides everything
  *  - "cache"   Celestrak unreachable, serving a cache entry past its TTL
  *  - "fixture" Celestrak unreachable and nothing cached; bundled dev-only
  *              elements with a stale epoch. NOT usable for real predictions.
  */
-export type TleSource = "live" | "cache" | "fixture";
+export type TleSource = "live" | "file" | "cache" | "fixture";
 
 export interface TleGroupResult {
   tles: TleRecord[];
   fetchedAt: number;
   source: TleSource;
+  /**
+   * Age of the elements themselves, which matters independently of provenance:
+   * SGP4 accuracy decays over days, so even a successful live fetch is worth
+   * flagging if the upstream data turns out to be old.
+   */
+  epoch: EpochSpan | null;
+}
+
+function describe(tles: TleRecord[], fetchedAt: number, source: TleSource): TleGroupResult {
+  return { tles, fetchedAt, source, epoch: epochSpan(tles.map((t) => t.line1)) };
 }
 
 /**
@@ -96,10 +108,25 @@ export async function getTleGroup(groupKey: string): Promise<TleGroupResult> {
     throw new Error(`Unknown TLE group: ${groupKey}`);
   }
 
+  // An explicit operator-supplied file wins over the network: whoever set
+  // TLE_FILE meant it. The response says so, rather than passing the elements
+  // off as a live fetch.
+  const overridePath = elementFilePath();
+  if (overridePath) {
+    const tles = parseTle(readElementFile(overridePath));
+    if (tles.length === 0) {
+      throw new Error(
+        `TLE_FILE at '${overridePath}' contained no parseable elements. ` +
+          `Expected Celestrak's format: repeating name / line 1 / line 2 triples.`
+      );
+    }
+    return describe(tles, Date.now(), "file");
+  }
+
   const cached = cache.get(celestrakGroup);
   const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
   if (isFresh) {
-    return { tles: cached.tles, fetchedAt: cached.fetchedAt, source: "live" };
+    return describe(cached.tles, cached.fetchedAt, "live");
   }
 
   let pending = inFlight.get(celestrakGroup);
@@ -117,18 +144,18 @@ export async function getTleGroup(groupKey: string): Promise<TleGroupResult> {
 
   try {
     const tles = await pending;
-    return { tles, fetchedAt: Date.now(), source: "live" };
+    return describe(tles, Date.now(), "live");
   } catch (err) {
     // Upstream failed — degrade rather than erroring out, most-accurate first.
     if (cached) {
-      return { tles: cached.tles, fetchedAt: cached.fetchedAt, source: "cache" };
+      return describe(cached.tles, cached.fetchedAt, "cache");
     }
     if (fixtureEnabled()) {
       console.warn(
         `[tle] Celestrak unreachable and no cache for '${groupKey}'; serving bundled dev fixture. ` +
-          `Predictions from this data are NOT accurate.`
+          `Predictions from this data are NOT accurate. Set TLE_FILE to supply real elements offline.`
       );
-      return { tles: FIXTURE_TLES, fetchedAt: 0, source: "fixture" };
+      return describe(FIXTURE_TLES, 0, "fixture");
     }
     throw err;
   }
