@@ -29,14 +29,21 @@ export const TLE_GROUPS: Record<string, string> = {
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<TleRecord[]>>();
 
-function parseTle(raw: string): TleRecord[] {
+/**
+ * Parse Celestrak's `FORMAT=tle` output: repeating triples of a name line and
+ * the two element lines.
+ *
+ * Exported for testing. Celestrak serves CRLF line endings and pads name lines
+ * with trailing spaces to 24 columns, so both are normalised here.
+ */
+export function parseTle(raw: string): TleRecord[] {
   const lines = raw
     .split("\n")
     .map((l) => l.trimEnd())
     .filter((l) => l.length > 0);
 
   const records: TleRecord[] = [];
-  for (let i = 0; i + 2 < lines.length + 1 && i < lines.length; i += 3) {
+  for (let i = 0; i + 2 < lines.length; i += 3) {
     const name = lines[i]?.trim();
     const line1 = lines[i + 1];
     const line2 = lines[i + 2];

@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "node --import tsx --test src/celestrak.test.ts",
+    "check:live": "tsx src/check-live.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

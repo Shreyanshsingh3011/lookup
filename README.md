@@ -141,9 +141,41 @@ the present instant — at which point the scrubber shows the date instead of
 - **astronomy-engine** ships a CJS build exposing its API directly and an ESM build nesting the same API under `default`. Which one a loader picks varies, so `server/src/passes.ts` and `client/src/lib/astronomy.ts` normalise both shapes.
 - The client bundle is ~1.4 MB (~430 KB gzipped), dominated by three.js, astronomy-engine and the star catalogue. Code-splitting it is a worthwhile follow-up.
 
+## Verifying live data
+
+```
+npm test -w server            # TLE parser against realistic Celestrak output
+npm run check:live -w server  # end-to-end: real fetch -> parse -> pass prediction
+```
+
+`check:live` force-disables the fixture fallback, checks the ISS element epoch is
+recent (a stale epoch is the biggest source of silently wrong predictions), and
+prints the next few passes. It exits non-zero with an actionable message if
+Celestrak is unreachable.
+
 ### Known environment constraint
 
-`celestrak.org` is blocked by egress policy in some sandboxes (the proxy answers `403` to `CONNECT`). When that happens the server logs a warning and falls back to the bundled fixture, and the UI shows the amber banner. Everything works against live data as soon as the process can reach `celestrak.org`.
+`celestrak.org` is blocked by egress policy in some sandboxes — including Claude
+Code cloud sessions on the default **Trusted** network access level, whose
+allowlist covers package registries and GitHub but not third-party data sources.
+The proxy answers `403` to `CONNECT`.
+
+When that happens the server logs a warning and falls back to the bundled
+fixture, and the UI shows the amber banner; nothing silently pretends to be real.
+To allow it, set the environment's **Network access** to **Custom** at
+[claude.ai/code](https://claude.ai/code), add the domains below, and tick *"Also
+include default list of common package managers"* (otherwise `npm install`
+breaks). The change applies to **new** sessions, not a running one.
+
+```
+celestrak.org         # orbital elements (required)
+api.open-meteo.com    # cloud cover, if that feature is added
+nasa3d.arc.nasa.gov   # NASA spacecraft models, if those are added
+```
+
+Everything else in the pipeline is verified independently of the network: the
+pass mathematics against a fixed element set, the celestial transform against
+astronomy-engine, and the TLE parser against realistic CRLF-delimited fixtures.
 
 ## Next steps
 
