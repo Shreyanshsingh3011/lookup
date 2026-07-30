@@ -3,8 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%232dd4bf'/%3E%3Ccircle cx='50' cy='50' r='40' fill='none' stroke='%232dd4bf' stroke-width='3' opacity='0.6'/%3E%3C/svg%3E" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover so the sky dome reaches under a phone's notch. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Lookup — Satellite Tracker</title>
+    <meta
+      name="description"
+      content="See what is passing overhead: satellites, aircraft, planets and stars, from wherever you are standing."
+    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#080d1a" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- iOS ignores the manifest's display mode and reads these instead. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lookup" />
   </head>
   <body>
     <div id="root"></div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
+import { ConnectionNotice } from './components/ConnectionNotice';
 import { LocationPicker } from './components/LocationPicker';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
@@ -10,6 +11,7 @@ import { SourceBanner } from './components/SourceBanner';
 import { WeatherNotice } from './components/CloudCover';
 import { TimeScrubber } from './components/TimeScrubber';
 import { SkyDome } from './components/sky/SkyDome';
+import { useConnection } from './hooks/useConnection';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
 import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
@@ -20,6 +22,7 @@ const MAX_CUSTOM_SATELLITES = 20;
 function App() {
   const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } = useLocation();
   const time = useTimeControl();
+  const connection = useConnection();
 
   const [passes, setPasses] = useState<Pass[]>([]);
   const [passesLoading, setPassesLoading] = useState(true);
@@ -196,6 +199,7 @@ function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-6">
         <SourceBanner source={dataSource} epoch={dataEpoch} />
+        <ConnectionNotice {...connection} />
 
         <section className="flex flex-col gap-2 print:hidden" ref={skySectionRef}>
           <div className="flex items-baseline justify-between">
