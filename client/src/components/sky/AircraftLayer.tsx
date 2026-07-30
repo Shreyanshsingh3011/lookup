@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Billboard } from '@react-three/drei';
+import * as THREE from 'three';
 import { DOME_RADIUS, azElToVec3, azToCompass } from '../../lib/sky';
 import { aircraftLabel, type AircraftState } from '../../lib/aircraft';
+import { aircraftAttitude, aircraftGeometry, climbAngle } from '../../lib/aircraftModel';
 import type { LiveAircraft } from '../../hooks/useAircraft';
 import { FrontFacingHtml } from './FrontFacingHtml';
 
@@ -21,24 +22,32 @@ const AIRCRAFT_COLOR = '#fbbf24';
 /** Only label the more prominent ones, so a busy approach path stays readable. */
 const LABEL_ELEVATION_MIN = 12;
 
-/** A small delta-wing glyph, canted to hint at the aircraft's ground track. */
-function AircraftGlyph({ trueTrackDeg }: { trueTrackDeg: number | null }) {
-  // The glyph is billboarded, so this rotation is in screen space, not world
-  // space — it conveys roughly which way the aircraft is heading rather than
-  // a survey-accurate bearing. Without a reported track we leave it nose-up
-  // instead of inventing a heading.
-  const rotation = trueTrackDeg === null ? 0 : -(trueTrackDeg * Math.PI) / 180;
-
-  return (
-    <Billboard>
-      <group rotation={[0, 0, rotation]}>
-        <mesh>
-          <coneGeometry args={[1.15, 3.0, 3]} />
-          <meshBasicMaterial color={AIRCRAFT_COLOR} toneMapped={false} />
-        </mesh>
-      </group>
-    </Billboard>
-  );
+/**
+ * One material for every airframe on screen, and one more for the hovered one.
+ * A busy area can put a hundred-plus contacts in the sky; giving each its own
+ * material would mean a hundred shader programs for a single appearance.
+ */
+let sharedMaterials: { base: THREE.Material; hovered: THREE.Material } | null = null;
+function aircraftMaterials() {
+  if (!sharedMaterials) {
+    sharedMaterials = {
+      base: new THREE.MeshStandardMaterial({
+        color: AIRCRAFT_COLOR,
+        metalness: 0.3,
+        roughness: 0.55,
+        emissive: new THREE.Color('#3a2500'),
+        emissiveIntensity: 0.8,
+      }),
+      hovered: new THREE.MeshStandardMaterial({
+        color: '#fde68a',
+        metalness: 0.3,
+        roughness: 0.45,
+        emissive: new THREE.Color('#7a5200'),
+        emissiveIntensity: 1.1,
+      }),
+    };
+  }
+  return sharedMaterials;
 }
 
 function AircraftMarker({ entry }: { entry: LiveAircraft }) {
@@ -48,6 +57,17 @@ function AircraftMarker({ entry }: { entry: LiveAircraft }) {
   const position = useMemo(
     () => azElToVec3(sky.azimuthDeg, sky.elevationDeg, AIRCRAFT_RADIUS),
     [sky.azimuthDeg, sky.elevationDeg]
+  );
+
+  // Without a reported track there is no attitude to draw, so the model is
+  // replaced by a neutral marker rather than pointing the nose somewhere
+  // invented.
+  const quaternion = useMemo(
+    () =>
+      state.trueTrackDeg === null
+        ? null
+        : aircraftAttitude(state.trueTrackDeg, climbAngle(state.verticalRateMS, state.velocityMS)),
+    [state.trueTrackDeg, state.verticalRateMS, state.velocityMS]
   );
 
   const showLabel = hovered || sky.elevationDeg >= LABEL_ELEVATION_MIN;
@@ -70,7 +90,23 @@ function AircraftMarker({ entry }: { entry: LiveAircraft }) {
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
 
-      <AircraftGlyph trueTrackDeg={state.trueTrackDeg} />
+      {/* dispose={null}: the geometry and materials are shared by every
+          aircraft, and contacts unmount constantly as they leave the sky or
+          drop out of the feed. Letting R3F free them with the first departure
+          would take every other aircraft down with it. */}
+      {quaternion ? (
+        <mesh
+          geometry={aircraftGeometry()}
+          material={hovered ? aircraftMaterials().hovered : aircraftMaterials().base}
+          quaternion={quaternion}
+          scale={hovered ? 1.3 : 1}
+          dispose={null}
+        />
+      ) : (
+        <mesh material={hovered ? aircraftMaterials().hovered : aircraftMaterials().base} dispose={null}>
+          <octahedronGeometry args={[1.1]} />
+        </mesh>
+      )}
 
       {showLabel && (
         <FrontFacingHtml position={[0, 0, 0]} offsetYPx={hovered ? -60 : -14}>
