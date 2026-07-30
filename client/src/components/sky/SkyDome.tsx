@@ -12,11 +12,15 @@ import type { ExplainResult, ExplainSubject } from '../../lib/explain';
 import type { IdentifyCandidate } from '../../lib/identify';
 import { toExplainSubject } from '../../lib/identify';
 import { useAircraft } from '../../hooks/useAircraft';
+import { useCameraStream } from '../../hooks/useCameraStream';
+import { useDeviceOrientation } from '../../hooks/useDeviceOrientation';
 import { useSkyObjects } from '../../hooks/useSkyObjects';
 import { usePlanetPositions } from '../../hooks/usePlanetPositions';
 import type { LiveAircraft } from '../../hooks/useAircraft';
+import type { LookDirection } from '../../lib/deviceOrientation';
 import { AircraftLayer } from './AircraftLayer';
 import { CameraAim, type AimTarget } from './CameraAim';
+import { OrientationCamera } from './OrientationCamera';
 import { DomeShell } from './DomeShell';
 import { PlanetLayer } from './PlanetLayer';
 import { SatelliteMarker } from './SatelliteMarker';
@@ -140,6 +144,7 @@ interface SceneProps {
   identifyRequest: number;
   onIdentifyMatch: (subject: ExplainSubject | null, requestId: number) => void;
   aircraft: LiveAircraft[];
+  orientationLook: LookDirection | null;
 }
 
 function SkyScene({
@@ -155,6 +160,7 @@ function SkyScene({
   identifyRequest,
   onIdentifyMatch,
   aircraft,
+  orientationLook,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
@@ -319,7 +325,7 @@ function SkyScene({
         maxPolarAngle={Math.PI - 0.02}
       />
       <FovZoom />
-      <CameraAim target={aimTarget} />
+      {orientationLook ? <OrientationCamera look={orientationLook} /> : <CameraAim target={aimTarget} />}
       {import.meta.env.DEV && <DevProbe satellites={satellites} aircraft={aircraft} />}
     </>
   );
@@ -358,6 +364,22 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
   // Aircraft are live-only: they are where they are now, so they are not tied
   // to the time scrubber the way propagated satellite positions are.
   const aircraftFeed = useAircraft(observer, layers.aircraft);
+
+  // "Point at the sky" mode. Sensors and camera are separate opt-ins: motion
+  // control is useful on its own, and the camera passthrough is the heavier
+  // ask (a second permission, plus real battery cost).
+  const orientation = useDeviceOrientation();
+  const camera = useCameraStream();
+  const orientationActive = orientation.state === 'active' && orientation.look !== null;
+
+  const toggleSkyMode = () => {
+    if (orientation.state === 'idle' || orientation.state === 'denied' || orientation.state === 'no-signal') {
+      orientation.enable();
+    } else {
+      orientation.disable();
+      camera.disable();
+    }
+  };
 
   const toggleLayer = (key: keyof SkyLayers) =>
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -412,6 +434,18 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
 
   return (
     <div className="relative w-full h-[clamp(360px,58vh,620px)] rounded-xl overflow-hidden glass-panel">
+      {/* Live camera passthrough, behind everything. Muted + playsInline so
+          mobile browsers will autoplay it without a further gesture. */}
+      {camera.state === 'active' && (
+        <video
+          ref={camera.videoRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          muted
+          playsInline
+          autoPlay
+        />
+      )}
+
       {loading ? (
         <div className="absolute inset-0 grid place-items-center">
           <div className="flex flex-col items-center gap-3">
@@ -424,6 +458,8 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
           camera={{ fov: 60, near: 0.005, far: DOME_RADIUS * 3, position: CAMERA_START }}
           onPointerMissed={() => setSelected(null)}
           dpr={[1, 2]}
+          gl={{ alpha: true }}
+          style={camera.state === 'active' ? { background: 'transparent' } : undefined}
         >
           <Suspense fallback={null}>
             <SkyScene
@@ -439,6 +475,7 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
               identifyRequest={identifyRequest}
               onIdentifyMatch={handleIdentifyMatch}
               aircraft={aircraftFeed.aircraft}
+              orientationLook={orientationActive ? orientation.look : null}
             />
           </Suspense>
         </Canvas>
@@ -461,6 +498,38 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
             <div className="text-glow-400 font-mono text-sm font-semibold">{visibleCount}</div>
           </div>
           <div className="flex items-center gap-2">
+            {!loading && (
+              <button
+                type="button"
+                onClick={toggleSkyMode}
+                aria-pressed={orientationActive}
+                className={`pointer-events-auto text-xs px-2.5 py-1.5 rounded-lg border transition ${
+                  orientationActive
+                    ? 'bg-glow-600/25 text-glow-400 border-glow-600/50'
+                    : 'bg-glow-600/15 text-glow-400 border-glow-600/30 hover:bg-glow-600/25'
+                }`}
+              >
+                {orientation.state === 'requesting'
+                  ? 'Starting…'
+                  : orientationActive
+                    ? 'Stop pointing'
+                    : 'Point at sky'}
+              </button>
+            )}
+            {orientationActive && (
+              <button
+                type="button"
+                onClick={() => (camera.state === 'active' ? camera.disable() : camera.enable())}
+                aria-pressed={camera.state === 'active'}
+                className={`pointer-events-auto text-xs px-2.5 py-1.5 rounded-lg border transition ${
+                  camera.state === 'active'
+                    ? 'bg-glow-600/25 text-glow-400 border-glow-600/50'
+                    : 'bg-space-900/60 text-space-300 border-space-700 hover:text-space-200'
+                }`}
+              >
+                {camera.state === 'requesting' ? 'Starting…' : 'Camera'}
+              </button>
+            )}
             {!loading && (
               <button
                 type="button"
@@ -487,6 +556,39 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
             </div>
           </div>
         </div>
+
+        {orientationActive && (
+          <div className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm">
+            <p className="text-xs text-space-200">
+              Pointing mode — move your phone to look around.
+            </p>
+            <p className="text-[11px] text-space-300 mt-0.5">
+              {orientation.headingIsRelative
+                ? 'No true-north compass on this device, so the bearing is relative — the sky may be rotated.'
+                : 'Phone compasses are typically accurate to only about 10-15°, so expect some offset.'}
+            </p>
+          </div>
+        )}
+
+        {(orientation.state === 'denied' ||
+          orientation.state === 'unsupported' ||
+          orientation.state === 'no-signal') && (
+          <div className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm">
+            <p className="text-xs text-amber-glow">
+              {orientation.state === 'denied'
+                ? 'Motion access was declined, so pointing mode is off. You can still drag to look around.'
+                : orientation.state === 'unsupported'
+                  ? "This browser doesn't expose motion sensors. Drag to look around instead."
+                  : 'No motion sensors responded — this is usually a desktop or a device without a compass. Drag to look around instead.'}
+            </p>
+          </div>
+        )}
+
+        {camera.state === 'denied' && camera.error && (
+          <div className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm">
+            <p className="text-xs text-amber-glow">Camera unavailable: {camera.error}</p>
+          </div>
+        )}
 
         {!loading && layers.aircraft && aircraftFeed.status === 'unavailable' && (
           <div className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm">
