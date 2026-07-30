@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { CloudCover } from './CloudCover';
 import type { Pass } from '../types';
 
 type SortKey = 'start' | 'magnitude' | 'duration' | 'maxAltitude';
@@ -137,7 +138,7 @@ export function PassTable({
   return (
     <div className="glass-panel rounded-xl overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse min-w-[820px]">
+        <table className="w-full text-sm border-collapse min-w-[900px]">
           <thead>
             <tr className="border-b border-space-700/70">
               <th className="text-left px-4 py-3"><SortHeader label="Date" sortKey="start" active={sortKey === 'start'} dir={sortDir} onSort={handleSort} /></th>
@@ -147,6 +148,9 @@ export function PassTable({
               <th className="text-left px-3 py-3"><SortHeader label="Max alt" sortKey="maxAltitude" active={sortKey === 'maxAltitude'} dir={sortDir} onSort={handleSort} /></th>
               <th className="text-left px-3 py-3">End</th>
               <th className="text-left px-3 py-3"><SortHeader label="Duration" sortKey="duration" active={sortKey === 'duration'} dir={sortDir} onSort={handleSort} /></th>
+              <th className="text-left px-3 py-3">
+                <span className="uppercase tracking-wider text-[11px] font-medium text-space-300" title="Forecast cloud cover at the pass maximum">Sky</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -171,6 +175,7 @@ export function PassTable({
                   {p.endReason === 'shadow' && <span className="ml-1 text-[10px] text-space-500" title="Satellite enters Earth's shadow">🌑</span>}
                 </td>
                 <td className="px-3 py-3 whitespace-nowrap text-space-300 font-mono text-xs">{Math.round(p.durationSeconds / 60)} min</td>
+                <td className="px-3 py-3 whitespace-nowrap"><CloudCover percent={p.cloudCoverPercent} /></td>
               </tr>
             ))}
           </tbody>

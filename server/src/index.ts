@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
 import type { EpochSpan } from "./elements.js";
+import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js";
 import { computeVisiblePasses, DEFAULT_PASS_OPTIONS } from "./passes.js";
 import type { Observer, Pass } from "./types.js";
 
@@ -108,6 +109,19 @@ app.get("/api/passes", async (req, res) => {
     }
     passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
 
+    // Cloud cover is advisory: a forecast failure must not fail the prediction,
+    // so this never rejects and passes simply carry a null when it is missing.
+    let weatherStatus: WeatherStatus = "unavailable";
+    let weatherError: string | undefined;
+    if (req.query.weather !== "0") {
+      const { forecast, status, error } = await getCloudForecast(observer.latitude, observer.longitude);
+      weatherStatus = status;
+      weatherError = error;
+      for (const pass of passes) {
+        pass.cloudCoverPercent = cloudCoverAt(forecast, new Date(pass.max.time));
+      }
+    }
+
     res.json({
       observer,
       days,
@@ -117,6 +131,7 @@ app.get("/api/passes", async (req, res) => {
       epoch,
       satelliteCount: tles.length,
       passCount: passes.length,
+      weather: { status: weatherStatus, error: weatherError },
       // Reported so an empty list can explain itself rather than looking broken.
       tooFaintCount,
       brightestRejectedMagnitude: brightestRejected,

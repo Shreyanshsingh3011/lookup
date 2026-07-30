@@ -21,4 +21,9 @@ export interface Pass {
   magnitude: number | null; // brightest (lowest) magnitude reached during the pass
   durationSeconds: number;
   endReason: "set" | "shadow" | "daylight";
+  /**
+   * Forecast cloud cover percent at the pass maximum, or null when no forecast
+   * covers that time. Advisory only — it never affects whether a pass is listed.
+   */
+  cloudCoverPercent?: number | null;
 }

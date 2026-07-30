@@ -12,9 +12,11 @@ A Heavens-Above-style satellite tracker: visible pass predictions, an interactiv
 
 **Milestone 4:** click a pass for its 2D polar sky-track chart, with a print view, and a "Show in 3D" jump that drives the dome to that pass.
 
-**Milestone 5 (this commit):** operator-supplied elements via `TLE_FILE`, element-age reporting on every response, and tests for the TLE parser and epoch decoder.
+**Milestone 5:** operator-supplied elements via `TLE_FILE`, element-age reporting on every response, and tests for the TLE parser and epoch decoder.
 
-Not yet built: additional satellite groups (Starlink trains, visual-brightest) in the UI, cloud-cover flagging via Open-Meteo, and NASA `.glb` spacecraft models.
+**Milestone 6 (this commit):** Open-Meteo cloud-cover forecasts flagged against each pass, and a lazy external-model loader with procedural fallback.
+
+Not yet built: additional satellite groups (Starlink trains, visual-brightest) in the UI, daylight-pass listings, and a daylight sky in the dome.
 
 ## Structure
 
@@ -36,7 +38,7 @@ npm run dev:client   # http://localhost:5173 (proxies /api to the server)
 ## Backend
 
 - `GET /api/tle/:group` — cached TLE fetch from Celestrak (`stations`, `visual`, `starlink`, `brightest`). Cache TTL is 4 hours.
-- `GET /api/passes?lat=&lon=&alt=&groups=&days=&minEl=` — computes visible passes (satellite sunlit + observer in darkness + above the elevation threshold) over the next N days.
+- `GET /api/passes?lat=&lon=&alt=&groups=&days=&minEl=&maxMag=&weather=` — computes visible passes (satellite sunlit + observer in darkness + above the elevation threshold + brighter than the magnitude cutoff) over the next N days, annotated with forecast cloud cover. `weather=0` skips the forecast.
 
 Both responses carry a `source` field describing element provenance, which the UI surfaces:
 
@@ -87,7 +89,50 @@ Lives in `server/src/passes.ts`:
 - **Trails** are re-derived analytically by propagating backwards from the display time rather than accumulating a rolling buffer of observed samples. That keeps them stateless and therefore correct while scrubbing or playing back, not only while time advances in real time.
 - **Labels** use drei's `Html`, wrapped in a `FrontFacingHtml` guard. A perspective projection maps points behind the camera back onto the viewport inverted, so without the guard the southern cardinal labels show up while you're facing north.
 - **Aiming.** The view swings to whatever is highest above the horizon when the sky goes from empty to occupied, and to any satellite you select; grabbing the sky cancels the animation so you never fight the camera.
-- Satellite models are procedural low-poly (an ISS-shaped truss with four array pairs, and a generic box-plus-wings bus). NASA's `.glb` models are a later addition.
+- Satellite models are procedural low-poly (an ISS-shaped truss with four array pairs, and a generic box-plus-wings bus), with optional external `.glb` models — see [Spacecraft models](#spacecraft-models).
+
+## Cloud cover
+
+`GET /api/passes` annotates each pass with `cloudCoverPercent`: the forecast
+cloud cover at the pass maximum, from Open-Meteo's hourly data (free, no key).
+The table shows it as a dial and a percentage; the pass detail spells it out.
+
+Weather is **strictly advisory**. A forecast failure must never fail a pass
+prediction, so every path degrades instead of throwing, the upstream call is
+bounded at 5 s, and passes simply carry `null` when no forecast covers them —
+which happens routinely, since passes are predicted 10 days out. Overcast passes
+are still listed, because forecasts are wrong often enough that hiding them
+would be worse than flagging them.
+
+Forecasts are cached for an hour per location rounded to 0.1°, and failures are
+remembered for five minutes so an unreachable service isn't retried on every
+request. `WEATHER_FILE` loads a forecast from a local JSON file instead,
+mirroring `TLE_FILE`.
+
+The response shape is pinned by tests written from Open-Meteo's documentation.
+It has not been checked against the live service, because that host is blocked
+from the environment this was built in — so `parseCloudForecast` validates the
+contract explicitly and throws a specific error if it ever differs, rather than
+silently producing empty forecasts.
+
+## Spacecraft models
+
+Satellites render as procedural low-poly geometry by default. To use a real
+model, convert it to `.glb`, drop it in `client/public/models/`, and either add
+an entry to `MODEL_URLS` in `client/src/lib/satelliteModels.ts` or set
+`VITE_SATELLITE_MODELS='{"25544":"/models/iss.glb"}'` at build time.
+
+No assets are vendored here. NASA publishes spacecraft models at
+[nasa3d.arc.nasa.gov/models](https://nasa3d.arc.nasa.gov/models), but mostly as
+`.3ds`/`.obj`/`.stl` rather than glTF, and they are large, so converting and
+committing them is a deployment decision rather than something baked in.
+
+Loading is lazy, cached per URL, and each marker gets its own clone (an
+`Object3D` has one parent, so sharing would make satellites steal the model from
+each other). Arbitrary model units are normalised by fitting the longest axis to
+a fixed size — a raw model is as likely to be invisible as to swallow the sky. A
+missing or broken model logs a warning and falls back to procedural geometry: it
+is a cosmetic downgrade, not a reason to take the sky view down.
 
 ## Planetarium layers
 

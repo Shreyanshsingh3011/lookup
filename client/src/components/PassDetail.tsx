@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { computePassTrack } from '../lib/passTrack';
+import { CloudCover } from './CloudCover';
 import { PolarSkyChart } from './PolarSkyChart';
 import type { Observer, Pass, TleRecord } from '../types';
 
@@ -152,6 +153,12 @@ export function PassDetail({ pass, observer, tles, onClose, onShowInSky }: Props
                 <dt className="text-[10px] uppercase tracking-wider text-space-300">Travels</dt>
                 <dd className="font-mono text-space-100">
                   {pass.start.direction} → {pass.end.direction}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-space-300">Forecast sky</dt>
+                <dd className="mt-0.5">
+                  <CloudCover percent={pass.cloudCoverPercent} showLabel />
                 </dd>
               </div>
               <div>

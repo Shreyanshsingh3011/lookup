@@ -4,6 +4,7 @@ import { LocationPicker } from './components/LocationPicker';
 import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
 import { SourceBanner } from './components/SourceBanner';
+import { WeatherNotice } from './components/CloudCover';
 import { TimeScrubber } from './components/TimeScrubber';
 import { SkyDome } from './components/sky/SkyDome';
 import { useLocation } from './hooks/useLocation';
@@ -27,6 +28,7 @@ function App() {
     tooFaintCount: number;
     brightestRejectedMagnitude: number | null;
     satelliteCount: number;
+    weather: { status: 'live' | 'cache' | 'unavailable'; error?: string };
   } | null>(null);
 
   const skySectionRef = useRef<HTMLElement>(null);
@@ -74,6 +76,7 @@ function App() {
           tooFaintCount: res.tooFaintCount,
           brightestRejectedMagnitude: res.brightestRejectedMagnitude,
           satelliteCount: res.satelliteCount,
+          weather: res.weather,
         });
         // The previous selection belongs to the old location's predictions.
         setSelectedPass(null);
@@ -156,6 +159,7 @@ function App() {
             brightestRejectedMagnitude={passSummary?.brightestRejectedMagnitude}
             satelliteCount={passSummary?.satelliteCount}
           />
+          {passSummary && <WeatherNotice {...passSummary.weather} />}
         </section>
       </main>
     </div>

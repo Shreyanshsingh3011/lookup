@@ -3,6 +3,7 @@ import { Billboard, Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { azElToVec3, azToCompass, type SkySample } from '../../lib/sky';
+import { useSatelliteModel } from '../../hooks/useSatelliteModel';
 import { FrontFacingHtml } from './FrontFacingHtml';
 
 const BODY_COLOR = '#c9d1e8';
@@ -141,6 +142,9 @@ interface Props {
 export function SatelliteMarker({ sat, selected, onSelect }: Props) {
   const spinRef = useRef<THREE.Group>(null);
   const [hovered, setHovered] = useState(false);
+  // An external model when one is configured for this satellite; otherwise the
+  // procedural geometry below.
+  const model = useSatelliteModel(sat.satnum);
 
   const position = useMemo(
     () => azElToVec3(sat.sample.azimuthDeg, sat.sample.elevationDeg),
@@ -189,7 +193,7 @@ export function SatelliteMarker({ sat, selected, onSelect }: Props) {
         />
 
         <group ref={spinRef} scale={scale}>
-          {isIss ? <IssBody /> : <GenericSatBody />}
+          {model ? <primitive object={model} /> : isIss ? <IssBody /> : <GenericSatBody />}
         </group>
 
         {(selected || hovered) && (

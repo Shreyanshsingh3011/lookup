@@ -21,6 +21,11 @@ export interface Pass {
   magnitude: number | null;
   durationSeconds: number;
   endReason: 'set' | 'shadow' | 'daylight';
+  /**
+   * Forecast cloud cover percent at the pass maximum, or null when no forecast
+   * covers that time. Advisory only — never affects whether a pass is listed.
+   */
+  cloudCoverPercent?: number | null;
 }
 
 /**
@@ -48,6 +53,7 @@ export interface PassesResponse {
   /** Geometrically valid passes omitted for being fainter than the cutoff. */
   tooFaintCount: number;
   brightestRejectedMagnitude: number | null;
+  weather: { status: 'live' | 'cache' | 'unavailable'; error?: string };
   passes: Pass[];
 }
 
