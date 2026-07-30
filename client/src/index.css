@@ -66,14 +66,17 @@ body {
   text-shadow: 0 0 16px rgba(45, 212, 191, 0.5);
 }
 
-/* --- Polar sky chart -------------------------------------------------------
+/* --- Polar sky chart / ground track map -------------------------------------
    Styled here rather than inline so the print rules below can restate the
-   whole palette in one place. */
-.polar-chart .chart-grid {
+   whole palette in one place. Shared chart-* classes are used by both
+   charts; map-* classes are specific to the ground track map. */
+.polar-chart .chart-grid,
+.ground-track-map .chart-grid {
   stroke: var(--color-space-600);
   stroke-width: 1;
 }
-.polar-chart .chart-horizon {
+.polar-chart .chart-horizon,
+.ground-track-map .chart-horizon {
   stroke: var(--color-glow-600);
   stroke-width: 1.5;
 }
@@ -88,7 +91,8 @@ body {
   font-size: 12px;
   font-weight: 600;
 }
-.polar-chart .chart-track-visible {
+.polar-chart .chart-track-visible,
+.ground-track-map .chart-track-visible {
   stroke: var(--color-glow-400);
   stroke-width: 3;
   stroke-linecap: round;
@@ -103,15 +107,39 @@ body {
   stroke: var(--color-glow-400);
   stroke-width: 2;
 }
-.polar-chart .chart-marker-max {
+.polar-chart .chart-marker-max,
+.ground-track-map .chart-marker-max {
   fill: var(--color-glow-400);
   stroke: var(--color-space-950);
   stroke-width: 1.5;
 }
-.polar-chart .chart-marker-label {
+.polar-chart .chart-marker-label,
+.ground-track-map .chart-marker-label {
   fill: var(--color-space-200);
   font-size: 9px;
   font-family: var(--font-mono);
+}
+.ground-track-map .map-land {
+  fill: var(--color-space-700);
+  fill-opacity: 0.55;
+  stroke: var(--color-space-600);
+  stroke-width: 0.5;
+}
+.ground-track-map .map-terminator {
+  stroke: var(--color-space-100);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+  opacity: 0.85;
+}
+.ground-track-map .map-footprint {
+  stroke: var(--color-glow-500);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+}
+.ground-track-map .map-observer {
+  fill: var(--color-amber-glow, #fbbf24);
+  stroke: var(--color-space-950);
+  stroke-width: 1.5;
 }
 
 /* Printing an astronomy tool's dark theme wastes ink and reads poorly, so the
@@ -126,10 +154,12 @@ body {
     border-color: #999 !important;
     backdrop-filter: none !important;
   }
-  .polar-chart .chart-grid {
+  .polar-chart .chart-grid,
+  .ground-track-map .chart-grid {
     stroke: #bbb;
   }
-  .polar-chart .chart-horizon {
+  .polar-chart .chart-horizon,
+  .ground-track-map .chart-horizon {
     stroke: #333;
   }
   .polar-chart .chart-tick,
@@ -139,7 +169,8 @@ body {
   .polar-chart .chart-cardinal-major {
     fill: #000;
   }
-  .polar-chart .chart-track-visible {
+  .polar-chart .chart-track-visible,
+  .ground-track-map .chart-track-visible {
     stroke: #000;
   }
   .polar-chart .chart-track-dim {
@@ -149,14 +180,31 @@ body {
     fill: #fff;
     stroke: #000;
   }
-  .polar-chart .chart-marker-max {
+  .polar-chart .chart-marker-max,
+  .ground-track-map .chart-marker-max {
     fill: #000;
     stroke: #fff;
   }
   .polar-chart .chart-marker-label,
-  .polar-chart figcaption {
+  .polar-chart figcaption,
+  .ground-track-map .chart-marker-label,
+  .ground-track-map figcaption {
     fill: #000;
     color: #000 !important;
+  }
+  .ground-track-map .map-land {
+    fill: #ddd;
+    stroke: #999;
+  }
+  .ground-track-map .map-terminator {
+    stroke: #666;
+  }
+  .ground-track-map .map-footprint {
+    stroke: #000;
+  }
+  .ground-track-map .map-observer {
+    fill: #000;
+    stroke: #fff;
   }
   .print-invert-text,
   .print-invert-text * {

@@ -10,6 +10,7 @@
     "dev:client": "npm run dev -w client",
     "dev:server": "npm run dev -w server",
     "build": "npm run build -w server && npm run build -w client",
-    "build:catalog": "node scripts/build-sky-catalog.mjs"
+    "build:catalog": "node scripts/build-sky-catalog.mjs",
+    "build:worldmap": "node scripts/build-world-map.mjs"
   }
 }

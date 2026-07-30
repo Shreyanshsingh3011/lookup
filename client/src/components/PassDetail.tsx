@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { computePassTrack } from '../lib/passTrack';
 import { CloudCover } from './CloudCover';
+import { GroundTrackMap } from './GroundTrackMap';
 import { PolarSkyChart } from './PolarSkyChart';
 import type { Observer, Pass, TleRecord } from '../types';
 
@@ -179,6 +180,12 @@ export function PassDetail({ pass, observer, tles, onClose, onShowInSky }: Props
               don't.
             </p>
           </div>
+        </div>
+      )}
+
+      {tle && (
+        <div className="mt-5 pt-5 border-t border-space-700/60">
+          <GroundTrackMap pass={pass} tle={tle} observer={observer} />
         </div>
       )}
     </section>

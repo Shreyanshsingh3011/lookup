@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "node --import tsx --test src/lib/boresight.test.ts src/lib/identify.test.ts src/lib/customTle.test.ts",
+    "test": "node --import tsx --test src/lib/boresight.test.ts src/lib/identify.test.ts src/lib/customTle.test.ts src/lib/groundTrack.test.ts",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -29,8 +29,10 @@
     "@vitejs/plugin-react": "^6.0.3",
     "d3-celestial": "^0.7.35",
     "oxlint": "^1.71.0",
+    "topojson-client": "^3.1.0",
     "tsx": "^4.23.1",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "world-atlas": "^2.0.2"
   }
 }
