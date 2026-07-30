@@ -109,11 +109,11 @@ remembered for five minutes so an unreachable service isn't retried on every
 request. `WEATHER_FILE` loads a forecast from a local JSON file instead,
 mirroring `TLE_FILE`.
 
-The response shape is pinned by tests written from Open-Meteo's documentation.
-It has not been checked against the live service, because that host is blocked
-from the environment this was built in — so `parseCloudForecast` validates the
-contract explicitly and throws a specific error if it ever differs, rather than
-silently producing empty forecasts.
+The response shape is pinned by a test fixture — a genuine response captured by
+hand from the live service (that host is blocked from the environment this was
+built in) rather than one written from documentation. `parseCloudForecast`
+still validates the contract explicitly and throws a specific error if the
+shape ever changes, rather than silently producing empty forecasts.
 
 ## Spacecraft models
 
@@ -252,7 +252,8 @@ astronomy-engine, and the TLE parser against realistic CRLF-delimited fixtures.
 
 ## Next steps
 
-1. 2D polar sky-track chart for a selected pass (print/fallback view)
-2. More satellite groups in the UI (Starlink trains, visual-brightest) with filtering
-3. Optional Open-Meteo cloud-cover flagging
+1. Daylight-aware dome (fade sky/stars by sun altitude) and a daylight-pass listing — right now a pass in daylight is silently omitted, and the dome renders full night regardless of the actual time of day
+2. Caching or a background job for pass prediction at Starlink scale — confirmed roughly linear in satellite count (1.6s at 22 objects, 14.8s at 200), so a 1000+ group isn't viable as a synchronous request yet
+3. More satellite groups in the UI (Starlink trains, visual-brightest) with filtering, once (2) makes them affordable
 4. Code-splitting to cut the initial bundle
+5. Tests for the pass-prediction core itself (`passes.ts`) — currently covered only by manual cross-checks against real elements, unlike the parser and epoch modules
