@@ -42,6 +42,17 @@ export type ExplainSubject =
       azimuthDeg: number;
       direction: string;
       constellation: string | null;
+    }
+  | {
+      kind: "aircraft";
+      name: string;
+      elevationDeg: number;
+      azimuthDeg: number;
+      direction: string;
+      altitudeM: number;
+      rangeKm: number;
+      originCountry: string | null;
+      groundSpeedKmH: number | null;
     };
 
 export interface ExplainResult {
@@ -88,6 +99,22 @@ function templateFor(subject: ExplainSubject): string {
         sentences.push(`It's currently about ${Math.round(subject.illuminatedFraction * 100)}% illuminated.`);
       }
       sentences.push("Unlike a star, planets shine with a steady, non-twinkling light because they show a tiny disc rather than a true point source.");
+      return sentences.join(" ");
+    }
+    case "aircraft": {
+      const sentences = [
+        `${subject.name} is an aircraft ${fmt(subject.elevationDeg)}° above your ${subject.direction} horizon, ` +
+          `flying at ${Math.round(subject.altitudeM).toLocaleString()} m and currently about ` +
+          `${fmt(subject.rangeKm)} km away from you.`,
+      ];
+      if (subject.groundSpeedKmH !== null) {
+        sentences.push(`It's moving at roughly ${Math.round(subject.groundSpeedKmH).toLocaleString()} km/h over the ground.`);
+      }
+      sentences.push(
+        "Aircraft are the usual explanation for a moving light that blinks: they carry flashing " +
+          "anti-collision strobes and coloured navigation lights, which is what tells them apart from a " +
+          "satellite's steady, unblinking glide."
+      );
       return sentences.join(" ");
     }
     case "star": {
@@ -180,6 +207,27 @@ export function parseExplainSubject(body: unknown): ExplainSubject | null {
           direction: b.direction,
           magnitude: b.magnitude,
           illuminatedFraction: b.illuminatedFraction,
+        };
+      }
+      return null;
+
+    case "aircraft":
+      if (
+        isFiniteNumber(b.altitudeM) &&
+        isFiniteNumber(b.rangeKm) &&
+        isNullableString(b.originCountry) &&
+        isNullableFiniteNumber(b.groundSpeedKmH)
+      ) {
+        return {
+          kind: "aircraft",
+          name: b.name,
+          elevationDeg: b.elevationDeg,
+          azimuthDeg: b.azimuthDeg,
+          direction: b.direction,
+          altitudeM: b.altitudeM,
+          rangeKm: b.rangeKm,
+          originCountry: b.originCountry,
+          groundSpeedKmH: b.groundSpeedKmH,
         };
       }
       return null;

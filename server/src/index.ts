@@ -4,6 +4,7 @@ import * as satellite from "satellite.js";
 import { fetchSatelliteByCatnr, getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
 import { epochSpan, type EpochSpan } from "./elements.js";
 import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js";
+import { getAircraft } from "./aircraft.js";
 import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
 import type { Observer } from "./types.js";
 import { explainObject, parseExplainSubject } from "./explain.js";
@@ -148,6 +149,32 @@ app.get("/api/passes", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
   }
+});
+
+app.get("/api/aircraft", async (req, res) => {
+  const observer = parseObserver(req);
+  if (!observer) {
+    res.status(400).json({ error: "Provide valid numeric 'lat' (-90..90), 'lon' (-180..180) query params" });
+    return;
+  }
+  const radiusKm = req.query.radiusKm !== undefined ? Number(req.query.radiusKm) : undefined;
+  if (radiusKm !== undefined && (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 500)) {
+    res.status(400).json({ error: "'radiusKm' must be a number between 0 and 500." });
+    return;
+  }
+
+  // Never fails the request: an unreachable or rate-limited upstream reports
+  // status "unavailable" so the UI can say so, exactly like cloud cover.
+  const { snapshot, status, error } = await getAircraft(observer.latitude, observer.longitude, radiusKm);
+  res.json({
+    observer: { latitude: observer.latitude, longitude: observer.longitude },
+    status,
+    error,
+    time: snapshot?.time ?? null,
+    fetchedAt: snapshot ? new Date(snapshot.fetchedAt).toISOString() : null,
+    count: snapshot?.aircraft.length ?? 0,
+    aircraft: snapshot?.aircraft ?? [],
+  });
 });
 
 function parseObserverBody(body: unknown): Observer | null {

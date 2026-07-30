@@ -1,3 +1,4 @@
+import type { AircraftResponse } from '../lib/aircraft';
 import type { ExplainResult, ExplainSubject } from '../lib/explain';
 import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
 import type { CustomPassesResponse, Observer, PassesResponse, SingleTleResponse, TleRecord, TleResponse } from '../types';
@@ -41,6 +42,15 @@ export function fetchOrbitAdvice(request: OrbitAdviceRequest): Promise<OrbitAdvi
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   });
+}
+
+export function fetchAircraft(observer: Observer, radiusKm?: number): Promise<AircraftResponse> {
+  const params = new URLSearchParams({
+    lat: String(observer.latitude),
+    lon: String(observer.longitude),
+  });
+  if (radiusKm !== undefined) params.set('radiusKm', String(radiusKm));
+  return apiFetch<AircraftResponse>(`/api/aircraft?${params.toString()}`);
 }
 
 export function fetchSatelliteByNorad(catnr: string): Promise<SingleTleResponse> {

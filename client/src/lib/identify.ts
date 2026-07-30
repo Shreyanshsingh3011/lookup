@@ -1,3 +1,4 @@
+import { aircraftLabel, type AircraftState, type SkyPosition } from './aircraft';
 import { azToCompass } from './sky';
 import type { LiveSatellite } from '../components/sky/SatelliteMarker';
 import type { PlanetPosition } from '../hooks/usePlanetPositions';
@@ -19,7 +20,8 @@ export interface NamedStar {
 export type IdentifyCandidate =
   | { kind: 'satellite'; sat: LiveSatellite }
   | { kind: 'planet'; planet: PlanetPosition }
-  | { kind: 'star'; star: NamedStar; azimuthDeg: number; elevationDeg: number };
+  | { kind: 'star'; star: NamedStar; azimuthDeg: number; elevationDeg: number }
+  | { kind: 'aircraft'; aircraft: AircraftState; sky: SkyPosition };
 
 /** Convert whichever candidate the boresight search matched into the shape /api/explain expects. */
 export function toExplainSubject(candidate: IdentifyCandidate): ExplainSubject {
@@ -48,6 +50,21 @@ export function toExplainSubject(candidate: IdentifyCandidate): ExplainSubject {
         direction: azToCompass(planet.azimuthDeg),
         magnitude: planet.magnitude,
         illuminatedFraction: planet.phase,
+      };
+    }
+    case 'aircraft': {
+      const { aircraft, sky } = candidate;
+      return {
+        kind: 'aircraft',
+        name: aircraftLabel(aircraft),
+        elevationDeg: sky.elevationDeg,
+        azimuthDeg: sky.azimuthDeg,
+        direction: azToCompass(sky.azimuthDeg),
+        altitudeM: aircraft.altitudeM,
+        rangeKm: sky.rangeKm,
+        originCountry: aircraft.originCountry || null,
+        // Reported in metres per second; the UI and the explanation both talk in km/h.
+        groundSpeedKmH: aircraft.velocityMS === null ? null : aircraft.velocityMS * 3.6,
       };
     }
     case 'star': {

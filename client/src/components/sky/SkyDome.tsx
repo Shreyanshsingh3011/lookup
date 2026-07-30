@@ -11,8 +11,11 @@ import { findBoresightMatch } from '../../lib/boresight';
 import type { ExplainResult, ExplainSubject } from '../../lib/explain';
 import type { IdentifyCandidate } from '../../lib/identify';
 import { toExplainSubject } from '../../lib/identify';
+import { useAircraft } from '../../hooks/useAircraft';
 import { useSkyObjects } from '../../hooks/useSkyObjects';
 import { usePlanetPositions } from '../../hooks/usePlanetPositions';
+import type { LiveAircraft } from '../../hooks/useAircraft';
+import { AircraftLayer } from './AircraftLayer';
 import { CameraAim, type AimTarget } from './CameraAim';
 import { DomeShell } from './DomeShell';
 import { PlanetLayer } from './PlanetLayer';
@@ -98,14 +101,20 @@ function FovZoom() {
  * Exposes the live scene for debugging and browser-driven checks. Guarded by
  * `import.meta.env.DEV`, so it is dead code in production bundles.
  */
-function DevProbe({ satellites }: { satellites: ReturnType<typeof useSkyObjects> }) {
+function DevProbe({
+  satellites,
+  aircraft,
+}: {
+  satellites: ReturnType<typeof useSkyObjects>;
+  aircraft: LiveAircraft[];
+}) {
   const camera = useThree((s) => s.camera);
   const scene = useThree((s) => s.scene);
   const controls = useThree((s) => s.controls);
 
   useEffect(() => {
-    (window as unknown as Record<string, unknown>).__sky = { camera, scene, satellites, controls };
-  }, [camera, scene, satellites, controls]);
+    (window as unknown as Record<string, unknown>).__sky = { camera, scene, satellites, controls, aircraft };
+  }, [camera, scene, satellites, controls, aircraft]);
 
   return null;
 }
@@ -115,6 +124,7 @@ export interface SkyLayers {
   stars: boolean;
   constellations: boolean;
   planets: boolean;
+  aircraft: boolean;
 }
 
 interface SceneProps {
@@ -129,6 +139,7 @@ interface SceneProps {
   layers: SkyLayers;
   identifyRequest: number;
   onIdentifyMatch: (subject: ExplainSubject | null, requestId: number) => void;
+  aircraft: LiveAircraft[];
 }
 
 function SkyScene({
@@ -143,6 +154,7 @@ function SkyScene({
   layers,
   identifyRequest,
   onIdentifyMatch,
+  aircraft,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
@@ -193,6 +205,16 @@ function SkyScene({
       }
     }
 
+    if (layers.aircraft) {
+      for (const entry of aircraft) {
+        candidates.push({
+          azimuthDeg: entry.sky.azimuthDeg,
+          elevationDeg: entry.sky.elevationDeg,
+          data: { kind: 'aircraft', aircraft: entry.state, sky: entry.sky },
+        });
+      }
+    }
+
     const match = findBoresightMatch(camera, candidates);
     onIdentifyMatch(match ? toExplainSubject(match.data) : null, identifyRequest);
   }, [
@@ -201,6 +223,8 @@ function SkyScene({
     planetPositions,
     layers.planets,
     layers.stars,
+    layers.aircraft,
+    aircraft,
     lstRad,
     observer.latitude,
     camera,
@@ -269,6 +293,8 @@ function SkyScene({
         />
       )}
 
+      {layers.aircraft && aircraft.length > 0 && <AircraftLayer aircraft={aircraft} />}
+
       {satellites.map((sat) => (
         <SatelliteMarker
           key={sat.satnum}
@@ -294,7 +320,7 @@ function SkyScene({
       />
       <FovZoom />
       <CameraAim target={aimTarget} />
-      {import.meta.env.DEV && <DevProbe satellites={satellites} />}
+      {import.meta.env.DEV && <DevProbe satellites={satellites} aircraft={aircraft} />}
     </>
   );
 }
@@ -312,6 +338,7 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
   { key: 'stars', label: 'Stars' },
   { key: 'constellations', label: 'Constellations' },
   { key: 'planets', label: 'Planets' },
+  { key: 'aircraft', label: 'Aircraft' },
 ];
 
 type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
@@ -325,7 +352,12 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
     stars: true,
     constellations: true,
     planets: true,
+    aircraft: true,
   });
+
+  // Aircraft are live-only: they are where they are now, so they are not tied
+  // to the time scrubber the way propagated satellite positions are.
+  const aircraftFeed = useAircraft(observer, layers.aircraft);
 
   const toggleLayer = (key: keyof SkyLayers) =>
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -406,6 +438,7 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
               layers={layers}
               identifyRequest={identifyRequest}
               onIdentifyMatch={handleIdentifyMatch}
+              aircraft={aircraftFeed.aircraft}
             />
           </Suspense>
         </Canvas>
@@ -454,6 +487,14 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
             </div>
           </div>
         </div>
+
+        {!loading && layers.aircraft && aircraftFeed.status === 'unavailable' && (
+          <div className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm">
+            <p className="text-xs text-amber-glow">
+              Live aircraft unavailable{aircraftFeed.error ? `: ${aircraftFeed.error}` : '.'}
+            </p>
+          </div>
+        )}
 
         {!loading && layers.satellites && visibleCount === 0 && identifyStatus === 'idle' && (
           <div className="self-center glass-panel rounded-lg px-4 py-2.5 text-center max-w-xs">

@@ -20904,7 +20904,7 @@ var require_application = __commonJS({
     };
     app2.del = deprecate.function(app2.delete, "app.del: Use app.delete instead");
     app2.render = function render(name, options, callback) {
-      var cache3 = this.cache;
+      var cache4 = this.cache;
       var done = callback;
       var engines = this.engines;
       var opts = options;
@@ -20923,7 +20923,7 @@ var require_application = __commonJS({
         renderOptions.cache = this.enabled("view cache");
       }
       if (renderOptions.cache) {
-        view = cache3[name];
+        view = cache4[name];
       }
       if (!view) {
         var View2 = this.get("view");
@@ -20939,7 +20939,7 @@ var require_application = __commonJS({
           return done(err);
         }
         if (renderOptions.cache) {
-          cache3[name] = view;
+          cache4[name] = view;
         }
       }
       tryRender(view, renderOptions, done);
@@ -25259,7 +25259,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client2) {
   };
 }
 function createMiddlewareContext(options, client2) {
-  const cache3 = /* @__PURE__ */ new WeakMap();
+  const cache4 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -25269,10 +25269,10 @@ function createMiddlewareContext(options, client2) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options);
       }
-      let parsed = cache3.get(response);
+      let parsed = cache4.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options);
-        cache3.set(response, parsed);
+        cache4.set(response, parsed);
       }
       return parsed;
     }
@@ -34818,10 +34818,10 @@ var init_client = __esm({
         } else {
           this._authState = { provider: null, tokenCache: null, resolution: null, error: null, extraHeaders: {} };
           if (this.apiKey == null && this.authToken == null) {
-            const credentials = options.credentials ?? null;
-            if (credentials) {
-              this._authState.provider = credentials;
-              this._authState.tokenCache = this._makeTokenCache(credentials);
+            const credentials2 = options.credentials ?? null;
+            if (credentials2) {
+              this._authState.provider = credentials2;
+              this._authState.tokenCache = this._makeTokenCache(credentials2);
             } else if (options.config != null) {
               const result = resolveCredentialsFromConfig(options.config, this._credentialResolverOptions());
               this._authState.provider = result.provider;
@@ -35826,6 +35826,190 @@ function cloudCoverAt(forecast, date) {
   if (!forecast) return null;
   const rounded = new Date(Math.round(date.getTime() / 36e5) * 36e5);
   return forecast.hourly.get(hourKey(rounded)) ?? null;
+}
+
+// src/aircraft.ts
+import { readFileSync as readFileSync3 } from "node:fs";
+var OPENSKY_STATES_URL = "https://opensky-network.org/api/states/all";
+var OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
+var CACHE_TTL_MS3 = Number(process.env.OPENSKY_CACHE_TTL_MS) || 6e4;
+var DEFAULT_RADIUS_KM = 150;
+var REQUEST_TIMEOUT_MS2 = 8e3;
+var FAILURE_TTL_MS2 = 2 * 60 * 1e3;
+var IDX = {
+  icao24: 0,
+  callsign: 1,
+  originCountry: 2,
+  lastContact: 4,
+  longitude: 5,
+  latitude: 6,
+  baroAltitude: 7,
+  onGround: 8,
+  velocity: 9,
+  trueTrack: 10,
+  verticalRate: 11,
+  geoAltitude: 13
+};
+function numberOrNull(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+function parseStates(payload) {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("OpenSky response was not an object");
+  }
+  const body = payload;
+  const time = numberOrNull(body.time);
+  if (time === null) {
+    throw new Error("OpenSky response had no numeric 'time'");
+  }
+  const states = body.states;
+  if (states === null || states === void 0) {
+    return { time, fetchedAt: Date.now(), aircraft: [] };
+  }
+  if (!Array.isArray(states)) {
+    throw new Error("OpenSky 'states' was neither an array nor null");
+  }
+  const aircraft = [];
+  for (const state of states) {
+    if (!Array.isArray(state)) continue;
+    const icao24 = state[IDX.icao24];
+    const latitude = numberOrNull(state[IDX.latitude]);
+    const longitude = numberOrNull(state[IDX.longitude]);
+    const altitude = numberOrNull(state[IDX.geoAltitude]) ?? numberOrNull(state[IDX.baroAltitude]);
+    if (typeof icao24 !== "string" || latitude === null || longitude === null || altitude === null) {
+      continue;
+    }
+    const callsign = typeof state[IDX.callsign] === "string" ? state[IDX.callsign].trim() : "";
+    aircraft.push({
+      icao24,
+      callsign: callsign.length > 0 ? callsign : null,
+      originCountry: typeof state[IDX.originCountry] === "string" ? state[IDX.originCountry] : "",
+      latitudeDeg: latitude,
+      longitudeDeg: longitude,
+      altitudeM: altitude,
+      velocityMS: numberOrNull(state[IDX.velocity]),
+      trueTrackDeg: numberOrNull(state[IDX.trueTrack]),
+      verticalRateMS: numberOrNull(state[IDX.verticalRate]),
+      onGround: state[IDX.onGround] === true,
+      lastContact: numberOrNull(state[IDX.lastContact]) ?? time
+    });
+  }
+  return { time, fetchedAt: Date.now(), aircraft };
+}
+function boundingBox(latitudeDeg, longitudeDeg, radiusKm = DEFAULT_RADIUS_KM) {
+  const latDelta = radiusKm / 111.32;
+  const cosLat = Math.cos(latitudeDeg * Math.PI / 180);
+  const lonDelta = radiusKm / (111.32 * Math.max(cosLat, 0.01));
+  return {
+    lamin: Math.max(-90, latitudeDeg - latDelta),
+    lamax: Math.min(90, latitudeDeg + latDelta),
+    lomin: Math.max(-180, longitudeDeg - lonDelta),
+    lomax: Math.min(180, longitudeDeg + lonDelta)
+  };
+}
+function credentials() {
+  const clientId = process.env.OPENSKY_CLIENT_ID?.trim();
+  const clientSecret = process.env.OPENSKY_CLIENT_SECRET?.trim();
+  if (clientId && clientSecret) return { kind: "oauth", clientId, clientSecret };
+  const username = process.env.OPENSKY_USERNAME?.trim();
+  const password = process.env.OPENSKY_PASSWORD?.trim();
+  if (username && password) return { kind: "basic", username, password };
+  return { kind: "anonymous" };
+}
+var cachedToken = null;
+async function oauthToken(clientId, clientSecret) {
+  if (cachedToken && Date.now() < cachedToken.expiresAt) return cachedToken.value;
+  const res = await fetch(OPENSKY_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2)
+  });
+  if (!res.ok) {
+    throw new Error(`OpenSky token request failed: ${res.status}`);
+  }
+  const body = await res.json();
+  if (typeof body.access_token !== "string") {
+    throw new Error("OpenSky token response had no access_token");
+  }
+  const expiresIn = typeof body.expires_in === "number" ? body.expires_in : 1800;
+  cachedToken = { value: body.access_token, expiresAt: Date.now() + (expiresIn - 60) * 1e3 };
+  return cachedToken.value;
+}
+async function fetchStates(latitudeDeg, longitudeDeg, radiusKm) {
+  const box = boundingBox(latitudeDeg, longitudeDeg, radiusKm);
+  const params = new URLSearchParams({
+    lamin: box.lamin.toFixed(4),
+    lomin: box.lomin.toFixed(4),
+    lamax: box.lamax.toFixed(4),
+    lomax: box.lomax.toFixed(4)
+  });
+  const headers = { "User-Agent": "lookup-satellite-tracker/0.1" };
+  const creds = credentials();
+  if (creds.kind === "basic") {
+    headers.Authorization = `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString("base64")}`;
+  } else if (creds.kind === "oauth") {
+    headers.Authorization = `Bearer ${await oauthToken(creds.clientId, creds.clientSecret)}`;
+  }
+  const res = await fetch(`${OPENSKY_STATES_URL}?${params.toString()}`, {
+    headers,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2)
+  });
+  if (!res.ok) {
+    const hint = res.status === 429 ? " (rate limit \u2014 set OPENSKY_CLIENT_ID/SECRET for a higher quota)" : "";
+    throw new Error(`OpenSky request failed: ${res.status}${hint}`);
+  }
+  return parseStates(await res.json());
+}
+var cache3 = /* @__PURE__ */ new Map();
+var inFlight3 = /* @__PURE__ */ new Map();
+var failures2 = /* @__PURE__ */ new Map();
+function cacheKey2(latitudeDeg, longitudeDeg, radiusKm) {
+  const round = (n) => (Math.round(n * 2) / 2).toFixed(1);
+  return `${round(latitudeDeg)},${round(longitudeDeg)},${radiusKm}`;
+}
+async function getAircraft(latitudeDeg, longitudeDeg, radiusKm = DEFAULT_RADIUS_KM) {
+  const overridePath = process.env.AIRCRAFT_FILE?.trim();
+  if (overridePath) {
+    try {
+      return { snapshot: parseStates(JSON.parse(readFileSync3(overridePath, "utf8"))), status: "live" };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { snapshot: null, status: "unavailable", error: `AIRCRAFT_FILE at '${overridePath}': ${message}` };
+    }
+  }
+  const key = cacheKey2(latitudeDeg, longitudeDeg, radiusKm);
+  const cached = cache3.get(key);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS3) {
+    return { snapshot: cached, status: "live" };
+  }
+  const failure = failures2.get(key);
+  if (failure && Date.now() - failure.at < FAILURE_TTL_MS2) {
+    return cached ? { snapshot: cached, status: "cache", error: failure.error } : { snapshot: null, status: "unavailable", error: failure.error };
+  }
+  let pending = inFlight3.get(key);
+  if (!pending) {
+    pending = fetchStates(latitudeDeg, longitudeDeg, radiusKm).then((snapshot) => {
+      cache3.set(key, snapshot);
+      failures2.delete(key);
+      return snapshot;
+    }).finally(() => {
+      inFlight3.delete(key);
+    });
+    inFlight3.set(key, pending);
+  }
+  try {
+    return { snapshot: await pending, status: "live" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    failures2.set(key, { at: Date.now(), error: message });
+    if (cached) return { snapshot: cached, status: "cache", error: message };
+    return { snapshot: null, status: "unavailable", error: message };
+  }
 }
 
 // src/passes.ts
@@ -38221,14 +38405,14 @@ function GravFromState(entry) {
   const grav = new body_grav_calc_t(state.tt, r, v, a);
   return new grav_sim_t(bary, grav);
 }
-function GetSegment(cache3, tt) {
+function GetSegment(cache4, tt) {
   const t0 = PlutoStateTable[0][0];
   if (tt < t0 || tt > PlutoStateTable[PLUTO_NUM_STATES - 1][0]) {
     return null;
   }
   const seg_index = ClampIndex((tt - t0) / PLUTO_TIME_STEP, PLUTO_NUM_STATES - 1);
-  if (!cache3[seg_index]) {
-    const seg = cache3[seg_index] = [];
+  if (!cache4[seg_index]) {
+    const seg = cache4[seg_index] = [];
     seg[0] = GravFromState(PlutoStateTable[seg_index]).grav;
     seg[PLUTO_NSTEPS - 1] = GravFromState(PlutoStateTable[seg_index + 1]).grav;
     let i;
@@ -38247,7 +38431,7 @@ function GetSegment(cache3, tt) {
       seg[i].a = seg[i].a.mul(1 - ramp).add(reverse[i].a.mul(ramp));
     }
   }
-  return cache3[seg_index];
+  return cache4[seg_index];
 }
 function CalcPlutoOneWay(entry, target_tt, dt) {
   let sim = GravFromState(entry);
@@ -41571,12 +41755,12 @@ function finalizePass(samples, tle, opts, out, rejectedMagnitudes, terminator) {
 // src/ai.ts
 init_sdk();
 var MODEL = "claude-sonnet-5";
-var REQUEST_TIMEOUT_MS2 = 12e3;
+var REQUEST_TIMEOUT_MS3 = 12e3;
 var client;
 function getClient() {
   if (client !== void 0) return client;
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  client = apiKey ? new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS2 }) : null;
+  client = apiKey ? new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS3 }) : null;
   return client;
 }
 function aiAvailable() {
@@ -41635,6 +41819,18 @@ function templateFor(subject) {
         sentences.push(`It's currently about ${Math.round(subject.illuminatedFraction * 100)}% illuminated.`);
       }
       sentences.push("Unlike a star, planets shine with a steady, non-twinkling light because they show a tiny disc rather than a true point source.");
+      return sentences.join(" ");
+    }
+    case "aircraft": {
+      const sentences = [
+        `${subject.name} is an aircraft ${fmt(subject.elevationDeg)}\xB0 above your ${subject.direction} horizon, flying at ${Math.round(subject.altitudeM).toLocaleString()} m and currently about ${fmt(subject.rangeKm)} km away from you.`
+      ];
+      if (subject.groundSpeedKmH !== null) {
+        sentences.push(`It's moving at roughly ${Math.round(subject.groundSpeedKmH).toLocaleString()} km/h over the ground.`);
+      }
+      sentences.push(
+        "Aircraft are the usual explanation for a moving light that blinks: they carry flashing anti-collision strobes and coloured navigation lights, which is what tells them apart from a satellite's steady, unblinking glide."
+      );
       return sentences.join(" ");
     }
     case "star": {
@@ -41706,6 +41902,21 @@ function parseExplainSubject(body) {
           direction: b.direction,
           magnitude: b.magnitude,
           illuminatedFraction: b.illuminatedFraction
+        };
+      }
+      return null;
+    case "aircraft":
+      if (isFiniteNumber(b.altitudeM) && isFiniteNumber(b.rangeKm) && isNullableString(b.originCountry) && isNullableFiniteNumber(b.groundSpeedKmH)) {
+        return {
+          kind: "aircraft",
+          name: b.name,
+          elevationDeg: b.elevationDeg,
+          azimuthDeg: b.azimuthDeg,
+          direction: b.direction,
+          altitudeM: b.altitudeM,
+          rangeKm: b.rangeKm,
+          originCountry: b.originCountry,
+          groundSpeedKmH: b.groundSpeedKmH
         };
       }
       return null;
@@ -41972,6 +42183,28 @@ app.get("/api/passes", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
   }
+});
+app.get("/api/aircraft", async (req, res) => {
+  const observer = parseObserver(req);
+  if (!observer) {
+    res.status(400).json({ error: "Provide valid numeric 'lat' (-90..90), 'lon' (-180..180) query params" });
+    return;
+  }
+  const radiusKm = req.query.radiusKm !== void 0 ? Number(req.query.radiusKm) : void 0;
+  if (radiusKm !== void 0 && (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 500)) {
+    res.status(400).json({ error: "'radiusKm' must be a number between 0 and 500." });
+    return;
+  }
+  const { snapshot, status, error } = await getAircraft(observer.latitude, observer.longitude, radiusKm);
+  res.json({
+    observer: { latitude: observer.latitude, longitude: observer.longitude },
+    status,
+    error,
+    time: snapshot?.time ?? null,
+    fetchedAt: snapshot ? new Date(snapshot.fetchedAt).toISOString() : null,
+    count: snapshot?.aircraft.length ?? 0,
+    aircraft: snapshot?.aircraft ?? []
+  });
 });
 function parseObserverBody(body) {
   if (typeof body !== "object" || body === null) return null;

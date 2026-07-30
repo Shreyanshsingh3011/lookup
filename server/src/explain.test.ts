@@ -34,6 +34,47 @@ const VEGA = {
   constellation: "Lyra",
 };
 
+const AIRCRAFT = {
+  kind: "aircraft" as const,
+  name: "BAW123",
+  elevationDeg: 32.5,
+  azimuthDeg: 210.0,
+  direction: "SSW",
+  altitudeM: 10668,
+  rangeKm: 18.4,
+  originCountry: "United Kingdom",
+  groundSpeedKmH: 880,
+};
+
+test("parseExplainSubject accepts a well-formed aircraft body", () => {
+  assert.deepEqual(parseExplainSubject(AIRCRAFT), AIRCRAFT);
+  // originCountry and groundSpeedKmH are both nullable.
+  const sparse = { ...AIRCRAFT, originCountry: null, groundSpeedKmH: null };
+  assert.deepEqual(parseExplainSubject(sparse), sparse);
+});
+
+test("parseExplainSubject rejects an aircraft missing its geometry", () => {
+  assert.equal(parseExplainSubject({ ...AIRCRAFT, altitudeM: "high" }), null);
+  assert.equal(parseExplainSubject({ ...AIRCRAFT, rangeKm: null }), null);
+});
+
+test("explainObject template for an aircraft states altitude, range and the blinking giveaway", async () => {
+  const result = await explainObject(AIRCRAFT);
+  assert.equal(result.source, "template");
+  assert.match(result.explanation, /BAW123/);
+  assert.match(result.explanation, /10,668 m/);
+  assert.match(result.explanation, /18 km/);
+  assert.match(result.explanation, /880 km\/h/);
+  // The whole point of the layer: how to tell a plane from a satellite.
+  assert.match(result.explanation, /blink/i);
+});
+
+test("explainObject template omits ground speed when it was not reported", async () => {
+  const result = await explainObject({ ...AIRCRAFT, groundSpeedKmH: null });
+  assert.doesNotMatch(result.explanation, /over the ground/);
+  assert.match(result.explanation, /BAW123/);
+});
+
 test("parseExplainSubject accepts a well-formed satellite body", () => {
   const parsed = parseExplainSubject(ISS);
   assert.deepEqual(parsed, ISS);

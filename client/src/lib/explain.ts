@@ -32,6 +32,17 @@ export type ExplainSubject =
       azimuthDeg: number;
       direction: string;
       constellation: string | null;
+    }
+  | {
+      kind: 'aircraft';
+      name: string;
+      elevationDeg: number;
+      azimuthDeg: number;
+      direction: string;
+      altitudeM: number;
+      rangeKm: number;
+      originCountry: string | null;
+      groundSpeedKmH: number | null;
     };
 
 export interface ExplainResult {
