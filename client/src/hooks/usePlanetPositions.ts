@@ -63,3 +63,32 @@ export function usePlanetPositions(
     return out;
   }, [displayTime, observerLatitude, observerLongitude, observerElevation]);
 }
+
+/**
+ * The Sun's sky position, whether or not it is up.
+ *
+ * Separate from usePlanetPositions because that hook drops anything below the
+ * horizon — correct for deciding what to *draw*, wrong for deciding how to
+ * *light*. Planet phases are measured against the Sun, and at night the Sun
+ * is precisely the thing that has just been filtered out, so reusing that
+ * list would leave every planet rendered fully lit exactly when the app is
+ * actually being used.
+ */
+export function useSunDirection(
+  displayTime: Date,
+  observerLatitude: number,
+  observerLongitude: number,
+  observerElevation: number
+): { azimuthDeg: number; elevationDeg: number } | null {
+  return useMemo(() => {
+    try {
+      const observer = new Astronomy.Observer(observerLatitude, observerLongitude, observerElevation);
+      const sun = 'Sun' as Parameters<typeof Astronomy.Equator>[0];
+      const eq = Astronomy.Equator(sun, displayTime, observer, true, true);
+      const hor = Astronomy.Horizon(displayTime, observer, eq.ra, eq.dec, undefined);
+      return { azimuthDeg: hor.azimuth, elevationDeg: hor.altitude };
+    } catch {
+      return null;
+    }
+  }, [displayTime, observerLatitude, observerLongitude, observerElevation]);
+}
