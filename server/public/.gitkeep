@@ -1,0 +1,4 @@
+This project has no static frontend — it's an API-only Vercel deployment
+(see server/api/[...path].js). This placeholder exists solely so Vercel's
+build doesn't fail looking for an output directory that would otherwise
+never exist.
