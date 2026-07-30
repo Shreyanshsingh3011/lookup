@@ -72,3 +72,28 @@ export interface TleResponse {
   epoch: EpochSpan | null;
   tles: TleRecord[];
 }
+
+export interface SingleTleResponse {
+  tle: TleRecord;
+  source: 'live' | 'cache';
+  fetchedAt: string;
+  epoch: EpochSpan | null;
+}
+
+/**
+ * Passes for satellites the client supplied directly (pasted, or looked up
+ * by NORAD ID), as opposed to one of the bundled Celestrak groups — so there
+ * is no single meaningful TleSource or maxMagnitude filter to report.
+ */
+export interface CustomPassesResponse {
+  observer: Observer;
+  days: number;
+  minElevationDeg: number;
+  epoch: EpochSpan | null;
+  satelliteCount: number;
+  passCount: number;
+  tooFaintCount: number;
+  brightestRejectedMagnitude: number | null;
+  weather: { status: 'live' | 'cache' | 'unavailable'; error?: string };
+  passes: Pass[];
+}

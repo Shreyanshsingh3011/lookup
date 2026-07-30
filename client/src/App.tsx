@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { fetchPasses, fetchTles } from './api/client';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
+import { AddSatellite } from './components/AddSatellite';
 import { LocationPicker } from './components/LocationPicker';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
@@ -11,6 +12,8 @@ import { SkyDome } from './components/sky/SkyDome';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
 import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
+
+const MAX_CUSTOM_SATELLITES = 20;
 
 function App() {
   const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } = useLocation();
@@ -31,6 +34,46 @@ function App() {
     satelliteCount: number;
     weather: { status: 'live' | 'cache' | 'unavailable'; error?: string };
   } | null>(null);
+
+  const [customTles, setCustomTles] = useState<TleRecord[]>([]);
+  const [customPasses, setCustomPasses] = useState<Pass[]>([]);
+  const [customPassesLoading, setCustomPassesLoading] = useState(false);
+  const [customPassesError, setCustomPassesError] = useState<string | null>(null);
+  const [customSummary, setCustomSummary] = useState<{
+    tooFaintCount: number;
+    brightestRejectedMagnitude: number | null;
+    satelliteCount: number;
+  } | null>(null);
+
+  const allTles = useMemo(() => [...tles, ...customTles], [tles, customTles]);
+  const allPasses = useMemo(() => [...passes, ...customPasses], [passes, customPasses]);
+
+  const combinedSummary = useMemo(() => {
+    if (!passSummary && !customSummary) return null;
+    const brightestValues = [passSummary?.brightestRejectedMagnitude, customSummary?.brightestRejectedMagnitude].filter(
+      (m): m is number => m !== null && m !== undefined
+    );
+    return {
+      tooFaintCount: (passSummary?.tooFaintCount ?? 0) + (customSummary?.tooFaintCount ?? 0),
+      satelliteCount: (passSummary?.satelliteCount ?? 0) + (customSummary?.satelliteCount ?? 0),
+      brightestRejectedMagnitude: brightestValues.length > 0 ? Math.min(...brightestValues) : null,
+    };
+  }, [passSummary, customSummary]);
+
+  const addCustomSatellite = (tle: TleRecord): string | null => {
+    if (tles.some((t) => t.satnum === tle.satnum) || customTles.some((t) => t.satnum === tle.satnum)) {
+      return `${tle.name} (#${tle.satnum}) is already tracked.`;
+    }
+    if (customTles.length >= MAX_CUSTOM_SATELLITES) {
+      return `You can track up to ${MAX_CUSTOM_SATELLITES} custom satellites at once.`;
+    }
+    setCustomTles((prev) => [...prev, tle]);
+    return null;
+  };
+
+  const removeCustomSatellite = (satnum: string) => {
+    setCustomTles((prev) => prev.filter((t) => t.satnum !== satnum));
+  };
 
   const skySectionRef = useRef<HTMLElement>(null);
 
@@ -95,6 +138,41 @@ function App() {
     };
   }, [observer]);
 
+  // Passes for user-added satellites are computed separately from the bundled
+  // "stations" group, since they didn't come from a Celestrak group fetch.
+  useEffect(() => {
+    if (customTles.length === 0) {
+      setCustomPasses([]);
+      setCustomSummary(null);
+      setCustomPassesError(null);
+      return;
+    }
+    let cancelled = false;
+    setCustomPassesLoading(true);
+    setCustomPassesError(null);
+    fetchCustomPasses(observer, customTles, { days: 10 })
+      .then((res) => {
+        if (cancelled) return;
+        setCustomPasses(res.passes);
+        setCustomSummary({
+          tooFaintCount: res.tooFaintCount,
+          brightestRejectedMagnitude: res.brightestRejectedMagnitude,
+          satelliteCount: res.satelliteCount,
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCustomPassesError(err instanceof Error ? err.message : 'Failed to load passes for tracked satellites');
+        setCustomPasses([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCustomPassesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [observer, customTles]);
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-space-800/80 sticky top-0 z-20 backdrop-blur-lg bg-space-950/70 print:hidden">
@@ -123,10 +201,10 @@ function App() {
             <p className="text-xs text-space-300 hidden sm:block">Interactive sky dome · your horizon</p>
           </div>
           <SkyDome
-            tles={tles}
+            tles={allTles}
             observer={observer}
             displayTime={time.displayTime}
-            passes={passes}
+            passes={allPasses}
             loading={tlesLoading}
           />
           <TimeScrubber control={time} />
@@ -136,7 +214,7 @@ function App() {
           <PassDetail
             pass={selectedPass}
             observer={observer}
-            tles={tles}
+            tles={allTles}
             onClose={() => setSelectedPass(null)}
             onShowInSky={showPassInSky}
           />
@@ -151,16 +229,27 @@ function App() {
             </p>
           </div>
           <PassTable
-            passes={passes}
+            passes={allPasses}
             loading={passesLoading}
             error={passesError}
             selectedPass={selectedPass}
             onSelectPass={setSelectedPass}
-            tooFaintCount={passSummary?.tooFaintCount}
-            brightestRejectedMagnitude={passSummary?.brightestRejectedMagnitude}
-            satelliteCount={passSummary?.satelliteCount}
+            tooFaintCount={combinedSummary?.tooFaintCount}
+            brightestRejectedMagnitude={combinedSummary?.brightestRejectedMagnitude}
+            satelliteCount={combinedSummary?.satelliteCount}
           />
           {passSummary && <WeatherNotice {...passSummary.weather} />}
+          {customPassesError && <p className="text-xs text-amber-glow mt-2">{customPassesError}</p>}
+        </section>
+
+        <section className="print:hidden">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-lg font-medium text-space-100">Track a satellite of your own</h2>
+            <p className="text-xs text-space-300">
+              {customPassesLoading ? 'Computing passes…' : 'By NORAD ID or a pasted TLE'}
+            </p>
+          </div>
+          <AddSatellite customTles={customTles} onAdd={addCustomSatellite} onRemove={removeCustomSatellite} />
         </section>
 
         <section className="print:hidden">

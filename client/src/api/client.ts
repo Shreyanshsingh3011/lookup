@@ -1,6 +1,6 @@
 import type { ExplainResult, ExplainSubject } from '../lib/explain';
 import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
-import type { Observer, PassesResponse, TleResponse } from '../types';
+import type { CustomPassesResponse, Observer, PassesResponse, SingleTleResponse, TleRecord, TleResponse } from '../types';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -40,5 +40,26 @@ export function fetchOrbitAdvice(request: OrbitAdviceRequest): Promise<OrbitAdvi
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
+  });
+}
+
+export function fetchSatelliteByNorad(catnr: string): Promise<SingleTleResponse> {
+  return apiFetch<SingleTleResponse>(`/api/tle/satellite/${encodeURIComponent(catnr)}`);
+}
+
+export function fetchCustomPasses(
+  observer: Observer,
+  tles: TleRecord[],
+  opts: { days?: number; minElevationDeg?: number } = {}
+): Promise<CustomPassesResponse> {
+  return apiFetch<CustomPassesResponse>('/api/passes/custom', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      observer,
+      tles,
+      days: opts.days ?? 10,
+      minElevationDeg: opts.minElevationDeg ?? 10,
+    }),
   });
 }

@@ -169,3 +169,68 @@ export async function findSatelliteByNorad(satnum: string): Promise<TleRecord | 
   }
   return undefined;
 }
+
+export interface SingleTleResult {
+  tle: TleRecord;
+  fetchedAt: number;
+  /**
+   * Unlike a group fetch, there's no sensible fixture to fall back to for an
+   * arbitrary satellite the operator hasn't bundled — so this is either a
+   * fresh fetch or a still-held cache entry, never a fixture.
+   */
+  source: "live" | "cache";
+  epoch: EpochSpan | null;
+}
+
+const satelliteCache = new Map<string, CacheEntry>();
+const satelliteInFlight = new Map<string, Promise<TleRecord[]>>();
+
+async function fetchByCatnr(catnr: string): Promise<TleRecord[]> {
+  const url = `${CELESTRAK_BASE}?CATNR=${encodeURIComponent(catnr)}&FORMAT=tle`;
+  const res = await fetch(url, { headers: { "User-Agent": "lookup-satellite-tracker/0.1" } });
+  if (!res.ok) {
+    throw new Error(`Celestrak fetch failed for NORAD ID ${catnr}: ${res.status}`);
+  }
+  const records = parseTle(await res.text());
+  if (records.length === 0) {
+    throw new Error(`No satellite found for NORAD ID ${catnr}`);
+  }
+  return records;
+}
+
+/**
+ * Look up a single satellite by its NORAD catalog number directly from
+ * Celestrak, for tracking a satellite that isn't in any of the bundled
+ * groups (e.g. a user's own spacecraft). Cached the same way as a group, but
+ * with its own cache keyed by catalog number.
+ */
+export async function fetchSatelliteByCatnr(catnr: string): Promise<SingleTleResult> {
+  const cached = satelliteCache.get(catnr);
+  const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
+  if (isFresh) {
+    return { tle: cached.tles[0], fetchedAt: cached.fetchedAt, source: "live", epoch: epochSpan([cached.tles[0].line1]) };
+  }
+
+  let pending = satelliteInFlight.get(catnr);
+  if (!pending) {
+    pending = fetchByCatnr(catnr)
+      .then((tles) => {
+        satelliteCache.set(catnr, { tles, fetchedAt: Date.now() });
+        return tles;
+      })
+      .finally(() => {
+        satelliteInFlight.delete(catnr);
+      });
+    satelliteInFlight.set(catnr, pending);
+  }
+
+  try {
+    const tles = await pending;
+    return { tle: tles[0], fetchedAt: Date.now(), source: "live", epoch: epochSpan([tles[0].line1]) };
+  } catch (err) {
+    if (cached) {
+      return { tle: cached.tles[0], fetchedAt: cached.fetchedAt, source: "cache", epoch: epochSpan([cached.tles[0].line1]) };
+    }
+    throw err;
+  }
+}

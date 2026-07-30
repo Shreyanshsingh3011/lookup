@@ -1,7 +1,8 @@
 import express from "express";
 import cors from "cors";
-import { getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
-import type { EpochSpan } from "./elements.js";
+import * as satellite from "satellite.js";
+import { fetchSatelliteByCatnr, getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
+import { epochSpan, type EpochSpan } from "./elements.js";
 import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js";
 import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
 import type { Observer } from "./types.js";
@@ -38,6 +39,20 @@ app.get("/api/tle/:group", async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to fetch TLE data" });
+  }
+});
+
+app.get("/api/tle/satellite/:catnr", async (req, res) => {
+  const { catnr } = req.params;
+  if (!/^\d{1,9}$/.test(catnr)) {
+    res.status(400).json({ error: "NORAD catalog number must be numeric." });
+    return;
+  }
+  try {
+    const { tle, source, fetchedAt, epoch } = await fetchSatelliteByCatnr(catnr);
+    res.json({ tle, source, fetchedAt: new Date(fetchedAt).toISOString(), epoch });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : `Failed to fetch NORAD ID ${catnr}` });
   }
 });
 
@@ -128,6 +143,106 @@ app.get("/api/passes", async (req, res) => {
       // Reported so an empty list can explain itself rather than looking broken.
       tooFaintCount,
       brightestRejectedMagnitude: brightestRejected,
+      passes,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
+  }
+});
+
+function parseObserverBody(body: unknown): Observer | null {
+  if (typeof body !== "object" || body === null) return null;
+  const b = body as Record<string, unknown>;
+  const latitude = Number(b.latitude);
+  const longitude = Number(b.longitude);
+  const elevation = b.elevation !== undefined ? Number(b.elevation) : 0;
+  if (Number.isNaN(latitude) || Number.isNaN(longitude) || Number.isNaN(elevation)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { latitude, longitude, elevation };
+}
+
+const MAX_CUSTOM_SATELLITES = 20;
+
+/** Server-side re-validation of client-supplied TLEs: never trust that a pasted or fetched TLE actually parses. */
+function parseCustomTles(value: unknown): TleRecord[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_CUSTOM_SATELLITES) return null;
+
+  const tles: TleRecord[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const e = entry as Record<string, unknown>;
+    if (
+      typeof e.name !== "string" ||
+      typeof e.satnum !== "string" ||
+      typeof e.line1 !== "string" ||
+      typeof e.line2 !== "string" ||
+      !e.name.trim() ||
+      !e.satnum.trim()
+    ) {
+      return null;
+    }
+    let rec: satellite.SatRec;
+    try {
+      rec = satellite.twoline2satrec(e.line1, e.line2);
+    } catch {
+      return null;
+    }
+    if (rec.error) return null;
+    tles.push({ name: e.name, satnum: e.satnum, line1: e.line1, line2: e.line2 });
+  }
+  return tles;
+}
+
+// Passes for satellites the client supplies directly (a pasted TLE, or one
+// looked up by NORAD ID) rather than one of the bundled Celestrak groups.
+// Kept as its own route so the well-exercised /api/passes handler above is
+// untouched — this one always takes its elements from the request body.
+app.post("/api/passes/custom", async (req, res) => {
+  const observer = parseObserverBody(req.body?.observer);
+  if (!observer) {
+    res.status(400).json({ error: "Body must include an 'observer' with numeric latitude (-90..90), longitude (-180..180), and optional elevation." });
+    return;
+  }
+
+  const tles = parseCustomTles(req.body?.tles);
+  if (!tles) {
+    res.status(400).json({
+      error: `Body must include a 'tles' array of 1-${MAX_CUSTOM_SATELLITES} valid TLE records ({name, satnum, line1, line2}).`,
+    });
+    return;
+  }
+
+  const days = req.body?.days !== undefined ? Number(req.body.days) : DEFAULT_PASS_OPTIONS.days;
+  const minElevationDeg =
+    req.body?.minElevationDeg !== undefined ? Number(req.body.minElevationDeg) : DEFAULT_PASS_OPTIONS.minElevationDeg;
+
+  try {
+    const { passes, tooFaintCount, brightestRejectedMagnitude } = computePassesForMany(tles, observer, {
+      days,
+      minElevationDeg,
+    });
+
+    let weatherStatus: WeatherStatus = "unavailable";
+    let weatherError: string | undefined;
+    if (req.body?.weather !== false) {
+      const { forecast, status, error } = await getCloudForecast(observer.latitude, observer.longitude);
+      weatherStatus = status;
+      weatherError = error;
+      for (const pass of passes) {
+        pass.cloudCoverPercent = cloudCoverAt(forecast, new Date(pass.max.time));
+      }
+    }
+
+    res.json({
+      observer,
+      days,
+      minElevationDeg,
+      satelliteCount: tles.length,
+      passCount: passes.length,
+      weather: { status: weatherStatus, error: weatherError },
+      tooFaintCount,
+      brightestRejectedMagnitude,
+      epoch: epochSpan(tles.map((t) => t.line1)),
       passes,
     });
   } catch (err) {
