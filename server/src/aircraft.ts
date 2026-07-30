@@ -55,6 +55,24 @@ const FAILURE_TTL_MS = 2 * 60 * 1000;
 
 export type AircraftStatus = "live" | "cache" | "unavailable";
 
+/**
+ * Node's fetch collapses every transport-level problem into the useless
+ * message "fetch failed", stashing the real reason (DNS failure, connection
+ * refused, TLS error, socket reset) on `cause`. Unwrapping it is the
+ * difference between an operator being able to diagnose a broken feed and
+ * being left guessing.
+ */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = (cause as { code?: unknown }).code;
+    return code ? `${err.message} (${code}: ${cause.message})` : `${err.message} (${cause.message})`;
+  }
+  return err.message;
+}
+
 export interface Aircraft {
   /** ICAO 24-bit transponder address — the stable per-airframe identifier. */
   icao24: string;
@@ -300,8 +318,7 @@ export async function getAircraft(
     try {
       return { snapshot: parseStates(JSON.parse(readFileSync(overridePath, "utf8"))), status: "live" };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { snapshot: null, status: "unavailable", error: `AIRCRAFT_FILE at '${overridePath}': ${message}` };
+      return { snapshot: null, status: "unavailable", error: `AIRCRAFT_FILE at '${overridePath}': ${describeError(err)}` };
     }
   }
 
@@ -335,7 +352,7 @@ export async function getAircraft(
   try {
     return { snapshot: await pending, status: "live" };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
     failures.set(key, { at: Date.now(), error: message });
     // A stale snapshot beats none: the client dead-reckons from it anyway.
     if (cached) return { snapshot: cached, status: "cache", error: message };

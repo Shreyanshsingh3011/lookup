@@ -35836,6 +35836,15 @@ var CACHE_TTL_MS3 = Number(process.env.OPENSKY_CACHE_TTL_MS) || 6e4;
 var DEFAULT_RADIUS_KM = 150;
 var REQUEST_TIMEOUT_MS2 = Number(process.env.OPENSKY_TIMEOUT_MS) || 2e4;
 var FAILURE_TTL_MS2 = 2 * 60 * 1e3;
+function describeError(err) {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause;
+  if (cause instanceof Error) {
+    const code = cause.code;
+    return code ? `${err.message} (${code}: ${cause.message})` : `${err.message} (${cause.message})`;
+  }
+  return err.message;
+}
 var IDX = {
   icao24: 0,
   callsign: 1,
@@ -35978,8 +35987,7 @@ async function getAircraft(latitudeDeg, longitudeDeg, radiusKm = DEFAULT_RADIUS_
     try {
       return { snapshot: parseStates(JSON.parse(readFileSync3(overridePath, "utf8"))), status: "live" };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { snapshot: null, status: "unavailable", error: `AIRCRAFT_FILE at '${overridePath}': ${message}` };
+      return { snapshot: null, status: "unavailable", error: `AIRCRAFT_FILE at '${overridePath}': ${describeError(err)}` };
     }
   }
   const key = cacheKey2(latitudeDeg, longitudeDeg, radiusKm);
@@ -36005,7 +36013,7 @@ async function getAircraft(latitudeDeg, longitudeDeg, radiusKm = DEFAULT_RADIUS_
   try {
     return { snapshot: await pending, status: "live" };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
     failures2.set(key, { at: Date.now(), error: message });
     if (cached) return { snapshot: cached, status: "cache", error: message };
     return { snapshot: null, status: "unavailable", error: message };
