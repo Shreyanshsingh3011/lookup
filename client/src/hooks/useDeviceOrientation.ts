@@ -137,6 +137,16 @@ export function useDeviceOrientation(): DeviceOrientationControl {
     };
   }, [state]);
 
+  // Clear the explanatory notice after a few seconds. These states are all
+  // terminal for this attempt (no sensors, refused, nothing responding), so
+  // leaving the message up permanently just clutters the sky on desktop —
+  // long enough to read, then back to an offer to try again.
+  useEffect(() => {
+    if (state !== 'denied' && state !== 'unsupported' && state !== 'no-signal') return;
+    const timer = setTimeout(() => setState('idle'), 6000);
+    return () => clearTimeout(timer);
+  }, [state]);
+
   return { state, look, headingIsRelative, enable, disable };
 }
 

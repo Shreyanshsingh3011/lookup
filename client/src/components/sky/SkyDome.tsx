@@ -591,10 +591,14 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
         )}
 
         {!loading && layers.aircraft && aircraftFeed.status === 'unavailable' && (
-          <div className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm">
-            <p className="text-xs text-amber-glow">
-              Live aircraft unavailable{aircraftFeed.error ? `: ${aircraftFeed.error}` : '.'}
-            </p>
+          <div
+            className="self-center glass-panel rounded-lg px-3 py-2 text-center max-w-sm"
+            // The underlying reason is a transport-level error string that
+            // means nothing to a stargazer, so it stays in the tooltip for
+            // whoever is actually debugging the deployment.
+            title={aircraftFeed.error ?? undefined}
+          >
+            <p className="text-xs text-amber-glow">Live aircraft data isn't available right now.</p>
           </div>
         )}
 

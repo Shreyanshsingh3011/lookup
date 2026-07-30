@@ -35916,6 +35916,55 @@ function boundingBox(latitudeDeg, longitudeDeg, radiusKm = DEFAULT_RADIUS_KM) {
     lomax: Math.min(180, longitudeDeg + lonDelta)
   };
 }
+var FEET_TO_M = 0.3048;
+var KNOTS_TO_MS = 0.514444;
+var FPM_TO_MS = 508e-5;
+function parseReadsb(payload) {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("ADS-B response was not an object");
+  }
+  const body = payload;
+  const list = body.ac ?? body.aircraft;
+  if (list === null || list === void 0) {
+    return { time: Math.floor(Date.now() / 1e3), fetchedAt: Date.now(), aircraft: [] };
+  }
+  if (!Array.isArray(list)) {
+    throw new Error("ADS-B 'ac' was neither an array nor absent");
+  }
+  const nowSeconds = typeof body.now === "number" && Number.isFinite(body.now) ? body.now / 1e3 : Date.now() / 1e3;
+  const aircraft = [];
+  for (const entry of list) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const a = entry;
+    const hex = typeof a.hex === "string" ? a.hex.trim() : "";
+    const latitude = numberOrNull(a.lat);
+    const longitude = numberOrNull(a.lon);
+    if (!hex || latitude === null || longitude === null) continue;
+    const onGround = a.alt_baro === "ground";
+    const altitudeFt = numberOrNull(a.alt_geom) ?? numberOrNull(a.alt_baro);
+    if (altitudeFt === null && !onGround) continue;
+    const gsKnots = numberOrNull(a.gs);
+    const rateFpm = numberOrNull(a.geom_rate) ?? numberOrNull(a.baro_rate);
+    const callsign = typeof a.flight === "string" ? a.flight.trim() : "";
+    const seenPos = numberOrNull(a.seen_pos) ?? 0;
+    aircraft.push({
+      icao24: hex,
+      callsign: callsign.length > 0 ? callsign : null,
+      // This format carries no origin country; registration is the closest
+      // useful identifier it does provide.
+      originCountry: typeof a.r === "string" ? a.r.trim() : "",
+      latitudeDeg: latitude,
+      longitudeDeg: longitude,
+      altitudeM: onGround ? 0 : (altitudeFt ?? 0) * FEET_TO_M,
+      velocityMS: gsKnots === null ? null : gsKnots * KNOTS_TO_MS,
+      trueTrackDeg: numberOrNull(a.track),
+      verticalRateMS: rateFpm === null ? null : rateFpm * FPM_TO_MS,
+      onGround,
+      lastContact: nowSeconds - seenPos
+    });
+  }
+  return { time: Math.floor(nowSeconds), fetchedAt: Date.now(), aircraft };
+}
 function credentials() {
   const clientId = process.env.OPENSKY_CLIENT_ID?.trim();
   const clientSecret = process.env.OPENSKY_CLIENT_SECRET?.trim();
@@ -35938,9 +35987,7 @@ async function oauthToken(clientId, clientSecret) {
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2)
   });
-  if (!res.ok) {
-    throw new Error(`OpenSky token request failed: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`OpenSky token request failed: ${res.status}`);
   const body = await res.json();
   if (typeof body.access_token !== "string") {
     throw new Error("OpenSky token response had no access_token");
@@ -35949,30 +35996,88 @@ async function oauthToken(clientId, clientSecret) {
   cachedToken = { value: body.access_token, expiresAt: Date.now() + (expiresIn - 60) * 1e3 };
   return cachedToken.value;
 }
-async function fetchStates(latitudeDeg, longitudeDeg, radiusKm) {
-  const box = boundingBox(latitudeDeg, longitudeDeg, radiusKm);
-  const params = new URLSearchParams({
-    lamin: box.lamin.toFixed(4),
-    lomin: box.lomin.toFixed(4),
-    lamax: box.lamax.toFixed(4),
-    lomax: box.lomax.toFixed(4)
-  });
-  const headers = { "User-Agent": "lookup-satellite-tracker/0.1" };
-  const creds = credentials();
-  if (creds.kind === "basic") {
-    headers.Authorization = `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString("base64")}`;
-  } else if (creds.kind === "oauth") {
-    headers.Authorization = `Bearer ${await oauthToken(creds.clientId, creds.clientSecret)}`;
+var KM_PER_NM = 1.852;
+var MAX_RADIUS_NM = 250;
+function radiusNm(radiusKm) {
+  return Math.max(1, Math.min(MAX_RADIUS_NM, Math.round(radiusKm / KM_PER_NM)));
+}
+var PROVIDERS = {
+  "adsb.lol": {
+    name: "adsb.lol",
+    url: (lat, lon, km) => `https://api.adsb.lol/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm(km)}`,
+    parse: parseReadsb
+  },
+  "airplanes.live": {
+    name: "airplanes.live",
+    url: (lat, lon, km) => `https://api.airplanes.live/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm(km)}`,
+    parse: parseReadsb
+  },
+  "adsb.fi": {
+    name: "adsb.fi",
+    url: (lat, lon, km) => `https://opendata.adsb.fi/api/v2/lat/${lat.toFixed(4)}/lon/${lon.toFixed(4)}/dist/${radiusNm(km)}`,
+    parse: parseReadsb
+  },
+  opensky: {
+    name: "opensky",
+    url: (lat, lon, km) => {
+      const box = boundingBox(lat, lon, km);
+      const params = new URLSearchParams({
+        lamin: box.lamin.toFixed(4),
+        lomin: box.lomin.toFixed(4),
+        lamax: box.lamax.toFixed(4),
+        lomax: box.lomax.toFixed(4)
+      });
+      return `${OPENSKY_STATES_URL}?${params.toString()}`;
+    },
+    parse: parseStates,
+    headers: async () => {
+      const creds = credentials();
+      if (creds.kind === "basic") {
+        return {
+          Authorization: `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString("base64")}`
+        };
+      }
+      if (creds.kind === "oauth") {
+        return { Authorization: `Bearer ${await oauthToken(creds.clientId, creds.clientSecret)}` };
+      }
+      return {};
+    }
   }
-  const res = await fetch(`${OPENSKY_STATES_URL}?${params.toString()}`, {
+};
+var DEFAULT_ORDER = ["adsb.lol", "airplanes.live", "adsb.fi"];
+function providerOrder() {
+  const configured = process.env.ADSB_PROVIDERS?.trim();
+  const names = configured ? configured.split(",").map((n) => n.trim()).filter(Boolean) : DEFAULT_ORDER;
+  const chosen = names.map((n) => PROVIDERS[n]).filter((p) => p !== void 0);
+  return chosen.length > 0 ? chosen : DEFAULT_ORDER.map((n) => PROVIDERS[n]);
+}
+async function fetchFromProvider(provider, latitudeDeg, longitudeDeg, radiusKm) {
+  const headers = {
+    "User-Agent": "lookup-satellite-tracker/0.1",
+    Accept: "application/json",
+    ...provider.headers ? await provider.headers() : {}
+  };
+  const res = await fetch(provider.url(latitudeDeg, longitudeDeg, radiusKm), {
     headers,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS2)
   });
   if (!res.ok) {
-    const hint = res.status === 429 ? " (rate limit \u2014 set OPENSKY_CLIENT_ID/SECRET for a higher quota)" : "";
-    throw new Error(`OpenSky request failed: ${res.status}${hint}`);
+    const hint = res.status === 429 ? " (rate limited)" : "";
+    throw new Error(`${provider.name} request failed: ${res.status}${hint}`);
   }
-  return parseStates(await res.json());
+  return provider.parse(await res.json());
+}
+async function fetchStates(latitudeDeg, longitudeDeg, radiusKm) {
+  const providers = providerOrder();
+  const failures3 = [];
+  for (const provider of providers) {
+    try {
+      return await fetchFromProvider(provider, latitudeDeg, longitudeDeg, radiusKm);
+    } catch (err) {
+      failures3.push(`${provider.name}: ${describeError(err)}`);
+    }
+  }
+  throw new Error(`no ADS-B source answered \u2014 ${failures3.join("; ")}`);
 }
 var cache3 = /* @__PURE__ */ new Map();
 var inFlight3 = /* @__PURE__ */ new Map();

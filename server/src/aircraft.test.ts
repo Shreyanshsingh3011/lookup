@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { boundingBox, parseStates } from "./aircraft.js";
+import { boundingBox, parseReadsb, parseStates, providerOrder } from "./aircraft.js";
 
 /**
  * A state vector in OpenSky's documented positional-array form. Index order
@@ -126,4 +126,109 @@ test("boundingBox stays within valid coordinate ranges near the poles", () => {
   assert.ok(box.lamin >= -90);
   assert.ok(box.lomax <= 180);
   assert.ok(box.lomin >= -180);
+});
+
+// --- readsb / tar1090 format (adsb.lol, airplanes.live, adsb.fi) ------------
+//
+// Values arrive in aviation units, so the conversions to SI are the part most
+// likely to be silently wrong; each is checked against a known equivalence.
+
+const READSB = {
+  now: 1785441650000, // milliseconds, unlike OpenSky's seconds
+  ac: [
+    {
+      hex: "4ca8e2",
+      flight: "RYR18KP ",
+      r: "EI-DYM",
+      lat: 51.1454,
+      lon: 0.4418,
+      alt_baro: 31000,
+      alt_geom: 32000,
+      gs: 450,
+      track: 305,
+      baro_rate: -640,
+      geom_rate: -600,
+      seen_pos: 2.5,
+    },
+  ],
+};
+
+test("parseReadsb converts feet, knots and feet-per-minute into SI", () => {
+  const [ac] = parseReadsb(READSB).aircraft;
+  // 32000 ft = 9753.6 m
+  assert.ok(Math.abs(ac.altitudeM - 9753.6) < 0.1, `got ${ac.altitudeM}`);
+  // 450 kt = 231.5 m/s
+  assert.ok(Math.abs(ac.velocityMS! - 231.5) < 0.1, `got ${ac.velocityMS}`);
+  // -600 ft/min = -3.048 m/s
+  assert.ok(Math.abs(ac.verticalRateMS! + 3.048) < 0.01, `got ${ac.verticalRateMS}`);
+  assert.equal(ac.trueTrackDeg, 305);
+});
+
+test("parseReadsb prefers geometric altitude and rate over barometric", () => {
+  const [ac] = parseReadsb(READSB).aircraft;
+  assert.ok(Math.abs(ac.altitudeM - 32000 * 0.3048) < 0.1, "should use alt_geom");
+  assert.ok(Math.abs(ac.verticalRateMS! - -600 * 0.00508) < 0.01, "should use geom_rate");
+});
+
+test("parseReadsb falls back to barometric values when geometric are absent", () => {
+  const noGeom = { ...READSB, ac: [{ ...READSB.ac[0], alt_geom: undefined, geom_rate: undefined }] };
+  const [ac] = parseReadsb(noGeom).aircraft;
+  assert.ok(Math.abs(ac.altitudeM - 31000 * 0.3048) < 0.1, `got ${ac.altitudeM}`);
+  assert.ok(Math.abs(ac.verticalRateMS! - -640 * 0.00508) < 0.01, `got ${ac.verticalRateMS}`);
+});
+
+test('parseReadsb handles alt_baro being the string "ground"', () => {
+  const parked = { ...READSB, ac: [{ ...READSB.ac[0], alt_baro: "ground", alt_geom: undefined }] };
+  const [ac] = parseReadsb(parked).aircraft;
+  assert.equal(ac.onGround, true);
+  assert.equal(ac.altitudeM, 0);
+});
+
+test("parseReadsb trims the padded callsign and reads registration", () => {
+  const [ac] = parseReadsb(READSB).aircraft;
+  assert.equal(ac.callsign, "RYR18KP");
+  assert.equal(ac.originCountry, "EI-DYM");
+});
+
+test("parseReadsb turns seen_pos age into an absolute last-contact time", () => {
+  const [ac] = parseReadsb(READSB).aircraft;
+  // now is 1785441650000 ms = ...650 s, minus 2.5 s of age.
+  assert.ok(Math.abs(ac.lastContact - (1785441650 - 2.5)) < 0.01, `got ${ac.lastContact}`);
+});
+
+test("parseReadsb skips aircraft with no position", () => {
+  const noPos = { ...READSB, ac: [{ ...READSB.ac[0], lat: undefined, lon: undefined }, READSB.ac[0]] };
+  assert.equal(parseReadsb(noPos).aircraft.length, 1);
+});
+
+test("parseReadsb treats a missing aircraft list as a quiet sky", () => {
+  assert.deepEqual(parseReadsb({ now: 1785441650000 }).aircraft, []);
+  assert.deepEqual(parseReadsb({ now: 1785441650000, ac: null }).aircraft, []);
+});
+
+test("parseReadsb rejects a response that does not match the contract", () => {
+  assert.throws(() => parseReadsb(null), /not an object/);
+  assert.throws(() => parseReadsb({ ac: "nope" }), /neither an array nor absent/);
+});
+
+test("providerOrder defaults to the community sources ahead of OpenSky", () => {
+  delete process.env.ADSB_PROVIDERS;
+  const names = providerOrder().map((p) => p.name);
+  assert.ok(names.length > 0);
+  // OpenSky drops connections from many cloud hosts, so it must not be first.
+  assert.notEqual(names[0], "opensky");
+});
+
+test("providerOrder honours an explicit ADSB_PROVIDERS list", () => {
+  process.env.ADSB_PROVIDERS = "opensky,adsb.lol";
+  assert.deepEqual(providerOrder().map((p) => p.name), ["opensky", "adsb.lol"]);
+  delete process.env.ADSB_PROVIDERS;
+});
+
+test("providerOrder ignores unknown names rather than failing", () => {
+  process.env.ADSB_PROVIDERS = "nonsense,adsb.lol";
+  assert.deepEqual(providerOrder().map((p) => p.name), ["adsb.lol"]);
+  process.env.ADSB_PROVIDERS = "all,bogus";
+  assert.ok(providerOrder().length > 0, "falls back to defaults when nothing resolves");
+  delete process.env.ADSB_PROVIDERS;
 });

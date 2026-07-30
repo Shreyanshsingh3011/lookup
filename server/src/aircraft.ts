@@ -214,14 +214,94 @@ export function boundingBox(latitudeDeg: number, longitudeDeg: number, radiusKm 
   };
 }
 
+// --- readsb / tar1090 format ------------------------------------------------
+//
+// The community ADS-B aggregators (adsb.lol, airplanes.live, adsb.fi) all
+// expose the same underlying readsb "aircraft.json" shape, which differs from
+// OpenSky in two important ways: fields are named rather than positional, and
+// values are in aviation units (feet, knots, feet per minute) rather than SI.
+// Both are normalised into the same Aircraft type so nothing downstream cares
+// which provider answered.
+
+const FEET_TO_M = 0.3048;
+const KNOTS_TO_MS = 0.514444;
+const FPM_TO_MS = 0.00508;
+
+/** Parse a readsb-style `{ ac: [...] }` response. */
+export function parseReadsb(payload: unknown): AircraftSnapshot {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("ADS-B response was not an object");
+  }
+  const body = payload as Record<string, unknown>;
+
+  const list = body.ac ?? body.aircraft;
+  if (list === null || list === undefined) {
+    // A quiet area legitimately returns no list at all.
+    return { time: Math.floor(Date.now() / 1000), fetchedAt: Date.now(), aircraft: [] };
+  }
+  if (!Array.isArray(list)) {
+    throw new Error("ADS-B 'ac' was neither an array nor absent");
+  }
+
+  // `now` is milliseconds in this format, unlike OpenSky's seconds.
+  const nowSeconds =
+    typeof body.now === "number" && Number.isFinite(body.now)
+      ? body.now / 1000
+      : Date.now() / 1000;
+
+  const aircraft: Aircraft[] = [];
+  for (const entry of list) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const a = entry as Record<string, unknown>;
+
+    const hex = typeof a.hex === "string" ? a.hex.trim() : "";
+    const latitude = numberOrNull(a.lat);
+    const longitude = numberOrNull(a.lon);
+    if (!hex || latitude === null || longitude === null) continue;
+
+    // alt_baro is the string "ground" for aircraft on the surface, which is
+    // why this cannot simply be read as a number.
+    const onGround = a.alt_baro === "ground";
+    const altitudeFt = numberOrNull(a.alt_geom) ?? numberOrNull(a.alt_baro);
+    if (altitudeFt === null && !onGround) continue;
+
+    const gsKnots = numberOrNull(a.gs);
+    const rateFpm = numberOrNull(a.geom_rate) ?? numberOrNull(a.baro_rate);
+    const callsign = typeof a.flight === "string" ? a.flight.trim() : "";
+    // `seen_pos` is an age in seconds, not a timestamp.
+    const seenPos = numberOrNull(a.seen_pos) ?? 0;
+
+    aircraft.push({
+      icao24: hex,
+      callsign: callsign.length > 0 ? callsign : null,
+      // This format carries no origin country; registration is the closest
+      // useful identifier it does provide.
+      originCountry: typeof a.r === "string" ? a.r.trim() : "",
+      latitudeDeg: latitude,
+      longitudeDeg: longitude,
+      altitudeM: onGround ? 0 : (altitudeFt ?? 0) * FEET_TO_M,
+      velocityMS: gsKnots === null ? null : gsKnots * KNOTS_TO_MS,
+      trueTrackDeg: numberOrNull(a.track),
+      verticalRateMS: rateFpm === null ? null : rateFpm * FPM_TO_MS,
+      onGround,
+      lastContact: nowSeconds - seenPos,
+    });
+  }
+
+  return { time: Math.floor(nowSeconds), fetchedAt: Date.now(), aircraft };
+}
+
 /**
  * OpenSky credentials, if the operator supplied any.
  *
  * Anonymous access works but carries a small daily credit budget. OpenSky has
  * been migrating from HTTP basic auth to OAuth2 client credentials, so both
- * are supported here and whichever is configured is used — that way this keeps
- * working whichever scheme is current, rather than silently failing if one is
- * retired.
+ * are supported and whichever is configured is used.
+ *
+ * Note these cannot rescue a blocked connection: they are sent as an HTTP
+ * header, which requires a TCP session to already exist. Where OpenSky
+ * refuses to accept connections at all (as it does from several cloud
+ * providers) a different provider is the only fix.
  */
 function credentials() {
   const clientId = process.env.OPENSKY_CLIENT_ID?.trim();
@@ -250,46 +330,148 @@ async function oauthToken(clientId: string, clientSecret: string): Promise<strin
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) {
-    throw new Error(`OpenSky token request failed: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`OpenSky token request failed: ${res.status}`);
+
   const body = (await res.json()) as { access_token?: unknown; expires_in?: unknown };
   if (typeof body.access_token !== "string") {
     throw new Error("OpenSky token response had no access_token");
   }
   const expiresIn = typeof body.expires_in === "number" ? body.expires_in : 1800;
-  // Refresh a minute early so a token never expires mid-request.
   cachedToken = { value: body.access_token, expiresAt: Date.now() + (expiresIn - 60) * 1000 };
   return cachedToken.value;
 }
 
-async function fetchStates(latitudeDeg: number, longitudeDeg: number, radiusKm: number): Promise<AircraftSnapshot> {
-  const box = boundingBox(latitudeDeg, longitudeDeg, radiusKm);
-  const params = new URLSearchParams({
-    lamin: box.lamin.toFixed(4),
-    lomin: box.lomin.toFixed(4),
-    lamax: box.lamax.toFixed(4),
-    lomax: box.lomax.toFixed(4),
-  });
+const KM_PER_NM = 1.852;
+/** Every community endpoint caps the search radius at 250 nautical miles. */
+const MAX_RADIUS_NM = 250;
 
-  const headers: Record<string, string> = { "User-Agent": "lookup-satellite-tracker/0.1" };
-  const creds = credentials();
-  if (creds.kind === "basic") {
-    headers.Authorization = `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString("base64")}`;
-  } else if (creds.kind === "oauth") {
-    headers.Authorization = `Bearer ${await oauthToken(creds.clientId, creds.clientSecret)}`;
-  }
+interface Provider {
+  name: string;
+  url: (latitudeDeg: number, longitudeDeg: number, radiusKm: number) => string;
+  parse: (payload: unknown) => AircraftSnapshot;
+  headers?: () => Promise<Record<string, string>>;
+}
 
-  const res = await fetch(`${OPENSKY_STATES_URL}?${params.toString()}`, {
+function radiusNm(radiusKm: number): number {
+  return Math.max(1, Math.min(MAX_RADIUS_NM, Math.round(radiusKm / KM_PER_NM)));
+}
+
+/**
+ * Data sources, tried in order until one answers.
+ *
+ * OpenSky is deliberately last despite having the best global coverage: it
+ * drops TCP connections from several cloud providers' address ranges, so on a
+ * serverless host it usually just burns the connect timeout. The community
+ * aggregators ahead of it are open to server-side callers.
+ */
+const PROVIDERS: Record<string, Provider> = {
+  "adsb.lol": {
+    name: "adsb.lol",
+    url: (lat, lon, km) => `https://api.adsb.lol/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm(km)}`,
+    parse: parseReadsb,
+  },
+  "airplanes.live": {
+    name: "airplanes.live",
+    url: (lat, lon, km) => `https://api.airplanes.live/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm(km)}`,
+    parse: parseReadsb,
+  },
+  "adsb.fi": {
+    name: "adsb.fi",
+    url: (lat, lon, km) =>
+      `https://opendata.adsb.fi/api/v2/lat/${lat.toFixed(4)}/lon/${lon.toFixed(4)}/dist/${radiusNm(km)}`,
+    parse: parseReadsb,
+  },
+  opensky: {
+    name: "opensky",
+    url: (lat, lon, km) => {
+      const box = boundingBox(lat, lon, km);
+      const params = new URLSearchParams({
+        lamin: box.lamin.toFixed(4),
+        lomin: box.lomin.toFixed(4),
+        lamax: box.lamax.toFixed(4),
+        lomax: box.lomax.toFixed(4),
+      });
+      return `${OPENSKY_STATES_URL}?${params.toString()}`;
+    },
+    parse: parseStates,
+    headers: async (): Promise<Record<string, string>> => {
+      const creds = credentials();
+      if (creds.kind === "basic") {
+        return {
+          Authorization: `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString("base64")}`,
+        };
+      }
+      if (creds.kind === "oauth") {
+        return { Authorization: `Bearer ${await oauthToken(creds.clientId, creds.clientSecret)}` };
+      }
+      return {};
+    },
+  },
+};
+
+const DEFAULT_ORDER = ["adsb.lol", "airplanes.live", "adsb.fi"];
+
+/**
+ * Which providers to try, in order. ADSB_PROVIDERS takes a comma-separated
+ * list, so an operator who has OpenSky credentials (or finds one source
+ * unreachable) can reorder without a code change.
+ */
+export function providerOrder(): Provider[] {
+  const configured = process.env.ADSB_PROVIDERS?.trim();
+  const names = configured
+    ? configured.split(",").map((n) => n.trim()).filter(Boolean)
+    : DEFAULT_ORDER;
+
+  const chosen = names.map((n) => PROVIDERS[n]).filter((p): p is Provider => p !== undefined);
+  return chosen.length > 0 ? chosen : DEFAULT_ORDER.map((n) => PROVIDERS[n]);
+}
+
+async function fetchFromProvider(
+  provider: Provider,
+  latitudeDeg: number,
+  longitudeDeg: number,
+  radiusKm: number
+): Promise<AircraftSnapshot> {
+  const headers: Record<string, string> = {
+    "User-Agent": "lookup-satellite-tracker/0.1",
+    Accept: "application/json",
+    ...(provider.headers ? await provider.headers() : {}),
+  };
+
+  const res = await fetch(provider.url(latitudeDeg, longitudeDeg, radiusKm), {
     headers,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
-    // 429 is by far the most likely failure for an anonymous caller, so name it.
-    const hint = res.status === 429 ? " (rate limit — set OPENSKY_CLIENT_ID/SECRET for a higher quota)" : "";
-    throw new Error(`OpenSky request failed: ${res.status}${hint}`);
+    const hint = res.status === 429 ? " (rate limited)" : "";
+    throw new Error(`${provider.name} request failed: ${res.status}${hint}`);
   }
-  return parseStates(await res.json());
+  return provider.parse(await res.json());
+}
+
+/**
+ * Try each configured provider until one answers, collecting the reasons the
+ * earlier ones did not. Reporting every failure matters here: a single
+ * "fetch failed" gives an operator nothing to act on, whereas naming which
+ * sources were tried and how each failed points straight at the cause.
+ */
+async function fetchStates(
+  latitudeDeg: number,
+  longitudeDeg: number,
+  radiusKm: number
+): Promise<AircraftSnapshot> {
+  const providers = providerOrder();
+  const failures: string[] = [];
+
+  for (const provider of providers) {
+    try {
+      return await fetchFromProvider(provider, latitudeDeg, longitudeDeg, radiusKm);
+    } catch (err) {
+      failures.push(`${provider.name}: ${describeError(err)}`);
+    }
+  }
+
+  throw new Error(`no ADS-B source answered — ${failures.join("; ")}`);
 }
 
 const cache = new Map<string, AircraftSnapshot>();
