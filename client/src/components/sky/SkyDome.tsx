@@ -1,10 +1,18 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { localSiderealTime } from '../../lib/celestial';
+import catalog from '../../data/skyCatalog.json';
+import { fetchExplanation } from '../../api/client';
+import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
+import type { BoresightCandidate } from '../../lib/boresight';
+import { findBoresightMatch } from '../../lib/boresight';
+import type { ExplainResult, ExplainSubject } from '../../lib/explain';
+import type { IdentifyCandidate } from '../../lib/identify';
+import { toExplainSubject } from '../../lib/identify';
 import { useSkyObjects } from '../../hooks/useSkyObjects';
+import { usePlanetPositions } from '../../hooks/usePlanetPositions';
 import { CameraAim, type AimTarget } from './CameraAim';
 import { DomeShell } from './DomeShell';
 import { PlanetLayer } from './PlanetLayer';
@@ -119,6 +127,8 @@ interface SceneProps {
   onCountChange: (count: number) => void;
   aimRequest: number;
   layers: SkyLayers;
+  identifyRequest: number;
+  onIdentifyMatch: (subject: ExplainSubject | null, requestId: number) => void;
 }
 
 function SkyScene({
@@ -131,9 +141,17 @@ function SkyScene({
   onCountChange,
   aimRequest,
   layers,
+  identifyRequest,
+  onIdentifyMatch,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
+  const planetPositions = usePlanetPositions(
+    displayTime,
+    observer.latitude,
+    observer.longitude,
+    observer.elevation
+  );
 
   const lstRad = useMemo(
     () => localSiderealTime(displayTime, observer.longitude),
@@ -141,6 +159,53 @@ function SkyScene({
   );
   const [aimTarget, setAimTarget] = useState<AimTarget | null>(null);
   const autoAimedRef = useRef(false);
+  const camera = useThree((s) => s.camera);
+  const prevIdentifyRequestRef = useRef(0);
+
+  // "What am I looking at": search once per button click, matching whatever
+  // is centred against every candidate the currently-toggled layers show.
+  useEffect(() => {
+    if (identifyRequest === 0 || identifyRequest === prevIdentifyRequestRef.current) return;
+    prevIdentifyRequestRef.current = identifyRequest;
+
+    const candidates: Array<BoresightCandidate<IdentifyCandidate>> = [];
+    for (const sat of satellites) {
+      candidates.push({
+        azimuthDeg: sat.sample.azimuthDeg,
+        elevationDeg: sat.sample.elevationDeg,
+        data: { kind: 'satellite', sat },
+      });
+    }
+    if (layers.planets) {
+      for (const planet of planetPositions) {
+        candidates.push({
+          azimuthDeg: planet.azimuthDeg,
+          elevationDeg: planet.elevationDeg,
+          data: { kind: 'planet', planet },
+        });
+      }
+    }
+    if (layers.stars) {
+      for (const star of catalog.namedStars) {
+        const { azimuthDeg, elevationDeg } = raDecToAzEl(star.ra, star.dec, lstRad, observer.latitude);
+        if (elevationDeg < 0) continue;
+        candidates.push({ azimuthDeg, elevationDeg, data: { kind: 'star', star, azimuthDeg, elevationDeg } });
+      }
+    }
+
+    const match = findBoresightMatch(camera, candidates);
+    onIdentifyMatch(match ? toExplainSubject(match.data) : null, identifyRequest);
+  }, [
+    identifyRequest,
+    satellites,
+    planetPositions,
+    layers.planets,
+    layers.stars,
+    lstRad,
+    observer.latitude,
+    camera,
+    onIdentifyMatch,
+  ]);
 
   useEffect(() => {
     onCountChange(satellites.length);
@@ -248,6 +313,8 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
   { key: 'planets', label: 'Planets' },
 ];
 
+type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
+
 export function SkyDome({ tles, observer, displayTime, passes, loading }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
@@ -261,6 +328,54 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
 
   const toggleLayer = (key: keyof SkyLayers) =>
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const [identifyRequest, setIdentifyRequest] = useState(0);
+  const [identifyStatus, setIdentifyStatus] = useState<IdentifyStatus>('idle');
+  const [identifySubject, setIdentifySubject] = useState<ExplainSubject | null>(null);
+  const [identifyResult, setIdentifyResult] = useState<ExplainResult | null>(null);
+  const [identifyError, setIdentifyError] = useState<string | null>(null);
+  const latestIdentifyRequestRef = useRef(0);
+
+  const handleIdentify = () => {
+    const id = identifyRequest + 1;
+    latestIdentifyRequestRef.current = id;
+    setIdentifyStatus('searching');
+    setIdentifySubject(null);
+    setIdentifyResult(null);
+    setIdentifyError(null);
+    setIdentifyRequest(id);
+  };
+
+  const closeIdentify = () => {
+    latestIdentifyRequestRef.current = identifyRequest;
+    setIdentifyStatus('idle');
+    setIdentifySubject(null);
+    setIdentifyResult(null);
+    setIdentifyError(null);
+  };
+
+  const handleIdentifyMatch = useCallback((subject: ExplainSubject | null, requestId: number) => {
+    if (requestId !== latestIdentifyRequestRef.current) return;
+
+    if (!subject) {
+      setIdentifyStatus('no-match');
+      return;
+    }
+
+    setIdentifySubject(subject);
+    setIdentifyStatus('loading');
+    fetchExplanation(subject)
+      .then((result) => {
+        if (requestId !== latestIdentifyRequestRef.current) return;
+        setIdentifyResult(result);
+        setIdentifyStatus('result');
+      })
+      .catch((err) => {
+        if (requestId !== latestIdentifyRequestRef.current) return;
+        setIdentifyError(err instanceof Error ? err.message : 'Failed to identify object');
+        setIdentifyStatus('error');
+      });
+  }, []);
 
   return (
     <div className="relative w-full h-[clamp(360px,58vh,620px)] rounded-xl overflow-hidden glass-panel">
@@ -288,9 +403,20 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
               onCountChange={setVisibleCount}
               aimRequest={aimRequest}
               layers={layers}
+              identifyRequest={identifyRequest}
+              onIdentifyMatch={handleIdentifyMatch}
             />
           </Suspense>
         </Canvas>
+      )}
+
+      {!loading && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <div className="w-4 h-4 relative opacity-40">
+            <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-space-100" />
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-space-100" />
+          </div>
+        </div>
       )}
 
       {/* Overlays */}
@@ -301,6 +427,16 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
             <div className="text-glow-400 font-mono text-sm font-semibold">{visibleCount}</div>
           </div>
           <div className="flex items-center gap-2">
+            {!loading && (
+              <button
+                type="button"
+                onClick={handleIdentify}
+                disabled={identifyStatus === 'searching' || identifyStatus === 'loading'}
+                className="pointer-events-auto text-xs px-2.5 py-1.5 rounded-lg bg-glow-600/15 text-glow-400 border border-glow-600/30 hover:bg-glow-600/25 hover:shadow-[var(--shadow-glow-sm)] transition disabled:opacity-60"
+              >
+                {identifyStatus === 'searching' || identifyStatus === 'loading' ? 'Identifying…' : "What am I looking at?"}
+              </button>
+            )}
             {visibleCount > 0 && (
               <button
                 type="button"
@@ -318,12 +454,63 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
           </div>
         </div>
 
-        {!loading && layers.satellites && visibleCount === 0 && (
+        {!loading && layers.satellites && visibleCount === 0 && identifyStatus === 'idle' && (
           <div className="self-center glass-panel rounded-lg px-4 py-2.5 text-center max-w-xs">
             <p className="text-sm text-space-200 font-medium">No satellites overhead right now</p>
             <p className="text-xs text-space-300 mt-0.5">
               Scrub or play the timeline below to find the next pass.
             </p>
+          </div>
+        )}
+
+        {identifyStatus !== 'idle' && (
+          <div className="pointer-events-auto self-center glass-panel rounded-lg px-4 py-3 max-w-sm shadow-[var(--shadow-glow-sm)]">
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-left min-w-0">
+                {identifyStatus === 'searching' && (
+                  <p className="text-sm text-space-200">Looking for what&apos;s centred…</p>
+                )}
+                {identifyStatus === 'no-match' && (
+                  <>
+                    <p className="text-sm text-space-200 font-medium">Nothing identifiable there</p>
+                    <p className="text-xs text-space-300 mt-0.5">
+                      Centre a satellite, planet, or named star in the view and try again.
+                    </p>
+                  </>
+                )}
+                {(identifyStatus === 'loading' || identifyStatus === 'result') && identifySubject && (
+                  <>
+                    <div className="text-[10px] uppercase tracking-wider text-space-300">
+                      {identifySubject.kind}
+                    </div>
+                    <div className="text-glow-400 font-semibold text-sm">{identifySubject.name}</div>
+                    {identifyStatus === 'loading' ? (
+                      <p className="text-xs text-space-300 mt-1.5">Thinking…</p>
+                    ) : (
+                      identifyResult && (
+                        <p className="text-xs text-space-200 mt-1.5 leading-relaxed">
+                          {identifyResult.explanation}
+                        </p>
+                      )
+                    )}
+                  </>
+                )}
+                {identifyStatus === 'error' && (
+                  <>
+                    <p className="text-sm text-space-200 font-medium">Couldn&apos;t identify that</p>
+                    <p className="text-xs text-space-300 mt-0.5">{identifyError}</p>
+                  </>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={closeIdentify}
+                aria-label="Close"
+                className="text-space-400 hover:text-space-200 text-xs shrink-0 leading-none"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         )}
 

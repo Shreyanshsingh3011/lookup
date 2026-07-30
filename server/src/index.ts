@@ -5,6 +5,9 @@ import type { EpochSpan } from "./elements.js";
 import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js";
 import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
 import type { Observer } from "./types.js";
+import { explainObject, parseExplainSubject } from "./explain.js";
+import { aiAvailable } from "./ai.js";
+import { rateLimit } from "./rateLimit.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -128,6 +131,34 @@ app.get("/api/passes", async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
+  }
+});
+
+// AI calls cost real money per request, so these get their own tighter limit
+// than the rest of the API — 20 requests per 5 minutes per IP.
+const aiRateLimit = rateLimit({ windowMs: 5 * 60 * 1000, max: 20 });
+
+app.get("/api/ai/status", (_req, res) => {
+  res.json({ available: aiAvailable() });
+});
+
+app.post("/api/explain", aiRateLimit, async (req, res) => {
+  const subject = parseExplainSubject(req.body);
+  if (!subject) {
+    res.status(400).json({
+      error: "Body must have kind ('satellite'|'planet'|'star'), name, elevationDeg, azimuthDeg, direction, plus the fields specific to that kind.",
+    });
+    return;
+  }
+
+  try {
+    const result = await explainObject(subject);
+    res.json(result);
+  } catch (err) {
+    // explainObject itself never throws (askGrounded swallows AI failures and
+    // falls back to a template) — this only catches something going wrong in
+    // the template path itself, which would be a real bug worth seeing.
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build an explanation" });
   }
 });
 

@@ -44,6 +44,14 @@ const stars = starData.features
   // Brightest first, so a "render only the top N" cutoff stays meaningful.
   .sort((a, b) => a.mag - b.mag);
 
+// --- Constellation full names, keyed by IAU abbreviation -------------------
+// Read here (ahead of where constellation figures are otherwise built below)
+// so the named-star loop can attach a constellation to each star.
+const constellationMeta = readJson('constellations.json');
+const nameById = new Map(
+  constellationMeta.features.map((f) => [f.id, (f.properties?.name ?? '').trim()])
+);
+
 // --- Names for the brightest stars ----------------------------------------
 const starNames = readJson('starnames.json');
 const named = [];
@@ -52,7 +60,8 @@ for (const s of stars) {
   const entry = starNames[String(s.hip)];
   const name = entry?.name?.trim();
   if (!name) continue;
-  named.push({ ra: r3(s.ra), dec: r3(s.dec), mag: r2(s.mag), name });
+  const constellation = entry?.c ? nameById.get(entry.c) || null : null;
+  named.push({ ra: r3(s.ra), dec: r3(s.dec), mag: r2(s.mag), name, constellation });
 }
 
 // --- Constellation stick figures ------------------------------------------
@@ -72,11 +81,6 @@ for (const f of lineData.features) {
 const constellations = [...linesById].map(([id, lines]) => ({ id, lines }));
 
 // --- Constellation names, placed at each figure's centroid ----------------
-const constellationMeta = readJson('constellations.json');
-const nameById = new Map(
-  constellationMeta.features.map((f) => [f.id, (f.properties?.name ?? '').trim()])
-);
-
 const constellationLabels = constellations
   .map((c) => {
     const points = c.lines.flat();
