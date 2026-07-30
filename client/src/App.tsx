@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
+import { ConjunctionScan } from './components/ConjunctionScan';
 import { LocationPicker } from './components/LocationPicker';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
@@ -273,6 +274,14 @@ function App() {
             )}
           </div>
           <AddSatellite customTles={customTles} onAdd={addCustomSatellite} onRemove={removeCustomSatellite} />
+        </section>
+
+        <section className="print:hidden">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-lg font-medium text-space-100">Close approaches</h2>
+            <p className="text-xs text-space-300">Geometric proximity only — not a collision assessment</p>
+          </div>
+          <ConjunctionScan tles={allTles} />
         </section>
 
         <section className="print:hidden">
