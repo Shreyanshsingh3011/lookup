@@ -273,6 +273,7 @@ function SkyScene({
         <SatelliteMarker
           key={sat.satnum}
           sat={sat}
+          tle={tles.find((t) => t.satnum === sat.satnum)}
           selected={selected === sat.satnum}
           onSelect={handleSelect}
         />

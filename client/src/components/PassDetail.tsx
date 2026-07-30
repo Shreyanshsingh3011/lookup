@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { decayLabel, estimateDecay } from '../lib/decay';
 import { computePassTrack } from '../lib/passTrack';
 import { CloudCover } from './CloudCover';
 import { GroundTrackMap } from './GroundTrackMap';
@@ -57,6 +58,8 @@ export function PassDetail({ pass, observer, tles, onClose, onShowInSky }: Props
     () => (tle ? computePassTrack(tle, observer, pass) : []),
     [tle, observer, pass]
   );
+
+  const decay = useMemo(() => (tle ? estimateDecay(tle, new Date()) : null), [tle]);
 
   const displayName = pass.name.replace(/\s*\(.*?\)\s*/g, '').trim();
 
@@ -172,6 +175,12 @@ export function PassDetail({ pass, observer, tles, onClose, onShowInSky }: Props
                       : 'sets below horizon'}
                 </dd>
               </div>
+              {decay && (
+                <div>
+                  <dt className="text-[10px] uppercase tracking-wider text-space-300">Orbital decay</dt>
+                  <dd className="font-mono text-space-100">{decayLabel(decay)}</dd>
+                </div>
+              )}
             </dl>
 
             <p className="text-[11px] text-space-300 mt-4">

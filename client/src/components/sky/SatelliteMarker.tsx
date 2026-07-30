@@ -2,9 +2,11 @@ import { useMemo, useRef, useState } from 'react';
 import { Billboard, Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { decayLabel, estimateDecay } from '../../lib/decay';
 import { azElToVec3, azToCompass, type SkySample } from '../../lib/sky';
 import { useSatelliteModel } from '../../hooks/useSatelliteModel';
 import { FrontFacingHtml } from './FrontFacingHtml';
+import type { TleRecord } from '../../types';
 
 const BODY_COLOR = '#c9d1e8';
 const PANEL_COLOR = '#16305c';
@@ -242,16 +244,25 @@ function Trail({ points, illuminated }: { points: Array<[number, number, number]
 
 interface Props {
   sat: LiveSatellite;
+  tle?: TleRecord;
   selected: boolean;
   onSelect: (satnum: string | null) => void;
 }
 
-export function SatelliteMarker({ sat, selected, onSelect }: Props) {
+export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
   const spinRef = useRef<THREE.Group>(null);
   const [hovered, setHovered] = useState(false);
   // An external model when one is configured for this satellite; otherwise the
   // procedural geometry below.
   const model = useSatelliteModel(sat.satnum);
+
+  // Decay estimation forward-propagates SGP4 up to ~100 times, so it's only
+  // worth computing while the panel showing it is actually visible.
+  const showPanel = selected || hovered;
+  const decay = useMemo(
+    () => (showPanel && tle ? estimateDecay(tle, new Date()) : null),
+    [showPanel, tle]
+  );
 
   const position = useMemo(
     () => azElToVec3(sat.sample.azimuthDeg, sat.sample.elevationDeg),
@@ -341,6 +352,12 @@ export function SatelliteMarker({ sat, selected, onSelect }: Props) {
                       })
                     : '—'}
                 </dd>
+                {decay && (
+                  <>
+                    <dt className="text-space-300">Decay</dt>
+                    <dd className="font-mono text-space-100">{decayLabel(decay)}</dd>
+                  </>
+                )}
               </dl>
             </div>
           </FrontFacingHtml>
