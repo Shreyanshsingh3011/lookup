@@ -297,6 +297,12 @@ app.post("/api/orbit-advice", aiRateLimit, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`lookup server listening on http://localhost:${PORT}`);
-});
+// Vercel invokes the exported app directly per-request rather than through a
+// bound port, so a real listener is only useful (and only started) locally.
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`lookup server listening on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
