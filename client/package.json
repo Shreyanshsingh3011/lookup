@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "node --import tsx --test src/lib/boresight.test.ts src/lib/identify.test.ts src/lib/customTle.test.ts src/lib/groundTrack.test.ts src/lib/decay.test.ts",
+    "test": "node --import tsx --test src/lib/boresight.test.ts src/lib/identify.test.ts src/lib/customTle.test.ts src/lib/groundTrack.test.ts src/lib/decay.test.ts src/lib/exportData.test.ts",
     "lint": "oxlint",
     "preview": "vite preview"
   },

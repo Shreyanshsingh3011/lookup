@@ -11,6 +11,7 @@ import { TimeScrubber } from './components/TimeScrubber';
 import { SkyDome } from './components/sky/SkyDome';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
+import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
 import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 const MAX_CUSTOM_SATELLITES = 20;
@@ -221,12 +222,23 @@ function App() {
         )}
 
         <section className="print:hidden">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-lg font-medium text-space-100">Upcoming visible passes</h2>
-            <p className="text-xs text-space-300">
-              Next 10 days · ISS &amp; space stations
-              <span className="hidden sm:inline"> · click a pass for its sky track</span>
-            </p>
+          <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+            <div>
+              <h2 className="text-lg font-medium text-space-100">Upcoming visible passes</h2>
+              <p className="text-xs text-space-300">
+                Next 10 days · ISS &amp; space stations
+                <span className="hidden sm:inline"> · click a pass for its sky track</span>
+              </p>
+            </div>
+            {allPasses.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadTextFile('lookup-passes.csv', passesToCsv(allPasses), 'text/csv')}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-space-700/60 text-space-200 border border-space-600 hover:bg-space-700 transition"
+              >
+                Export CSV
+              </button>
+            )}
           </div>
           <PassTable
             passes={allPasses}
@@ -243,11 +255,22 @@ function App() {
         </section>
 
         <section className="print:hidden">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-lg font-medium text-space-100">Track a satellite of your own</h2>
-            <p className="text-xs text-space-300">
-              {customPassesLoading ? 'Computing passes…' : 'By NORAD ID or a pasted TLE'}
-            </p>
+          <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+            <div>
+              <h2 className="text-lg font-medium text-space-100">Track a satellite of your own</h2>
+              <p className="text-xs text-space-300">
+                {customPassesLoading ? 'Computing passes…' : 'By NORAD ID or a pasted TLE'}
+              </p>
+            </div>
+            {allTles.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadTextFile('lookup-tles.txt', tlesToText(allTles), 'text/plain')}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-space-700/60 text-space-200 border border-space-600 hover:bg-space-700 transition"
+              >
+                Export TLEs ({allTles.length})
+              </button>
+            )}
           </div>
           <AddSatellite customTles={customTles} onAdd={addCustomSatellite} onRemove={removeCustomSatellite} />
         </section>
