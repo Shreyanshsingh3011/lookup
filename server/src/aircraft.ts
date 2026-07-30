@@ -39,8 +39,16 @@ const CACHE_TTL_MS = Number(process.env.OPENSKY_CACHE_TTL_MS) || 60_000;
 /** Bounding-box half-size around the observer. */
 const DEFAULT_RADIUS_KM = 150;
 
-/** Upper bound on the upstream call, since the result is only advisory. */
-const REQUEST_TIMEOUT_MS = 8000;
+/**
+ * Upper bound on the upstream call.
+ *
+ * Deliberately generous: OpenSky's /states/all regularly takes well over ten
+ * seconds to answer, particularly for anonymous callers, and an 8-second
+ * limit timed out every single request from production. Since the result is
+ * cached for a minute afterwards and the client polls in the background,
+ * waiting is far better than never getting data at all.
+ */
+const REQUEST_TIMEOUT_MS = Number(process.env.OPENSKY_TIMEOUT_MS) || 20_000;
 
 /** Don't re-attempt a failing upstream on every single request. */
 const FAILURE_TTL_MS = 2 * 60 * 1000;

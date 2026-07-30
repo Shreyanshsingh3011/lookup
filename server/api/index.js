@@ -35834,7 +35834,7 @@ var OPENSKY_STATES_URL = "https://opensky-network.org/api/states/all";
 var OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 var CACHE_TTL_MS3 = Number(process.env.OPENSKY_CACHE_TTL_MS) || 6e4;
 var DEFAULT_RADIUS_KM = 150;
-var REQUEST_TIMEOUT_MS2 = 8e3;
+var REQUEST_TIMEOUT_MS2 = Number(process.env.OPENSKY_TIMEOUT_MS) || 2e4;
 var FAILURE_TTL_MS2 = 2 * 60 * 1e3;
 var IDX = {
   icao24: 0,
