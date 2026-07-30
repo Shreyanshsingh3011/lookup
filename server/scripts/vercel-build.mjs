@@ -1,5 +1,5 @@
 /**
- * Produces the Vercel serverless function entry (server/api/[...path].js).
+ * Produces the Vercel serverless function entry (server/api/index.js).
  *
  * Vercel's own dependency bundler hits a real ESM/CJS dual-package hazard on
  * astronomy-engine (it resolves the package's ESM build but loads it through
@@ -16,9 +16,15 @@
  * runtime without bundling it (the client's Vite config stubs the same
  * barrel out for the same reason; see client/vite.config.ts).
  *
- * The catch-all filename ([...path].js) is what makes every /api/* request
- * reach this one function with no vercel.json rewrite needed — Express does
- * its own routing from the real request path from there.
+ * This used to be named api/[...path].js, relying on Vercel's catch-all
+ * filename convention to route every /api/* request here with no
+ * vercel.json needed. In practice that only matched a single path segment
+ * beyond /api/ in this non-framework ("Other") project — /api/health
+ * reached Express, /api/tle/stations 404'd at Vercel's own routing layer
+ * before ever reaching the function. A plain filename plus an explicit
+ * server/vercel.json "routes" rule (which selects the handler without
+ * rewriting what the function itself receives) is what Express needs to do
+ * its own routing correctly off the real request path.
  *
  * Local dev/build/start (tsx, tsc, dist/) are untouched; this only produces
  * an additional deployment artifact under server/api/.
@@ -37,7 +43,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const serverDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const outfile = join(serverDir, 'api', '[...path].js');
+const outfile = join(serverDir, 'api', 'index.js');
 
 mkdirSync(dirname(outfile), { recursive: true });
 
