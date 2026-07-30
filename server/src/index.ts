@@ -3,8 +3,8 @@ import cors from "cors";
 import { getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
 import type { EpochSpan } from "./elements.js";
 import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js";
-import { computeVisiblePasses, DEFAULT_PASS_OPTIONS } from "./passes.js";
-import type { Observer, Pass } from "./types.js";
+import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
+import type { Observer } from "./types.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -93,21 +93,10 @@ app.get("/api/passes", async (req, res) => {
     const maxMagnitude =
       req.query.maxMag !== undefined ? Number(req.query.maxMag) : DEFAULT_PASS_OPTIONS.maxMagnitude;
 
-    const passes: Pass[] = [];
-    let tooFaintCount = 0;
-    let brightestRejected: number | null = null;
-    for (const tle of tles) {
-      const result = computeVisiblePasses(tle, observer, { days, minElevationDeg, maxMagnitude });
-      passes.push(...result.passes);
-      tooFaintCount += result.tooFaintCount;
-      if (
-        result.brightestRejectedMagnitude !== null &&
-        (brightestRejected === null || result.brightestRejectedMagnitude < brightestRejected)
-      ) {
-        brightestRejected = result.brightestRejectedMagnitude;
-      }
-    }
-    passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
+    // Shares one observer-context build (darkness windows, sun-altitude table)
+    // across every satellite instead of recomputing it per object.
+    const { passes, tooFaintCount, brightestRejectedMagnitude: brightestRejected } =
+      computePassesForMany(tles, observer, { days, minElevationDeg, maxMagnitude });
 
     // Cloud cover is advisory: a forecast failure must not fail the prediction,
     // so this never rejects and passes simply carry a null when it is missing.

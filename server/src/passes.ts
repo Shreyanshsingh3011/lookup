@@ -159,7 +159,7 @@ function sampleAt(
   satrec: satellite.SatRec,
   name: string,
   observerGd: satellite.GeodeticLocation,
-  astroObserver: AstroObserver,
+  sunAltitudeAt: (ms: number) => number,
   date: Date,
   opts: PassOptions
 ): Sample | null {
@@ -187,7 +187,7 @@ function sampleAt(
   const obsEcf = satellite.geodeticToEcf(observerGd);
   const obsEci = satellite.ecfToEci(obsEcf, gmst);
 
-  const observerDark = sunAltitudeDeg(date, astroObserver) < opts.sunAltitudeThresholdDeg;
+  const observerDark = sunAltitudeAt(date.getTime()) < opts.sunAltitudeThresholdDeg;
   const magnitude = apparentMagnitude(name, pv.position, sunEciKm, obsEci, shadowFrac);
 
   return { date, azimuthDeg, elevationDeg, illuminated, observerDark, magnitude };
@@ -203,31 +203,89 @@ function toPassEvent(s: Sample): PassEvent {
   };
 }
 
-/**
- * Find darkness windows (observer sun altitude below threshold) over the
- * search period, expanded with a buffer so fine-grained pass scanning
- * doesn't clip passes that start/end right at the window edge.
- */
-function findDarkWindows(astroObserver: AstroObserver, start: Date, end: Date, opts: PassOptions): Array<[Date, Date]> {
-  const stepMs = opts.coarseStepMinutes * 60 * 1000;
-  const bufferMs = 15 * 60 * 1000;
-  const windows: Array<[Date, Date]> = [];
-  let windowStart: Date | null = null;
+/** Padding around dark windows so fine scanning doesn't clip passes at the edge. */
+const WINDOW_BUFFER_MS = 15 * 60 * 1000;
 
-  for (let t = start.getTime(); t <= end.getTime(); t += stepMs) {
-    const date = new Date(t);
-    const dark = sunAltitudeDeg(date, astroObserver) < opts.sunAltitudeThresholdDeg;
+/**
+ * Per-minute sun-altitude samples for interpolation.
+ *
+ * The sun moves at most ~0.25 degrees per minute, so linear interpolation
+ * between one-minute samples is accurate to well under 0.01 degrees — far
+ * tighter than the twilight threshold needs, and it replaces one
+ * astronomy-engine call per satellite sample with an array lookup.
+ */
+const SUN_TABLE_STEP_MS = 60 * 1000;
+
+/**
+ * Everything about a pass search that depends only on the observer and the time
+ * range, not on which satellite is being propagated.
+ *
+ * Hoisting this out matters: darkness is identical for every satellite, so
+ * computing it per satellite repeated the same few thousand solar-position
+ * calculations once per object.
+ */
+export interface ObserverContext {
+  observerGd: satellite.GeodeticLocation;
+  darkWindows: Array<[Date, Date]>;
+  /** Interpolated sun altitude in degrees at an epoch-millisecond time. */
+  sunAltitudeAt: (ms: number) => number;
+  from: Date;
+  to: Date;
+}
+
+export function buildObserverContext(
+  observer: Observer,
+  opts: PassOptions,
+  from: Date,
+  to: Date
+): ObserverContext {
+  const observerGd: satellite.GeodeticLocation = {
+    longitude: satellite.degreesToRadians(observer.longitude),
+    latitude: satellite.degreesToRadians(observer.latitude),
+    height: observer.elevation / 1000,
+  };
+  const astroObserver = new Astronomy.Observer(observer.latitude, observer.longitude, observer.elevation);
+
+  // Cover the buffered window edges, which extend past the search range.
+  const baseMs = from.getTime() - WINDOW_BUFFER_MS - SUN_TABLE_STEP_MS;
+  const lastMs = to.getTime() + WINDOW_BUFFER_MS + SUN_TABLE_STEP_MS;
+  const count = Math.ceil((lastMs - baseMs) / SUN_TABLE_STEP_MS) + 1;
+
+  const table = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    table[i] = sunAltitudeDeg(new Date(baseMs + i * SUN_TABLE_STEP_MS), astroObserver);
+  }
+
+  const sunAltitudeAt = (ms: number): number => {
+    const x = (ms - baseMs) / SUN_TABLE_STEP_MS;
+    if (x <= 0) return table[0];
+    if (x >= count - 1) return table[count - 1];
+    const i = Math.floor(x);
+    return table[i] + (table[i + 1] - table[i]) * (x - i);
+  };
+
+  // Darkness windows, read off the same table.
+  const stepMs = opts.coarseStepMinutes * 60 * 1000;
+  const darkWindows: Array<[Date, Date]> = [];
+  let windowStart: number | null = null;
+
+  for (let t = from.getTime(); t <= to.getTime(); t += stepMs) {
+    const dark = sunAltitudeAt(t) < opts.sunAltitudeThresholdDeg;
     if (dark && windowStart === null) {
-      windowStart = date;
+      windowStart = t;
     } else if (!dark && windowStart !== null) {
-      windows.push([new Date(windowStart.getTime() - bufferMs), new Date(t + bufferMs)]);
+      darkWindows.push([new Date(windowStart - WINDOW_BUFFER_MS), new Date(t + WINDOW_BUFFER_MS)]);
       windowStart = null;
     }
   }
   if (windowStart !== null) {
-    windows.push([new Date(windowStart.getTime() - bufferMs), new Date(end.getTime() + bufferMs)]);
+    darkWindows.push([
+      new Date(windowStart - WINDOW_BUFFER_MS),
+      new Date(to.getTime() + WINDOW_BUFFER_MS),
+    ]);
   }
-  return windows;
+
+  return { observerGd, darkWindows, sunAltitudeAt, from, to };
 }
 
 export function computeVisiblePasses(
@@ -236,18 +294,54 @@ export function computeVisiblePasses(
   options: Partial<PassOptions> = {}
 ): PassSearchResult {
   const opts: PassOptions = { ...DEFAULT_PASS_OPTIONS, ...options };
-  const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
-
-  const observerGd: satellite.GeodeticLocation = {
-    longitude: satellite.degreesToRadians(observer.longitude),
-    latitude: satellite.degreesToRadians(observer.latitude),
-    height: observer.elevation / 1000,
-  };
-  const astroObserver = new Astronomy.Observer(observer.latitude, observer.longitude, observer.elevation);
-
   const now = new Date();
   const end = new Date(now.getTime() + opts.days * 24 * 60 * 60 * 1000);
-  const darkWindows = findDarkWindows(astroObserver, now, end, opts);
+  return passesForSatellite(tle, buildObserverContext(observer, opts, now, end), opts);
+}
+
+/**
+ * Passes for many satellites sharing one observer.
+ *
+ * The observer context is built once rather than per satellite, which is where
+ * nearly all of the time went: darkness is the same for every object.
+ */
+export function computePassesForMany(
+  tles: TleRecord[],
+  observer: Observer,
+  options: Partial<PassOptions> = {}
+): PassSearchResult {
+  const opts: PassOptions = { ...DEFAULT_PASS_OPTIONS, ...options };
+  const now = new Date();
+  const end = new Date(now.getTime() + opts.days * 24 * 60 * 60 * 1000);
+  const context = buildObserverContext(observer, opts, now, end);
+
+  const passes: Pass[] = [];
+  let tooFaintCount = 0;
+  let brightest: number | null = null;
+
+  for (const tle of tles) {
+    const result = passesForSatellite(tle, context, opts);
+    passes.push(...result.passes);
+    tooFaintCount += result.tooFaintCount;
+    if (
+      result.brightestRejectedMagnitude !== null &&
+      (brightest === null || result.brightestRejectedMagnitude < brightest)
+    ) {
+      brightest = result.brightestRejectedMagnitude;
+    }
+  }
+
+  passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
+  return { passes, tooFaintCount, brightestRejectedMagnitude: brightest };
+}
+
+function passesForSatellite(
+  tle: TleRecord,
+  context: ObserverContext,
+  opts: PassOptions
+): PassSearchResult {
+  const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
+  const { observerGd, darkWindows, sunAltitudeAt } = context;
 
   const passes: Pass[] = [];
   const rejected: number[] = [];
@@ -257,7 +351,7 @@ export function computeVisiblePasses(
     let current: Sample[] | null = null;
 
     for (let t = winStart.getTime(); t <= winEnd.getTime(); t += stepMs) {
-      const sample = sampleAt(satrec, tle.name, observerGd, astroObserver, new Date(t), opts);
+      const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
       if (!sample) continue;
 
       const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
