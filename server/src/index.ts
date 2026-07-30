@@ -6,6 +6,7 @@ import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js
 import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
 import type { Observer } from "./types.js";
 import { explainObject, parseExplainSubject } from "./explain.js";
+import { adviseOnOrbit, MISSION_TYPES, parseOrbitAdviceRequest } from "./orbitAdvice.js";
 import { aiAvailable } from "./ai.js";
 import { rateLimit } from "./rateLimit.js";
 
@@ -159,6 +160,25 @@ app.post("/api/explain", aiRateLimit, async (req, res) => {
     // falls back to a template) — this only catches something going wrong in
     // the template path itself, which would be a real bug worth seeing.
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build an explanation" });
+  }
+});
+
+app.post("/api/orbit-advice", aiRateLimit, async (req, res) => {
+  const request = parseOrbitAdviceRequest(req.body);
+  if (!request) {
+    res.status(400).json({
+      error:
+        `Body must have missionType (one of ${MISSION_TYPES.join(", ")}), missionGoal (non-empty string, max 500 chars), ` +
+        "launchSiteLatitudeDeg (-90..90), and timingNotes (string, max 200 chars, or null).",
+    });
+    return;
+  }
+
+  try {
+    const result = await adviseOnOrbit(request);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build orbit advice" });
   }
 });
 

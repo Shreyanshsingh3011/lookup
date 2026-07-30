@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchPasses, fetchTles } from './api/client';
 import { LocationPicker } from './components/LocationPicker';
+import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
 import { SourceBanner } from './components/SourceBanner';
@@ -160,6 +161,14 @@ function App() {
             satelliteCount={passSummary?.satelliteCount}
           />
           {passSummary && <WeatherNotice {...passSummary.weather} />}
+        </section>
+
+        <section className="print:hidden">
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-lg font-medium text-space-100">Planning a launch?</h2>
+            <p className="text-xs text-space-300">AI-assisted, grounded in orbital mechanics</p>
+          </div>
+          <OrbitAdvisor observer={observer} />
         </section>
       </main>
     </div>

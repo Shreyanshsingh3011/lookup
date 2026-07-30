@@ -1,4 +1,5 @@
 import type { ExplainResult, ExplainSubject } from '../lib/explain';
+import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
 import type { Observer, PassesResponse, TleResponse } from '../types';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -31,5 +32,13 @@ export function fetchExplanation(subject: ExplainSubject): Promise<ExplainResult
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(subject),
+  });
+}
+
+export function fetchOrbitAdvice(request: OrbitAdviceRequest): Promise<OrbitAdviceResult> {
+  return apiFetch<OrbitAdviceResult>('/api/orbit-advice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
   });
 }
