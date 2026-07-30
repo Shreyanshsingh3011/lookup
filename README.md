@@ -89,7 +89,7 @@ Lives in `server/src/passes.ts`:
 - **Trails** are re-derived analytically by propagating backwards from the display time rather than accumulating a rolling buffer of observed samples. That keeps them stateless and therefore correct while scrubbing or playing back, not only while time advances in real time.
 - **Labels** use drei's `Html`, wrapped in a `FrontFacingHtml` guard. A perspective projection maps points behind the camera back onto the viewport inverted, so without the guard the southern cardinal labels show up while you're facing north.
 - **Aiming.** The view swings to whatever is highest above the horizon when the sky goes from empty to occupied, and to any satellite you select; grabbing the sky cancels the animation so you never fight the camera.
-- Satellite models are procedural low-poly (an ISS-shaped truss with four array pairs, and a generic box-plus-wings bus), with optional external `.glb` models — see [Spacecraft models](#spacecraft-models).
+- Satellite models are procedural Three.js geometry — an ISS-shaped truss (four solar array pairs, rounded module chain, white radiator panels), a Tiangong-shaped cross of Tianhe/Wentian/Mengtian each with their own wings, and a generic box-plus-wings bus for everything else — with optional external `.glb` models on top; see [Spacecraft models](#spacecraft-models).
 
 ## Cloud cover
 
@@ -117,15 +117,34 @@ shape ever changes, rather than silently producing empty forecasts.
 
 ## Spacecraft models
 
-Satellites render as procedural low-poly geometry by default. To use a real
-model, convert it to `.glb`, drop it in `client/public/models/`, and either add
-an entry to `MODEL_URLS` in `client/src/lib/satelliteModels.ts` or set
+Satellites render as procedural Three.js geometry by default — no external
+assets required. Three shapes, chosen by name match in `SatelliteMarker.tsx`:
+
+- **ISS-family** (ISS/Zarya/Nauka/Poisk/docked-vehicle entries): a 3.4-unit
+  integrated truss, four solar array pairs, a rounded module chain with a
+  docking-node sphere, and white radiator panels offset vertically from the
+  truss so they read as a distinct structure rather than overlapping the blue
+  arrays.
+- **Tiangong-family** (CSS/Tianhe/Wentian/Mengtian): Tianhe's core cylinder
+  along X with Wentian and Mengtian docked radially along Z, each with its own
+  solar wings extending perpendicular to its own body axis — a cross/windmill
+  silhouette, deliberately not just a smaller ISS.
+- **Everything else**: a generic box-plus-wings bus.
+
+All solar panels share one small canvas-drawn grid texture (a solar-cell look
+without extra geometry), generated once and reused across every satellite
+rather than per-instance.
+
+To use a real model instead, convert it to `.glb`, drop it in
+`client/public/models/`, and either add an entry to `MODEL_URLS` in
+`client/src/lib/satelliteModels.ts` or set
 `VITE_SATELLITE_MODELS='{"25544":"/models/iss.glb"}'` at build time.
 
 No assets are vendored here. NASA publishes spacecraft models at
 [nasa3d.arc.nasa.gov/models](https://nasa3d.arc.nasa.gov/models), but mostly as
 `.3ds`/`.obj`/`.stl` rather than glTF, and they are large, so converting and
-committing them is a deployment decision rather than something baked in.
+committing them is a deployment decision rather than something baked in — the
+procedural geometry above exists precisely so that decision isn't required.
 
 Loading is lazy, cached per URL, and each marker gets its own clone (an
 `Object3D` has one parent, so sharing would make satellites steal the model from

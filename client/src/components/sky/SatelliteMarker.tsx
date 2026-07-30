@@ -8,8 +8,45 @@ import { FrontFacingHtml } from './FrontFacingHtml';
 
 const BODY_COLOR = '#c9d1e8';
 const PANEL_COLOR = '#16305c';
+const RADIATOR_COLOR = '#eef2f8';
 const LIT_COLOR = '#5eead4';
 const ECLIPSED_COLOR = '#64748b';
+
+/**
+ * Solar-cell grid drawn once onto a canvas and reused across every satellite
+ * that has panels. White lines on a white field, multiplied by PANEL_COLOR in
+ * the material — cheap texture-space detail instead of extra geometry, and a
+ * single shared instance so N satellites cost one canvas, not N.
+ */
+let solarPanelTexture: THREE.CanvasTexture | null = null;
+function getSolarPanelTexture(): THREE.CanvasTexture {
+  if (solarPanelTexture) return solarPanelTexture;
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = '#93a5cc';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i <= 6; i++) {
+    const p = (i / 6) * size;
+    ctx.beginPath();
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, size);
+    ctx.stroke();
+  }
+  for (let i = 0; i <= 2; i++) {
+    const p = (i / 2) * size;
+    ctx.beginPath();
+    ctx.moveTo(0, p);
+    ctx.lineTo(size, p);
+    ctx.stroke();
+  }
+  solarPanelTexture = new THREE.CanvasTexture(canvas);
+  return solarPanelTexture;
+}
 
 export interface LiveSatellite {
   satnum: string;
@@ -17,6 +54,22 @@ export interface LiveSatellite {
   sample: SkySample;
   trail: Array<[number, number, number]>;
   nextPassTime: string | null;
+}
+
+function SolarWing({ position, args, rotation }: { position: [number, number, number]; args: [number, number, number]; rotation?: [number, number, number] }) {
+  return (
+    <mesh position={position} rotation={rotation}>
+      <boxGeometry args={args} />
+      <meshStandardMaterial
+        map={getSolarPanelTexture()}
+        color={PANEL_COLOR}
+        metalness={0.35}
+        roughness={0.5}
+        emissive="#0b1e3d"
+        emissiveIntensity={0.5}
+      />
+    </mesh>
+  );
 }
 
 /** Generic low-poly bus: box body plus two solar panel wings. */
@@ -28,45 +81,99 @@ function GenericSatBody() {
         <meshStandardMaterial color={BODY_COLOR} metalness={0.6} roughness={0.35} />
       </mesh>
       {[-1, 1].map((side) => (
-        <mesh key={side} position={[side * 0.95, 0, 0]}>
-          <boxGeometry args={[1.25, 0.04, 0.55]} />
-          <meshStandardMaterial color={PANEL_COLOR} metalness={0.35} roughness={0.5} emissive="#0b1e3d" emissiveIntensity={0.5} />
+        <SolarWing key={side} position={[side * 0.95, 0, 0]} args={[1.25, 0.04, 0.55]} />
+      ))}
+    </group>
+  );
+}
+
+/**
+ * Recognisably ISS-shaped: a long integrated truss carrying four solar array
+ * pairs, a chain of pressurised modules along the flight axis, and the large
+ * white radiator panels that are one of the station's more distinctive
+ * features (and a useful visual contrast against the blue solar arrays).
+ */
+function IssBody() {
+  return (
+    <group>
+      {/* Integrated truss structure */}
+      <mesh>
+        <boxGeometry args={[3.4, 0.12, 0.12]} />
+        <meshStandardMaterial color={BODY_COLOR} metalness={0.75} roughness={0.3} />
+      </mesh>
+
+      {/* Pressurised module chain (Zarya-Unity-Destiny-Zvezda), rounded rather
+          than boxy for a more spacecraft-like silhouette under the same budget */}
+      <mesh rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.24, 0.24, 1.6, 10]} />
+        <meshStandardMaterial color={BODY_COLOR} metalness={0.55} roughness={0.4} />
+      </mesh>
+      <mesh position={[0.85, 0, 0]}>
+        <sphereGeometry args={[0.22, 10, 8]} />
+        <meshStandardMaterial color={BODY_COLOR} metalness={0.5} roughness={0.45} />
+      </mesh>
+
+      {/* Four solar array pairs along the truss */}
+      {[-1.4, -0.8, 0.8, 1.4].flatMap((x) =>
+        [-1, 1].map((side) => (
+          <SolarWing key={`${x}-${side}`} position={[x, 0, side * 0.72]} args={[0.42, 0.03, 1.15]} />
+        ))
+      )}
+
+      {/* Radiator panels near the truss ends, offset vertically so they read
+          as a separate structure rather than overlapping the solar arrays */}
+      {[-1.6, 1.6].map((x) => (
+        <mesh key={x} position={[x, 0.32, 0]}>
+          <boxGeometry args={[0.06, 0.65, 0.5]} />
+          <meshStandardMaterial
+            color={RADIATOR_COLOR}
+            metalness={0.5}
+            roughness={0.25}
+            emissive="#4a5568"
+            emissiveIntensity={0.15}
+          />
         </mesh>
       ))}
     </group>
   );
 }
 
-/** Recognisably ISS-shaped: long truss with four solar array pairs. */
-function IssBody() {
+/**
+ * Recognisably Tiangong-shaped: Wentian and Mengtian docked to Tianhe's radial
+ * ports gives the real station a cross/windmill silhouette when its three
+ * module pairs of solar wings are extended, which is what actually
+ * distinguishes it from the ISS's single long truss — not just a smaller
+ * generic bus with more panels.
+ */
+function TiangongBody() {
   return (
     <group>
-      {/* Main truss */}
-      <mesh>
-        <boxGeometry args={[3.0, 0.12, 0.12]} />
-        <meshStandardMaterial color={BODY_COLOR} metalness={0.7} roughness={0.3} />
+      {/* Tianhe core module */}
+      <mesh rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.28, 0.28, 1.6, 10]} />
+        <meshStandardMaterial color={BODY_COLOR} metalness={0.6} roughness={0.35} />
       </mesh>
-      {/* Pressurised modules along the flight axis */}
-      <mesh position={[0, 0, 0]}>
-        <boxGeometry args={[0.5, 0.42, 1.5]} />
-        <meshStandardMaterial color={BODY_COLOR} metalness={0.55} roughness={0.4} />
-      </mesh>
-      {/* Four solar array pairs */}
-      {[-1.25, -0.7, 0.7, 1.25].map((x) => (
-        <group key={x} position={[x, 0, 0]}>
-          {[-1, 1].map((side) => (
-            <mesh key={side} position={[0, 0, side * 0.72]}>
-              <boxGeometry args={[0.42, 0.03, 1.15]} />
-              <meshStandardMaterial
-                color={PANEL_COLOR}
-                metalness={0.35}
-                roughness={0.5}
-                emissive="#0b1e3d"
-                emissiveIntensity={0.55}
-              />
-            </mesh>
-          ))}
-        </group>
+
+      {/* Wentian and Mengtian, docked radially to form the cross */}
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[0.15, 0, side * 0.9]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.24, 0.24, 1.3, 10]} />
+          <meshStandardMaterial color={BODY_COLOR} metalness={0.55} roughness={0.4} />
+        </mesh>
+      ))}
+
+      {/* Tianhe's solar wings mount near its ends and extend in Z, perpendicular
+          to the core's own X-aligned axis, sitting outside the X range the lab
+          modules occupy so nothing clips. */}
+      {[-1, 1].map((side) => (
+        <SolarWing key={`core-${side}`} position={[side * 1.0, 0, 0]} args={[0.4, 0.03, 1.3]} />
+      ))}
+
+      {/* Wentian's and Mengtian's wings mount near their outer tips and extend
+          in X, perpendicular to those modules' own Z-aligned axis — giving the
+          whole assembly a windmill silhouette rather than one straight line. */}
+      {[-1, 1].map((side) => (
+        <SolarWing key={`lab-${side}`} position={[0.15, 0, side * 1.5]} args={[1.1, 0.03, 0.42]} />
       ))}
     </group>
   );
@@ -157,7 +264,11 @@ export function SatelliteMarker({ sat, selected, onSelect }: Props) {
   });
 
   const isIss = /ISS|ZARYA/i.test(sat.name);
-  const scale = (isIss ? 2.6 : 3.2) * (hovered || selected ? 1.35 : 1);
+  // Consistent with the station-family names passes.ts's standardMagnitude
+  // matches server-side for its brightness estimate (that one relies on CSS
+  // alone catching Wentian/Mengtian too, since both carry a "CSS (...)" name).
+  const isTiangong = /TIANGONG|\bCSS\b|TIANHE|WENTIAN|MENGTIAN/i.test(sat.name);
+  const scale = (isIss || isTiangong ? 2.6 : 3.2) * (hovered || selected ? 1.35 : 1);
   const glowColor = sat.sample.illuminated ? LIT_COLOR : ECLIPSED_COLOR;
   const displayName = sat.name.replace(/\s*\(.*?\)\s*/g, '').trim();
 
@@ -193,7 +304,15 @@ export function SatelliteMarker({ sat, selected, onSelect }: Props) {
         />
 
         <group ref={spinRef} scale={scale}>
-          {model ? <primitive object={model} /> : isIss ? <IssBody /> : <GenericSatBody />}
+          {model ? (
+            <primitive object={model} />
+          ) : isIss ? (
+            <IssBody />
+          ) : isTiangong ? (
+            <TiangongBody />
+          ) : (
+            <GenericSatBody />
+          )}
         </group>
 
         {(selected || hovered) && (

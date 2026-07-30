@@ -93,10 +93,11 @@ function FovZoom() {
 function DevProbe({ satellites }: { satellites: ReturnType<typeof useSkyObjects> }) {
   const camera = useThree((s) => s.camera);
   const scene = useThree((s) => s.scene);
+  const controls = useThree((s) => s.controls);
 
   useEffect(() => {
-    (window as unknown as Record<string, unknown>).__sky = { camera, scene, satellites };
-  }, [camera, scene, satellites]);
+    (window as unknown as Record<string, unknown>).__sky = { camera, scene, satellites, controls };
+  }, [camera, scene, satellites, controls]);
 
   return null;
 }
