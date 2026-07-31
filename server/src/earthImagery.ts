@@ -139,7 +139,24 @@ export interface EarthImageryResult {
   unreachable: string[];
 }
 
-const PROBE_TIMEOUT_MS = 8_000;
+/**
+ * Per-request budget for probing.
+ *
+ * Kept well inside the serverless function's own limit. The first version
+ * walked the candidates one at a time on an eight-second timeout and blew the
+ * limit outright, returning a gateway timeout instead of an answer — so the
+ * probes now run together and the whole step is bounded by one timeout rather
+ * than by their sum.
+ */
+const PROBE_TIMEOUT_MS = 4_000;
+
+/**
+ * Only the two best-placed satellites are probed. Anything further round the
+ * belt is looking at the observer's region edge-on anyway, and each extra
+ * satellite is more upstream requests on a request the user is waiting for.
+ */
+const MAX_SATELLITES_PROBED = 2;
+
 /** Frames only change every ten minutes, so re-probing faster is pointless. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -150,22 +167,65 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-async function probe(url: string): Promise<{ ok: boolean; lastModified: string | null }> {
+export interface ProbeOutcome {
+  url: string;
+  ok: boolean;
+  status: number | null;
+  contentType: string | null;
+  lastModified: string | null;
+  error?: string;
+}
+
+async function probe(url: string): Promise<ProbeOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    // HEAD avoids pulling several megabytes of JPEG just to learn it exists.
-    const res = await fetch(url, { method: "HEAD", signal: controller.signal });
-    const type = res.headers.get("content-type") ?? "";
+    // A one-byte ranged GET rather than HEAD: some image CDNs answer HEAD with
+    // 403 or 405 even when the object is perfectly fetchable, which would have
+    // this reporting a working feed as unavailable.
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Range: "bytes=0-0" },
+      signal: controller.signal,
+    });
+    const contentType = res.headers.get("content-type");
+    // 206 for an honoured range, 200 when the host ignores it.
+    const ok = (res.status === 200 || res.status === 206) && (contentType ?? "").startsWith("image/");
+    // Drain so the socket can be reused rather than left hanging.
+    await res.arrayBuffer().catch(() => undefined);
     return {
-      ok: res.ok && type.startsWith("image/"),
+      url,
+      ok,
+      status: res.status,
+      contentType,
       lastModified: res.headers.get("last-modified"),
     };
-  } catch {
-    return { ok: false, lastModified: null };
+  } catch (err) {
+    return {
+      url,
+      ok: false,
+      status: null,
+      contentType: null,
+      lastModified: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Probe every candidate for the best-placed satellites at once.
+ *
+ * Exported so the endpoint can report the raw outcomes: which of these paths
+ * are actually correct is not something that can be verified from a
+ * development sandbox with no route to the imagery hosts, so production has to
+ * be able to say.
+ */
+export async function probeCandidates(longitudeDeg: number): Promise<ProbeOutcome[]> {
+  const satellites = satellitesFor(longitudeDeg).slice(0, MAX_SATELLITES_PROBED);
+  const urls = satellites.flatMap((s) => s.candidates);
+  return Promise.all(urls.map(probe));
 }
 
 /**
@@ -184,39 +244,43 @@ export async function getEarthImagery(longitudeDeg: number): Promise<EarthImager
     return { ...cached.result, status: cached.result.image ? "cache" : cached.result.status };
   }
 
-  const candidates = satellitesFor(longitudeDeg);
+  const satellites = satellitesFor(longitudeDeg).slice(0, MAX_SATELLITES_PROBED);
+  const outcomes = await probeCandidates(longitudeDeg);
+  const byUrl = new Map(outcomes.map((o) => [o.url, o]));
   const unreachable: string[] = [];
 
-  for (const satellite of candidates) {
-    for (const url of satellite.candidates) {
-      const { ok, lastModified } = await probe(url);
-      if (!ok) continue;
-
-      const result: EarthImageryResult = {
-        image: {
-          satelliteId: satellite.id,
-          name: satellite.name,
-          operator: satellite.operator,
-          product: satellite.product,
-          longitudeDeg: satellite.longitudeDeg,
-          url,
-          checkedAt: new Date().toISOString(),
-          frameTime: lastModified ? new Date(lastModified).toISOString() : null,
-        },
-        status: "live",
-        unreachable,
-      };
-      cache.set(key, { result, at: Date.now() });
-      return result;
+  // Satellites stay in preference order; within one, the first candidate that
+  // answered wins. Probing was concurrent, so this is just picking a winner.
+  for (const satellite of satellites) {
+    const hit = satellite.candidates.map((url) => byUrl.get(url)).find((o) => o?.ok);
+    if (!hit) {
+      unreachable.push(satellite.name);
+      continue;
     }
-    unreachable.push(satellite.name);
+
+    const result: EarthImageryResult = {
+      image: {
+        satelliteId: satellite.id,
+        name: satellite.name,
+        operator: satellite.operator,
+        product: satellite.product,
+        longitudeDeg: satellite.longitudeDeg,
+        url: hit.url,
+        checkedAt: new Date().toISOString(),
+        frameTime: hit.lastModified ? new Date(hit.lastModified).toISOString() : null,
+      },
+      status: "live",
+      unreachable,
+    };
+    cache.set(key, { result, at: Date.now() });
+    return result;
   }
 
   const result: EarthImageryResult = {
     image: null,
     status: "unavailable",
     error:
-      candidates.length === 0
+      satellites.length === 0
         ? "No geostationary satellite in this catalogue images your longitude."
         : "None of the imagery hosts for your region answered.",
     unreachable,

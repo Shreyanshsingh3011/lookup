@@ -12,7 +12,7 @@ import { adviseOnOrbit, MISSION_TYPES, parseOrbitAdviceRequest } from "./orbitAd
 import { aiAvailable } from "./ai.js";
 import { rateLimit } from "./rateLimit.js";
 import { findTrains } from "./starlink.js";
-import { getEarthImagery } from "./earthImagery.js";
+import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -228,6 +228,15 @@ app.get("/api/earth-imagery", async (req, res) => {
     res.status(400).json({ error: "Provide a valid numeric 'lon' (-180..180) query param" });
     return;
   }
+  // ?probe=1 reports the raw outcome for every candidate URL. Which of these
+  // public image paths are actually correct cannot be checked from a
+  // development sandbox that has no route to the imagery hosts, so production
+  // needs to be able to answer it.
+  if (req.query.probe === "1") {
+    res.json({ longitude, candidates: await probeCandidates(longitude) });
+    return;
+  }
+
   const result = await getEarthImagery(longitude);
   res.json(result);
 });

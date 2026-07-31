@@ -42388,24 +42388,46 @@ function satellitesFor(longitudeDeg) {
     separation: longitudeSeparation(satellite3.longitudeDeg, longitudeDeg)
   })).filter(({ separation }) => separation <= USEFUL_LONGITUDE_REACH_DEG).sort((a, b) => a.separation - b.separation).map(({ satellite: satellite3 }) => satellite3);
 }
-var PROBE_TIMEOUT_MS = 8e3;
+var PROBE_TIMEOUT_MS = 4e3;
+var MAX_SATELLITES_PROBED = 2;
 var CACHE_TTL_MS4 = 5 * 60 * 1e3;
 var cache4 = /* @__PURE__ */ new Map();
 async function probe(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { method: "HEAD", signal: controller.signal });
-    const type = res.headers.get("content-type") ?? "";
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Range: "bytes=0-0" },
+      signal: controller.signal
+    });
+    const contentType = res.headers.get("content-type");
+    const ok = (res.status === 200 || res.status === 206) && (contentType ?? "").startsWith("image/");
+    await res.arrayBuffer().catch(() => void 0);
     return {
-      ok: res.ok && type.startsWith("image/"),
+      url,
+      ok,
+      status: res.status,
+      contentType,
       lastModified: res.headers.get("last-modified")
     };
-  } catch {
-    return { ok: false, lastModified: null };
+  } catch (err) {
+    return {
+      url,
+      ok: false,
+      status: null,
+      contentType: null,
+      lastModified: null,
+      error: err instanceof Error ? err.message : String(err)
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+async function probeCandidates(longitudeDeg) {
+  const satellites = satellitesFor(longitudeDeg).slice(0, MAX_SATELLITES_PROBED);
+  const urls = satellites.flatMap((s) => s.candidates);
+  return Promise.all(urls.map(probe));
 }
 async function getEarthImagery(longitudeDeg) {
   const key = String(Math.round(longitudeDeg / 15));
@@ -42413,35 +42435,37 @@ async function getEarthImagery(longitudeDeg) {
   if (cached && Date.now() - cached.at < CACHE_TTL_MS4) {
     return { ...cached.result, status: cached.result.image ? "cache" : cached.result.status };
   }
-  const candidates = satellitesFor(longitudeDeg);
+  const satellites = satellitesFor(longitudeDeg).slice(0, MAX_SATELLITES_PROBED);
+  const outcomes = await probeCandidates(longitudeDeg);
+  const byUrl = new Map(outcomes.map((o) => [o.url, o]));
   const unreachable = [];
-  for (const satellite3 of candidates) {
-    for (const url of satellite3.candidates) {
-      const { ok, lastModified } = await probe(url);
-      if (!ok) continue;
-      const result2 = {
-        image: {
-          satelliteId: satellite3.id,
-          name: satellite3.name,
-          operator: satellite3.operator,
-          product: satellite3.product,
-          longitudeDeg: satellite3.longitudeDeg,
-          url,
-          checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          frameTime: lastModified ? new Date(lastModified).toISOString() : null
-        },
-        status: "live",
-        unreachable
-      };
-      cache4.set(key, { result: result2, at: Date.now() });
-      return result2;
+  for (const satellite3 of satellites) {
+    const hit = satellite3.candidates.map((url) => byUrl.get(url)).find((o) => o?.ok);
+    if (!hit) {
+      unreachable.push(satellite3.name);
+      continue;
     }
-    unreachable.push(satellite3.name);
+    const result2 = {
+      image: {
+        satelliteId: satellite3.id,
+        name: satellite3.name,
+        operator: satellite3.operator,
+        product: satellite3.product,
+        longitudeDeg: satellite3.longitudeDeg,
+        url: hit.url,
+        checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        frameTime: hit.lastModified ? new Date(hit.lastModified).toISOString() : null
+      },
+      status: "live",
+      unreachable
+    };
+    cache4.set(key, { result: result2, at: Date.now() });
+    return result2;
   }
   const result = {
     image: null,
     status: "unavailable",
-    error: candidates.length === 0 ? "No geostationary satellite in this catalogue images your longitude." : "None of the imagery hosts for your region answered.",
+    error: satellites.length === 0 ? "No geostationary satellite in this catalogue images your longitude." : "None of the imagery hosts for your region answered.",
     unreachable
   };
   cache4.set(key, { result, at: Date.now() });
@@ -42612,6 +42636,10 @@ app.get("/api/earth-imagery", async (req, res) => {
   const longitude = Number(req.query.lon);
   if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
     res.status(400).json({ error: "Provide a valid numeric 'lon' (-180..180) query param" });
+    return;
+  }
+  if (req.query.probe === "1") {
+    res.json({ longitude, candidates: await probeCandidates(longitude) });
     return;
   }
   const result = await getEarthImagery(longitude);
