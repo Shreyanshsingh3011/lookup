@@ -1,4 +1,5 @@
 import type { AircraftResponse } from '../lib/aircraft';
+import type { StarlinkTrainsResponse } from '../lib/starlinkTrains';
 import type { ExplainResult, ExplainSubject } from '../lib/explain';
 import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
 import type { CustomPassesResponse, Observer, PassesResponse, SingleTleResponse, TleRecord, TleResponse } from '../types';
@@ -72,4 +73,18 @@ export function fetchCustomPasses(
       minElevationDeg: opts.minElevationDeg ?? 10,
     }),
   });
+}
+
+/**
+ * Trains are found server-side: the scan needs the whole Starlink catalogue,
+ * which is thousands of objects, to surface the handful still in formation.
+ */
+export function fetchStarlinkTrains(observer: Observer, days = 5): Promise<StarlinkTrainsResponse> {
+  const params = new URLSearchParams({
+    lat: String(observer.latitude),
+    lon: String(observer.longitude),
+    alt: String(observer.elevation),
+    days: String(days),
+  });
+  return apiFetch<StarlinkTrainsResponse>(`/api/starlink/trains?${params.toString()}`);
 }

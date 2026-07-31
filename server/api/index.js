@@ -42180,6 +42180,112 @@ function rateLimit(opts) {
   };
 }
 
+// src/starlink.ts
+function elementsFromLine2(line2) {
+  return {
+    inclinationDeg: Number(line2.slice(8, 16)),
+    raanDeg: Number(line2.slice(17, 25)),
+    eccentricity: Number(`0.${line2.slice(26, 33).trim()}`),
+    argPerigeeDeg: Number(line2.slice(34, 42)),
+    meanAnomalyDeg: Number(line2.slice(43, 51)),
+    meanMotionRevPerDay: Number(line2.slice(52, 63))
+  };
+}
+var EARTH_RADIUS_KM = 6378.137;
+var MU_EARTH = 398600.4418;
+function altitudeKmFromMeanMotion(revPerDay) {
+  const n = revPerDay * 2 * Math.PI / 86400;
+  return Math.cbrt(MU_EARTH / (n * n)) - EARTH_RADIUS_KM;
+}
+function angularDelta(a, b) {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+var DEFAULT_TRAIN_CRITERIA = {
+  raanToleranceDeg: 1.2,
+  inclinationToleranceDeg: 0.35,
+  meanMotionTolerance: 0.12,
+  maxPhaseGapDeg: 12,
+  minMembers: 8,
+  maxAltitudeKm: 450
+};
+function groupByPlane(candidates, criteria) {
+  const planes = [];
+  for (const candidate of candidates) {
+    const plane = planes.find((members) => {
+      const first = members[0].elements;
+      return angularDelta(first.raanDeg, candidate.elements.raanDeg) <= criteria.raanToleranceDeg && angularDelta(first.inclinationDeg, candidate.elements.inclinationDeg) <= criteria.inclinationToleranceDeg && Math.abs(first.meanMotionRevPerDay - candidate.elements.meanMotionRevPerDay) <= criteria.meanMotionTolerance;
+    });
+    if (plane) plane.push(candidate);
+    else planes.push([candidate]);
+  }
+  return planes;
+}
+function runsAlongOrbit(plane, criteria) {
+  if (plane.length < 2) return [plane];
+  const sorted = [...plane].sort((a, b) => a.elements.meanAnomalyDeg - b.elements.meanAnomalyDeg);
+  const gapAfter = sorted.map((current2, i) => {
+    const next = sorted[(i + 1) % sorted.length];
+    const raw = next.elements.meanAnomalyDeg - current2.elements.meanAnomalyDeg;
+    return (raw % 360 + 360) % 360;
+  });
+  let startIndex = 0;
+  for (let i = 1; i < gapAfter.length; i++) {
+    if (gapAfter[i] > gapAfter[startIndex]) startIndex = i;
+  }
+  const runs = [];
+  let current = [];
+  for (let step = 0; step < sorted.length; step++) {
+    const i = (startIndex + 1 + step) % sorted.length;
+    current.push(sorted[i]);
+    const gap = gapAfter[i];
+    const isLast = step === sorted.length - 1;
+    if (gap > criteria.maxPhaseGapDeg || isLast) {
+      runs.push(current);
+      current = [];
+    }
+  }
+  return runs;
+}
+function spreadDeg(run) {
+  let total = 0;
+  for (let i = 1; i < run.length; i++) {
+    const raw = run[i].elements.meanAnomalyDeg - run[i - 1].elements.meanAnomalyDeg;
+    total += (raw % 360 + 360) % 360;
+  }
+  return total;
+}
+function findTrains(tles, criteria = DEFAULT_TRAIN_CRITERIA) {
+  const candidates = [];
+  for (const tle of tles) {
+    const elements = elementsFromLine2(tle.line2);
+    if (!Number.isFinite(elements.meanMotionRevPerDay) || elements.meanMotionRevPerDay <= 0) continue;
+    const altitudeKm = altitudeKmFromMeanMotion(elements.meanMotionRevPerDay);
+    if (altitudeKm > criteria.maxAltitudeKm) continue;
+    candidates.push({ tle, elements, altitudeKm });
+  }
+  const trains = [];
+  for (const plane of groupByPlane(candidates, criteria)) {
+    if (plane.length < criteria.minMembers) continue;
+    for (const run of runsAlongOrbit(plane, criteria)) {
+      if (run.length < criteria.minMembers) continue;
+      const meanMotion = run.reduce((sum, c) => sum + c.elements.meanMotionRevPerDay, 0) / run.length;
+      const periodSeconds = 86400 / meanMotion;
+      const spread = spreadDeg(run);
+      trains.push({
+        members: run.map((c) => c.tle),
+        count: run.length,
+        meanAltitudeKm: run.reduce((sum, c) => sum + c.altitudeKm, 0) / run.length,
+        inclinationDeg: run[0].elements.inclinationDeg,
+        raanDeg: run[0].elements.raanDeg,
+        spreadDeg: spread,
+        passDurationSeconds: spread / 360 * periodSeconds
+      });
+    }
+  }
+  return trains.sort((a, b) => b.count - a.count);
+}
+
 // src/index.ts
 var PORT = Number(process.env.PORT) || 3001;
 var app = (0, import_express.default)();
@@ -42295,6 +42401,49 @@ app.get("/api/passes", async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
+  }
+});
+app.get("/api/starlink/trains", async (req, res) => {
+  const observer = parseObserver(req);
+  if (!observer) {
+    res.status(400).json({ error: "Provide valid numeric 'lat' (-90..90), 'lon' (-180..180), and optional 'alt' (meters) query params" });
+    return;
+  }
+  const days = req.query.days !== void 0 ? Number(req.query.days) : 5;
+  try {
+    const { tles, source, epoch } = await getTleGroup("starlink");
+    const trains = findTrains(tles);
+    const withPasses = trains.map((train) => {
+      const sample = [train.members[0], train.members[Math.floor(train.members.length / 2)]];
+      const { passes } = computePassesForMany(sample, observer, {
+        days,
+        // Trains are low and bright, but the magnitude model is calibrated for
+        // single spacecraft and a train is not one — so brightness filtering
+        // is left off and the geometry decides.
+        maxMagnitude: Infinity
+      });
+      return {
+        count: train.count,
+        leadName: train.members[0].name,
+        meanAltitudeKm: Math.round(train.meanAltitudeKm),
+        inclinationDeg: Number(train.inclinationDeg.toFixed(2)),
+        spreadDeg: Number(train.spreadDeg.toFixed(1)),
+        passDurationSeconds: Math.round(train.passDurationSeconds),
+        satnums: train.members.map((m) => m.satnum),
+        nextPasses: passes.slice(0, 3)
+      };
+    });
+    res.json({
+      observer,
+      days,
+      source,
+      epoch,
+      catalogueSize: tles.length,
+      trainCount: withPasses.length,
+      trains: withPasses
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "Failed to scan for trains" });
   }
 });
 app.get("/api/aircraft", async (req, res) => {

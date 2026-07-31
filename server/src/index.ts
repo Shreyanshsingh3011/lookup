@@ -11,6 +11,7 @@ import { explainObject, parseExplainSubject } from "./explain.js";
 import { adviseOnOrbit, MISSION_TYPES, parseOrbitAdviceRequest } from "./orbitAdvice.js";
 import { aiAvailable } from "./ai.js";
 import { rateLimit } from "./rateLimit.js";
+import { findTrains } from "./starlink.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -148,6 +149,67 @@ app.get("/api/passes", async (req, res) => {
     });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to compute passes" });
+  }
+});
+
+/**
+ * Starlink trains: the strings of lights that generate more "what was that?"
+ * searches than anything else in the sky.
+ *
+ * Done server-side because it needs the whole Starlink catalogue — thousands
+ * of objects — to find the handful still flying in formation. Shipping that to
+ * the browser to filter it down to twenty satellites would be absurd, and the
+ * group fetch is already cached here.
+ */
+app.get("/api/starlink/trains", async (req, res) => {
+  const observer = parseObserver(req);
+  if (!observer) {
+    res.status(400).json({ error: "Provide valid numeric 'lat' (-90..90), 'lon' (-180..180), and optional 'alt' (meters) query params" });
+    return;
+  }
+  const days = req.query.days !== undefined ? Number(req.query.days) : 5;
+
+  try {
+    const { tles, source, epoch } = await getTleGroup("starlink");
+    const trains = findTrains(tles);
+
+    const withPasses = trains.map((train) => {
+      // Passes are computed for a few members rather than all of them: the
+      // whole point of a train is that they follow the same path minutes
+      // apart, so the leader's pass is the train's pass, and propagating
+      // sixty near-identical orbits would cost a great deal for nothing.
+      const sample = [train.members[0], train.members[Math.floor(train.members.length / 2)]];
+      const { passes } = computePassesForMany(sample, observer, {
+        days,
+        // Trains are low and bright, but the magnitude model is calibrated for
+        // single spacecraft and a train is not one — so brightness filtering
+        // is left off and the geometry decides.
+        maxMagnitude: Infinity,
+      });
+
+      return {
+        count: train.count,
+        leadName: train.members[0].name,
+        meanAltitudeKm: Math.round(train.meanAltitudeKm),
+        inclinationDeg: Number(train.inclinationDeg.toFixed(2)),
+        spreadDeg: Number(train.spreadDeg.toFixed(1)),
+        passDurationSeconds: Math.round(train.passDurationSeconds),
+        satnums: train.members.map((m) => m.satnum),
+        nextPasses: passes.slice(0, 3),
+      };
+    });
+
+    res.json({
+      observer,
+      days,
+      source,
+      epoch,
+      catalogueSize: tles.length,
+      trainCount: withPasses.length,
+      trains: withPasses,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "Failed to scan for trains" });
   }
 });
 

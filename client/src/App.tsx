@@ -9,6 +9,7 @@ import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
 import { SourceBanner } from './components/SourceBanner';
+import { StarlinkTrains } from './components/StarlinkTrains';
 import { WeatherNotice } from './components/CloudCover';
 import { TimeScrubber } from './components/TimeScrubber';
 import { SkyDome } from './components/sky/SkyDome';
@@ -228,6 +229,8 @@ function App() {
         )}
 
         <MeteorShowers observer={observer} displayTime={time.displayTime} />
+
+        <StarlinkTrains observer={observer} />
 
         <section className="print:hidden">
           <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
