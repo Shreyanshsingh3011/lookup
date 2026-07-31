@@ -1,5 +1,6 @@
 import type { AircraftResponse } from '../lib/aircraft';
 import type { StarlinkTrainsResponse } from '../lib/starlinkTrains';
+import type { EarthImageryResponse } from '../lib/earthImagery';
 import type { ExplainResult, ExplainSubject } from '../lib/explain';
 import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
 import type { CustomPassesResponse, Observer, PassesResponse, SingleTleResponse, TleRecord, TleResponse } from '../types';
@@ -87,4 +88,13 @@ export function fetchStarlinkTrains(observer: Observer, days = 5): Promise<Starl
     days: String(days),
   });
   return apiFetch<StarlinkTrainsResponse>(`/api/starlink/trains?${params.toString()}`);
+}
+
+/**
+ * A recent Earth view from whichever geostationary weather satellite sees the
+ * observer. The server picks and probes the source; the client just renders
+ * whatever came back reachable.
+ */
+export function fetchEarthImagery(longitudeDeg: number): Promise<EarthImageryResponse> {
+  return apiFetch<EarthImageryResponse>(`/api/earth-imagery?lon=${encodeURIComponent(longitudeDeg)}`);
 }

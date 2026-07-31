@@ -345,6 +345,12 @@ interface Props {
   displayTime: Date;
   passes: Pass[];
   loading: boolean;
+  /**
+   * Called with the name of the satellite the user clicked, or null when the
+   * selection is cleared. Lets the page react to a click on a specific object
+   * — the ISS in particular, which has a live feed to offer.
+   */
+  onSatelliteSelected?: (name: string | null) => void;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -359,8 +365,16 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
 
 type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
 
-export function SkyDome({ tles, observer, displayTime, passes, loading }: Props) {
+export function SkyDome({ tles, observer, displayTime, passes, loading, onSatelliteSelected }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
+
+  const selectSatellite = useCallback(
+    (satnum: string | null) => {
+      setSelected(satnum);
+      onSatelliteSelected?.(satnum === null ? null : tles.find((t) => t.satnum === satnum)?.name ?? null);
+    },
+    [onSatelliteSelected, tles]
+  );
   const [visibleCount, setVisibleCount] = useState(0);
   const [aimRequest, setAimRequest] = useState(0);
   const [layers, setLayers] = useState<SkyLayers>({
@@ -468,7 +482,7 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
       ) : (
         <Canvas
           camera={{ fov: 60, near: 0.005, far: DOME_RADIUS * 3, position: CAMERA_START }}
-          onPointerMissed={() => setSelected(null)}
+          onPointerMissed={() => selectSatellite(null)}
           dpr={[1, 2]}
           gl={{ alpha: true }}
           style={camera.state === 'active' ? { background: 'transparent' } : undefined}
@@ -480,7 +494,7 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
               displayTime={displayTime}
               passes={passes}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={selectSatellite}
               onCountChange={setVisibleCount}
               aimRequest={aimRequest}
               layers={layers}

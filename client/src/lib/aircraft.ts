@@ -25,6 +25,11 @@ export interface AircraftState {
   altitudeM: number;
   velocityMS: number | null;
   trueTrackDeg: number | null;
+  /**
+   * ADS-B emitter category as broadcast ("A3" large, "A6" high performance),
+   * or null when the aircraft does not transmit one.
+   */
+  category: string | null;
   verticalRateMS: number | null;
   onGround: boolean;
   lastContact: number;

@@ -12,6 +12,7 @@ import { adviseOnOrbit, MISSION_TYPES, parseOrbitAdviceRequest } from "./orbitAd
 import { aiAvailable } from "./ai.js";
 import { rateLimit } from "./rateLimit.js";
 import { findTrains } from "./starlink.js";
+import { getEarthImagery } from "./earthImagery.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -211,6 +212,24 @@ app.get("/api/starlink/trains", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to scan for trains" });
   }
+});
+
+/**
+ * A recent full-disk view of Earth from whichever geostationary weather
+ * satellite actually sees the observer.
+ *
+ * Server-side because the image hosts have to be probed before being offered —
+ * see earthImagery.ts. Never fails the request: an unreachable host reports
+ * "unavailable" the same way weather and aircraft do.
+ */
+app.get("/api/earth-imagery", async (req, res) => {
+  const longitude = Number(req.query.lon);
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    res.status(400).json({ error: "Provide a valid numeric 'lon' (-180..180) query param" });
+    return;
+  }
+  const result = await getEarthImagery(longitude);
+  res.json(result);
 });
 
 app.get("/api/aircraft", async (req, res) => {

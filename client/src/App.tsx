@@ -3,6 +3,8 @@ import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
 import { ConnectionNotice } from './components/ConnectionNotice';
+import { EarthView } from './components/EarthView';
+import { IssLiveView } from './components/IssLiveView';
 import { LocationPicker } from './components/LocationPicker';
 import { MeteorShowers } from './components/MeteorShowers';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
@@ -17,6 +19,7 @@ import { useConnection } from './hooks/useConnection';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
 import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
+import { isIssName } from './lib/issStream';
 import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 const MAX_CUSTOM_SATELLITES = 20;
@@ -83,6 +86,16 @@ function App() {
   };
 
   const skySectionRef = useRef<HTMLElement>(null);
+  const issSectionRef = useRef<HTMLElement>(null);
+
+  // Clicking the station in the dome should lead somewhere: the live feed is
+  // the one thing the app can offer about the ISS that it cannot about
+  // anything else up there.
+  const handleSatelliteSelected = (name: string | null) => {
+    if (name && isIssName(name)) {
+      issSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   const showPassInSky = (pass: Pass) => {
     // Start a couple of minutes before the pass so the approach is visible.
@@ -214,6 +227,7 @@ function App() {
             displayTime={time.displayTime}
             passes={allPasses}
             loading={tlesLoading}
+            onSatelliteSelected={handleSatelliteSelected}
           />
           <TimeScrubber control={time} />
         </section>
@@ -227,6 +241,12 @@ function App() {
             onShowInSky={showPassInSky}
           />
         )}
+
+        <section ref={issSectionRef} className="scroll-mt-24">
+          <IssLiveView tles={allTles} />
+        </section>
+
+        <EarthView observer={observer} />
 
         <MeteorShowers observer={observer} displayTime={time.displayTime} />
 

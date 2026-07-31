@@ -94,6 +94,62 @@ export function aircraftGeometry(): THREE.BufferGeometry {
   return cached;
 }
 
+let cachedFastJet: THREE.BufferGeometry | null = null;
+
+/**
+ * A delta-winged fast jet: shorter, sharper and far more swept than the
+ * airliner.
+ *
+ * Drawn only for aircraft broadcasting ADS-B emitter category A6, which is the
+ * aircraft's own declaration that it can pull more than 5 g above 400 knots.
+ * Inferring the shape from anything weaker — a military address block, say —
+ * would mean drawing a fighter for a tanker.
+ */
+function buildFastJet(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+
+  const fuselage = new THREE.CylinderGeometry(0.17, 0.13, 2.6, 8);
+  fuselage.rotateX(Math.PI / 2);
+  parts.push(fuselage);
+
+  const nose = new THREE.ConeGeometry(0.17, 1.1, 8);
+  nose.rotateX(Math.PI / 2);
+  nose.translate(0, 0, 1.85);
+  parts.push(nose);
+
+  // Delta planform: a wide triangle set well aft, swept hard.
+  for (const side of [1, -1] as const) {
+    const wing = new THREE.BoxGeometry(1.9, 0.05, 1.5);
+    wing.translate(side * 1.0, 0, -0.55);
+    wing.rotateY(side * 0.78);
+    parts.push(wing);
+  }
+
+  // Twin canted tail fins, as on most modern fighters.
+  for (const side of [1, -1] as const) {
+    const fin = new THREE.BoxGeometry(0.05, 0.5, 0.5);
+    fin.translate(side * 0.28, 0.3, -1.15);
+    fin.rotateZ(side * -0.28);
+    parts.push(fin);
+  }
+
+  const exhaust = new THREE.CylinderGeometry(0.13, 0.16, 0.4, 8);
+  exhaust.rotateX(Math.PI / 2);
+  exhaust.translate(0, 0, -1.45);
+  parts.push(exhaust);
+
+  const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+  parts.forEach((part) => part.dispose());
+  if (!merged) throw new Error('Failed to merge fast jet geometry');
+  merged.computeVertexNormals();
+  return merged;
+}
+
+export function fastJetGeometry(): THREE.BufferGeometry {
+  if (!cachedFastJet) cachedFastJet = buildFastJet();
+  return cachedFastJet;
+}
+
 /**
  * Steepest climb or descent we will draw. Vertical rate and ground speed are
  * independently reported and occasionally disagree wildly; clamping keeps one

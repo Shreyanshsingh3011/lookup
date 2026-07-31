@@ -41,17 +41,47 @@ export interface SkySample {
   illuminated: boolean;
 }
 
-/** Parse a TLE into a satrec, returning null rather than throwing on bad input. */
+/**
+ * Parse a TLE into a satrec, returning null rather than throwing on bad input.
+ *
+ * Checking `error` is not enough. Given unparseable text, twoline2satrec
+ * happily reports error 0 and hands back a record whose elements are all NaN
+ * — which then propagates silently: positions come out NaN, and any comparison
+ * against them is false, so downstream code reports a confident wrong answer
+ * instead of failing. Mean motion is the cheapest thing to check that is
+ * always present in a real element set.
+ */
 export function parseSatrec(tle: TleRecord): satellite.SatRec | null {
   try {
     const rec = satellite.twoline2satrec(tle.line1, tle.line2);
-    return rec.error ? null : rec;
+    if (rec.error) return null;
+    if (!Number.isFinite(rec.no) || rec.no <= 0) return null;
+    return rec;
   } catch {
     return null;
   }
 }
 
 /** Propagate one satellite to `date` and express it in the observer's sky. */
+/**
+ * Whether a satellite is in sunlight, or null if it cannot be propagated.
+ *
+ * Unlike skySampleAt this needs no observer: whether the Sun is shining on a
+ * spacecraft is a fact about the spacecraft, not about who is watching. Kept
+ * here so it shares ECLIPSE_THRESHOLD with the pass logic rather than letting
+ * two definitions of "in shadow" drift apart.
+ */
+export function satelliteSunlit(satrec: satellite.SatRec, date: Date): boolean | null {
+  const pv = satellite.propagate(satrec, date);
+  if (!pv) return null;
+  const sun = satellite.sunPos(satellite.jday(date));
+  const shadowFraction = satellite.shadowFraction(sun.rsun, pv.position);
+  // A NaN fraction compares false against everything, which would silently
+  // become "in shadow" — say nothing instead of saying something wrong.
+  if (!Number.isFinite(shadowFraction)) return null;
+  return shadowFraction < ECLIPSE_THRESHOLD;
+}
+
 export function skySampleAt(
   satrec: satellite.SatRec,
   observerGd: satellite.GeodeticLocation,

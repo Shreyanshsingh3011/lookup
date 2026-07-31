@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react';
 import * as THREE from 'three';
 import { DOME_RADIUS, azElToVec3, azToCompass } from '../../lib/sky';
 import { aircraftLabel, type AircraftState } from '../../lib/aircraft';
-import { aircraftAttitude, aircraftGeometry, climbAngle } from '../../lib/aircraftModel';
+import { aircraftAttitude, aircraftGeometry, climbAngle, fastJetGeometry } from '../../lib/aircraftModel';
+import {
+  airframeFor,
+  classifyMilitary,
+  describeMilitary,
+  type MilitaryClassification,
+} from '../../lib/militaryAircraft';
 import type { LiveAircraft } from '../../hooks/useAircraft';
 import { FrontFacingHtml } from './FrontFacingHtml';
 
@@ -19,6 +25,12 @@ const AIRCRAFT_RADIUS = DOME_RADIUS * 0.96;
  */
 const AIRCRAFT_COLOR = '#fbbf24';
 
+/**
+ * Military traffic gets its own colour, cool against the airliners' amber, so
+ * the distinction reads instantly rather than needing a label.
+ */
+const MILITARY_COLOR = '#7dd3fc';
+
 /** Only label the more prominent ones, so a busy approach path stays readable. */
 const LABEL_ELEVATION_MIN = 12;
 
@@ -27,24 +39,34 @@ const LABEL_ELEVATION_MIN = 12;
  * A busy area can put a hundred-plus contacts in the sky; giving each its own
  * material would mean a hundred shader programs for a single appearance.
  */
-let sharedMaterials: { base: THREE.Material; hovered: THREE.Material } | null = null;
+type MaterialSet = { base: THREE.Material; hovered: THREE.Material };
+
+let sharedMaterials: { civil: MaterialSet; military: MaterialSet } | null = null;
+
+function makeSet(color: string, hoverColor: string, emissive: string, hoverEmissive: string): MaterialSet {
+  return {
+    base: new THREE.MeshStandardMaterial({
+      color,
+      metalness: 0.3,
+      roughness: 0.55,
+      emissive: new THREE.Color(emissive),
+      emissiveIntensity: 0.8,
+    }),
+    hovered: new THREE.MeshStandardMaterial({
+      color: hoverColor,
+      metalness: 0.3,
+      roughness: 0.45,
+      emissive: new THREE.Color(hoverEmissive),
+      emissiveIntensity: 1.1,
+    }),
+  };
+}
+
 function aircraftMaterials() {
   if (!sharedMaterials) {
     sharedMaterials = {
-      base: new THREE.MeshStandardMaterial({
-        color: AIRCRAFT_COLOR,
-        metalness: 0.3,
-        roughness: 0.55,
-        emissive: new THREE.Color('#3a2500'),
-        emissiveIntensity: 0.8,
-      }),
-      hovered: new THREE.MeshStandardMaterial({
-        color: '#fde68a',
-        metalness: 0.3,
-        roughness: 0.45,
-        emissive: new THREE.Color('#7a5200'),
-        emissiveIntensity: 1.1,
-      }),
+      civil: makeSet(AIRCRAFT_COLOR, '#fde68a', '#3a2500', '#7a5200'),
+      military: makeSet(MILITARY_COLOR, '#bae6fd', '#0b2b3d', '#155e75'),
     };
   }
   return sharedMaterials;
@@ -69,6 +91,13 @@ function AircraftMarker({ entry }: { entry: LiveAircraft }) {
         : aircraftAttitude(state.trueTrackDeg, climbAngle(state.verticalRateMS, state.velocityMS)),
     [state.trueTrackDeg, state.verticalRateMS, state.velocityMS]
   );
+
+  const military = useMemo(() => classifyMilitary(state), [state]);
+  const materials = military.military ? aircraftMaterials().military : aircraftMaterials().civil;
+  const color = military.military ? MILITARY_COLOR : AIRCRAFT_COLOR;
+  // Shape comes from the aircraft's own emitter category, never from the
+  // military classification: a tanker and a fighter share an address block.
+  const geometry = airframeFor(state) === 'fast-jet' ? fastJetGeometry() : aircraftGeometry();
 
   const showLabel = hovered || sky.elevationDeg >= LABEL_ELEVATION_MIN;
 
@@ -96,24 +125,24 @@ function AircraftMarker({ entry }: { entry: LiveAircraft }) {
           would take every other aircraft down with it. */}
       {quaternion ? (
         <mesh
-          geometry={aircraftGeometry()}
-          material={hovered ? aircraftMaterials().hovered : aircraftMaterials().base}
+          geometry={geometry}
+          material={hovered ? materials.hovered : materials.base}
           quaternion={quaternion}
           scale={hovered ? 1.3 : 1}
           dispose={null}
         />
       ) : (
-        <mesh material={hovered ? aircraftMaterials().hovered : aircraftMaterials().base} dispose={null}>
+        <mesh material={hovered ? materials.hovered : materials.base} dispose={null}>
           <octahedronGeometry args={[1.1]} />
         </mesh>
       )}
 
       {showLabel && (
         <FrontFacingHtml position={[0, 0, 0]} offsetYPx={hovered ? -60 : -14}>
-          {hovered ? <AircraftDetail state={state} entry={entry} /> : (
+          {hovered ? <AircraftDetail state={state} entry={entry} military={military} /> : (
             <div
               className="text-[10px] font-semibold tracking-wide whitespace-nowrap"
-              style={{ color: AIRCRAFT_COLOR }}
+              style={{ color }}
             >
               {aircraftLabel(state)}
             </div>
@@ -124,14 +153,36 @@ function AircraftMarker({ entry }: { entry: LiveAircraft }) {
   );
 }
 
-function AircraftDetail({ state, entry }: { state: AircraftState; entry: LiveAircraft }) {
+function AircraftDetail({
+  state,
+  entry,
+  military,
+}: {
+  state: AircraftState;
+  entry: LiveAircraft;
+  military: MilitaryClassification;
+}) {
+  const basis = describeMilitary(military);
   return (
     <div className="glass-panel rounded-lg px-3 py-2 min-w-[180px] shadow-[var(--shadow-glow-sm)]">
-      <div className="font-semibold text-xs tracking-wide" style={{ color: AIRCRAFT_COLOR }}>
+      <div
+        className="font-semibold text-xs tracking-wide"
+        style={{ color: military.military ? MILITARY_COLOR : AIRCRAFT_COLOR }}
+      >
         {aircraftLabel(state)}
       </div>
       {state.originCountry && (
         <div className="text-[10px] text-space-300">{state.originCountry}</div>
+      )}
+      {basis && (
+        // Said as evidence rather than as a verdict: the allocation tables are
+        // a strong hint, not a registry.
+        <div className="text-[10px] mt-0.5" style={{ color: MILITARY_COLOR }}>
+          Likely military · {basis}
+        </div>
+      )}
+      {airframeFor(state) === 'fast-jet' && (
+        <div className="text-[10px] text-space-300">Broadcasts as a high-performance airframe</div>
       )}
       <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
         <dt className="text-space-300">Altitude</dt>

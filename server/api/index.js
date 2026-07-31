@@ -20904,7 +20904,7 @@ var require_application = __commonJS({
     };
     app2.del = deprecate.function(app2.delete, "app.del: Use app.delete instead");
     app2.render = function render(name, options, callback) {
-      var cache4 = this.cache;
+      var cache5 = this.cache;
       var done = callback;
       var engines = this.engines;
       var opts = options;
@@ -20923,7 +20923,7 @@ var require_application = __commonJS({
         renderOptions.cache = this.enabled("view cache");
       }
       if (renderOptions.cache) {
-        view = cache4[name];
+        view = cache5[name];
       }
       if (!view) {
         var View2 = this.get("view");
@@ -20939,7 +20939,7 @@ var require_application = __commonJS({
           return done(err);
         }
         if (renderOptions.cache) {
-          cache4[name] = view;
+          cache5[name] = view;
         }
       }
       tryRender(view, renderOptions, done);
@@ -25259,7 +25259,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client2) {
   };
 }
 function createMiddlewareContext(options, client2) {
-  const cache4 = /* @__PURE__ */ new WeakMap();
+  const cache5 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -25269,10 +25269,10 @@ function createMiddlewareContext(options, client2) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options);
       }
-      let parsed = cache4.get(response);
+      let parsed = cache5.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options);
-        cache4.set(response, parsed);
+        cache5.set(response, parsed);
       }
       return parsed;
     }
@@ -35857,10 +35857,40 @@ var IDX = {
   velocity: 9,
   trueTrack: 10,
   verticalRate: 11,
-  geoAltitude: 13
+  geoAltitude: 13,
+  /**
+   * ADS-B emitter category, appended by OpenSky after the original sixteen
+   * fields — older payloads simply stop short of it.
+   */
+  category: 17
 };
 function numberOrNull(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+var OPENSKY_CATEGORIES = {
+  2: "A1",
+  3: "A2",
+  4: "A3",
+  5: "A4",
+  6: "A5",
+  7: "A6",
+  8: "A7",
+  9: "B1",
+  10: "B2",
+  11: "B3",
+  12: "B4",
+  13: "B6",
+  14: "B7",
+  15: "C1",
+  16: "C2",
+  17: "C3",
+  18: "C4",
+  19: "C5"
+};
+function openSkyCategory(v) {
+  const n = numberOrNull(v);
+  if (n === null) return null;
+  return OPENSKY_CATEGORIES[n] ?? null;
 }
 function parseStates(payload) {
   if (typeof payload !== "object" || payload === null) {
@@ -35898,6 +35928,7 @@ function parseStates(payload) {
       altitudeM: altitude,
       velocityMS: numberOrNull(state[IDX.velocity]),
       trueTrackDeg: numberOrNull(state[IDX.trueTrack]),
+      category: openSkyCategory(state[IDX.category]),
       verticalRateMS: numberOrNull(state[IDX.verticalRate]),
       onGround: state[IDX.onGround] === true,
       lastContact: numberOrNull(state[IDX.lastContact]) ?? time
@@ -35958,6 +35989,7 @@ function parseReadsb(payload) {
       altitudeM: onGround ? 0 : (altitudeFt ?? 0) * FEET_TO_M,
       velocityMS: gsKnots === null ? null : gsKnots * KNOTS_TO_MS,
       trueTrackDeg: numberOrNull(a.track),
+      category: typeof a.category === "string" && a.category.trim() ? a.category.trim().toUpperCase() : null,
       verticalRateMS: rateFpm === null ? null : rateFpm * FPM_TO_MS,
       onGround,
       lastContact: nowSeconds - seenPos
@@ -38518,14 +38550,14 @@ function GravFromState(entry) {
   const grav = new body_grav_calc_t(state.tt, r, v, a);
   return new grav_sim_t(bary, grav);
 }
-function GetSegment(cache4, tt) {
+function GetSegment(cache5, tt) {
   const t0 = PlutoStateTable[0][0];
   if (tt < t0 || tt > PlutoStateTable[PLUTO_NUM_STATES - 1][0]) {
     return null;
   }
   const seg_index = ClampIndex((tt - t0) / PLUTO_TIME_STEP, PLUTO_NUM_STATES - 1);
-  if (!cache4[seg_index]) {
-    const seg = cache4[seg_index] = [];
+  if (!cache5[seg_index]) {
+    const seg = cache5[seg_index] = [];
     seg[0] = GravFromState(PlutoStateTable[seg_index]).grav;
     seg[PLUTO_NSTEPS - 1] = GravFromState(PlutoStateTable[seg_index + 1]).grav;
     let i;
@@ -38544,7 +38576,7 @@ function GetSegment(cache4, tt) {
       seg[i].a = seg[i].a.mul(1 - ramp).add(reverse[i].a.mul(ramp));
     }
   }
-  return cache4[seg_index];
+  return cache5[seg_index];
 }
 function CalcPlutoOneWay(entry, target_tt, dt) {
   let sim = GravFromState(entry);
@@ -42286,6 +42318,136 @@ function findTrains(tles, criteria = DEFAULT_TRAIN_CRITERIA) {
   return trains.sort((a, b) => b.count - a.count);
 }
 
+// src/earthImagery.ts
+var USEFUL_LONGITUDE_REACH_DEG = 75;
+var GEOSTATIONARY_SATELLITES = [
+  {
+    id: "goes-east",
+    name: "GOES-19 (GOES-East)",
+    operator: "NOAA",
+    longitudeDeg: -75.2,
+    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
+    candidates: [
+      "https://cdn.star.nesdis.noaa.gov/GOES19/ABI/FD/GEOCOLOR/latest.jpg",
+      "https://cdn.star.nesdis.noaa.gov/GOES16/ABI/FD/GEOCOLOR/latest.jpg"
+    ]
+  },
+  {
+    id: "goes-west",
+    name: "GOES-18 (GOES-West)",
+    operator: "NOAA",
+    longitudeDeg: -137.2,
+    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
+    candidates: [
+      "https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/GEOCOLOR/latest.jpg",
+      "https://cdn.star.nesdis.noaa.gov/GOES17/ABI/FD/GEOCOLOR/latest.jpg"
+    ]
+  },
+  {
+    id: "himawari",
+    name: "Himawari-9",
+    operator: "JMA, rehosted by NOAA",
+    longitudeDeg: 140.7,
+    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
+    candidates: [
+      "https://cdn.star.nesdis.noaa.gov/HIMAWARI9/FULL_DISK/GEOCOLOR/latest.jpg",
+      "https://cdn.star.nesdis.noaa.gov/HIMAWARI/FULL_DISK/GEOCOLOR/latest.jpg"
+    ]
+  },
+  {
+    id: "meteosat-0",
+    name: "Meteosat (0\xB0)",
+    operator: "EUMETSAT, rehosted by NOAA",
+    longitudeDeg: 0,
+    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
+    candidates: [
+      "https://cdn.star.nesdis.noaa.gov/METEOSAT0DEG/FULL_DISK/GEOCOLOR/latest.jpg",
+      "https://cdn.star.nesdis.noaa.gov/METEOSAT12/FULL_DISK/GEOCOLOR/latest.jpg",
+      "https://cdn.star.nesdis.noaa.gov/METEOSAT11/FULL_DISK/GEOCOLOR/latest.jpg"
+    ]
+  },
+  {
+    id: "meteosat-iodc",
+    name: "Meteosat (Indian Ocean)",
+    operator: "EUMETSAT, rehosted by NOAA",
+    longitudeDeg: 45.5,
+    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
+    candidates: [
+      "https://cdn.star.nesdis.noaa.gov/METEOSAT45DEG/FULL_DISK/GEOCOLOR/latest.jpg",
+      "https://cdn.star.nesdis.noaa.gov/METEOSAT9/FULL_DISK/GEOCOLOR/latest.jpg"
+    ]
+  }
+];
+function longitudeSeparation(a, b) {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+function satellitesFor(longitudeDeg) {
+  return GEOSTATIONARY_SATELLITES.map((satellite3) => ({
+    satellite: satellite3,
+    separation: longitudeSeparation(satellite3.longitudeDeg, longitudeDeg)
+  })).filter(({ separation }) => separation <= USEFUL_LONGITUDE_REACH_DEG).sort((a, b) => a.separation - b.separation).map(({ satellite: satellite3 }) => satellite3);
+}
+var PROBE_TIMEOUT_MS = 8e3;
+var CACHE_TTL_MS4 = 5 * 60 * 1e3;
+var cache4 = /* @__PURE__ */ new Map();
+async function probe(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { method: "HEAD", signal: controller.signal });
+    const type = res.headers.get("content-type") ?? "";
+    return {
+      ok: res.ok && type.startsWith("image/"),
+      lastModified: res.headers.get("last-modified")
+    };
+  } catch {
+    return { ok: false, lastModified: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function getEarthImagery(longitudeDeg) {
+  const key = String(Math.round(longitudeDeg / 15));
+  const cached = cache4.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS4) {
+    return { ...cached.result, status: cached.result.image ? "cache" : cached.result.status };
+  }
+  const candidates = satellitesFor(longitudeDeg);
+  const unreachable = [];
+  for (const satellite3 of candidates) {
+    for (const url of satellite3.candidates) {
+      const { ok, lastModified } = await probe(url);
+      if (!ok) continue;
+      const result2 = {
+        image: {
+          satelliteId: satellite3.id,
+          name: satellite3.name,
+          operator: satellite3.operator,
+          product: satellite3.product,
+          longitudeDeg: satellite3.longitudeDeg,
+          url,
+          checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          frameTime: lastModified ? new Date(lastModified).toISOString() : null
+        },
+        status: "live",
+        unreachable
+      };
+      cache4.set(key, { result: result2, at: Date.now() });
+      return result2;
+    }
+    unreachable.push(satellite3.name);
+  }
+  const result = {
+    image: null,
+    status: "unavailable",
+    error: candidates.length === 0 ? "No geostationary satellite in this catalogue images your longitude." : "None of the imagery hosts for your region answered.",
+    unreachable
+  };
+  cache4.set(key, { result, at: Date.now() });
+  return result;
+}
+
 // src/index.ts
 var PORT = Number(process.env.PORT) || 3001;
 var app = (0, import_express.default)();
@@ -42445,6 +42607,15 @@ app.get("/api/starlink/trains", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to scan for trains" });
   }
+});
+app.get("/api/earth-imagery", async (req, res) => {
+  const longitude = Number(req.query.lon);
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    res.status(400).json({ error: "Provide a valid numeric 'lon' (-180..180) query param" });
+    return;
+  }
+  const result = await getEarthImagery(longitude);
+  res.json(result);
 });
 app.get("/api/aircraft", async (req, res) => {
   const observer = parseObserver(req);

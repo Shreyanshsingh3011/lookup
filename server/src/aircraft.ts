@@ -87,6 +87,13 @@ export interface Aircraft {
   velocityMS: number | null;
   /** Direction of travel over the ground, degrees clockwise from true north. */
   trueTrackDeg: number | null;
+  /**
+   * ADS-B emitter category as the aircraft itself broadcasts it ("A3" large,
+   * "A6" high performance, and so on), or null when not transmitted. Worth
+   * carrying because it is the one airframe hint that comes from the aircraft
+   * rather than from inference.
+   */
+  category: string | null;
   /** Positive is climbing, metres per second. */
   verticalRateMS: number | null;
   onGround: boolean;
@@ -125,10 +132,50 @@ const IDX = {
   trueTrack: 10,
   verticalRate: 11,
   geoAltitude: 13,
+  /**
+   * ADS-B emitter category, appended by OpenSky after the original sixteen
+   * fields — older payloads simply stop short of it.
+   */
+  category: 17,
 } as const;
 
 function numberOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * OpenSky reports the emitter category as an ordinal; readsb passes through
+ * the ICAO letter code. Normalise to the letter code, which is the form the
+ * standard actually defines and the only one worth reasoning about.
+ *
+ * 0 and 1 both mean "nothing was said", which is not the same as A0 and must
+ * not be reported as though the aircraft had described itself.
+ */
+const OPENSKY_CATEGORIES: Record<number, string> = {
+  2: "A1",
+  3: "A2",
+  4: "A3",
+  5: "A4",
+  6: "A5",
+  7: "A6",
+  8: "A7",
+  9: "B1",
+  10: "B2",
+  11: "B3",
+  12: "B4",
+  13: "B6",
+  14: "B7",
+  15: "C1",
+  16: "C2",
+  17: "C3",
+  18: "C4",
+  19: "C5",
+};
+
+function openSkyCategory(v: unknown): string | null {
+  const n = numberOrNull(v);
+  if (n === null) return null;
+  return OPENSKY_CATEGORIES[n] ?? null;
 }
 
 /**
@@ -185,6 +232,7 @@ export function parseStates(payload: unknown): AircraftSnapshot {
       altitudeM: altitude,
       velocityMS: numberOrNull(state[IDX.velocity]),
       trueTrackDeg: numberOrNull(state[IDX.trueTrack]),
+      category: openSkyCategory(state[IDX.category]),
       verticalRateMS: numberOrNull(state[IDX.verticalRate]),
       onGround: state[IDX.onGround] === true,
       lastContact: numberOrNull(state[IDX.lastContact]) ?? time,
@@ -282,6 +330,7 @@ export function parseReadsb(payload: unknown): AircraftSnapshot {
       altitudeM: onGround ? 0 : (altitudeFt ?? 0) * FEET_TO_M,
       velocityMS: gsKnots === null ? null : gsKnots * KNOTS_TO_MS,
       trueTrackDeg: numberOrNull(a.track),
+      category: typeof a.category === "string" && a.category.trim() ? a.category.trim().toUpperCase() : null,
       verticalRateMS: rateFpm === null ? null : rateFpm * FPM_TO_MS,
       onGround,
       lastContact: nowSeconds - seenPos,
