@@ -24,6 +24,7 @@ import { OrientationCamera } from './OrientationCamera';
 import { DomeShell } from './DomeShell';
 import { PlanetLayer } from './PlanetLayer';
 import { SatelliteMarker } from './SatelliteMarker';
+import { MeteorLayer } from './MeteorLayer';
 import { StarLayer } from './StarLayer';
 import type { Observer, Pass, TleRecord } from '../../types';
 
@@ -127,8 +128,10 @@ export interface SkyLayers {
   satellites: boolean;
   stars: boolean;
   constellations: boolean;
+  milkyWay: boolean;
   planets: boolean;
   aircraft: boolean;
+  meteors: boolean;
 }
 
 interface SceneProps {
@@ -280,14 +283,19 @@ function SkyScene({
 
       <DomeShell />
 
-      {(layers.stars || layers.constellations) && (
+      {(layers.stars || layers.constellations || layers.milkyWay) && (
         <StarLayer
           displayTime={displayTime}
           latitude={observer.latitude}
           lstRad={lstRad}
           showStars={layers.stars}
           showConstellations={layers.constellations}
+          showMilkyWay={layers.milkyWay}
         />
+      )}
+
+      {layers.meteors && (
+        <MeteorLayer displayTime={displayTime} latitude={observer.latitude} lstRad={lstRad} />
       )}
 
       {layers.planets && (
@@ -343,8 +351,10 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
   { key: 'satellites', label: 'Satellites' },
   { key: 'stars', label: 'Stars' },
   { key: 'constellations', label: 'Constellations' },
+  { key: 'milkyWay', label: 'Milky Way' },
   { key: 'planets', label: 'Planets' },
   { key: 'aircraft', label: 'Aircraft' },
+  { key: 'meteors', label: 'Meteors' },
 ];
 
 type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
@@ -357,8 +367,10 @@ export function SkyDome({ tles, observer, displayTime, passes, loading }: Props)
     satellites: true,
     stars: true,
     constellations: true,
+    milkyWay: true,
     planets: true,
     aircraft: true,
+    meteors: true,
   });
 
   // Aircraft are live-only: they are where they are now, so they are not tied

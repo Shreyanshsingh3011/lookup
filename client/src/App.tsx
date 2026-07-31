@@ -4,6 +4,7 @@ import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
 import { ConnectionNotice } from './components/ConnectionNotice';
 import { LocationPicker } from './components/LocationPicker';
+import { MeteorShowers } from './components/MeteorShowers';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
@@ -225,6 +226,8 @@ function App() {
             onShowInSky={showPassInSky}
           />
         )}
+
+        <MeteorShowers observer={observer} displayTime={time.displayTime} />
 
         <section className="print:hidden">
           <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">

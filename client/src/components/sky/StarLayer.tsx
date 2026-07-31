@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import catalog from '../../data/skyCatalog.json';
@@ -9,11 +9,15 @@ import {
   raDecToAzEl,
   raDecToEquatorial,
 } from '../../lib/celestial';
+import { createMilkyWayMaterial } from '../../lib/milkyWay';
 import { DOME_RADIUS, azElToVec3 } from '../../lib/sky';
 import { FrontFacingHtml } from './FrontFacingHtml';
 
 /** Just outside the satellite shell, so satellites always pass in front. */
 const STAR_RADIUS = DOME_RADIUS * 1.01;
+
+/** Behind the stars, which are individually in front of the diffuse glow. */
+const MILKY_WAY_RADIUS = DOME_RADIUS * 1.02;
 
 /** Only label stars bright enough to pick out without crowding the view. */
 const STAR_LABEL_MAG_LIMIT = 1.7;
@@ -102,6 +106,24 @@ function StarField() {
   );
 }
 
+/**
+ * The galactic band, shaded from each fragment's own galactic coordinates.
+ *
+ * It rides in the same rotating group as the stars, so object space here is
+ * the equatorial frame and the shader can work directly from the vertex
+ * direction without knowing anything about the observer or the time.
+ */
+function MilkyWay() {
+  const material = useMemo(() => createMilkyWayMaterial(), []);
+  useEffect(() => () => material.dispose(), [material]);
+
+  return (
+    <mesh material={material} frustumCulled={false} renderOrder={-1}>
+      <sphereGeometry args={[MILKY_WAY_RADIUS, 64, 48]} />
+    </mesh>
+  );
+}
+
 /** Every constellation stick figure merged into one LineSegments draw call. */
 function ConstellationFigures() {
   const geometry = useMemo(() => {
@@ -134,9 +156,17 @@ interface Props {
   lstRad: number;
   showStars: boolean;
   showConstellations: boolean;
+  showMilkyWay: boolean;
 }
 
-export function StarLayer({ displayTime, latitude, lstRad, showStars, showConstellations }: Props) {
+export function StarLayer({
+  displayTime,
+  latitude,
+  lstRad,
+  showStars,
+  showConstellations,
+  showMilkyWay,
+}: Props) {
   const groupRef = useRef<THREE.Group>(null);
 
   // The entire celestial sphere is one rigid rotation away from scene
@@ -178,6 +208,7 @@ export function StarLayer({ displayTime, latitude, lstRad, showStars, showConste
   return (
     <>
       <group ref={groupRef}>
+        {showMilkyWay && <MilkyWay />}
         {showStars && <StarField />}
         {showConstellations && <ConstellationFigures />}
       </group>
