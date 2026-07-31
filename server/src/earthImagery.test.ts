@@ -19,39 +19,37 @@ test("each region gets the satellite that is actually looking at it", () => {
 
   assert.equal(best(-74), "goes-east", "New York");
   assert.equal(best(-122), "goes-west", "San Francisco");
-  assert.equal(best(-0.1), "meteosat-0", "London");
-  assert.equal(best(139.7), "himawari", "Tokyo");
-  assert.equal(best(151.2), "himawari", "Sydney");
-  assert.equal(best(55.3), "meteosat-iodc", "Dubai");
-  assert.equal(best(77.2), "meteosat-iodc", "Delhi");
+  assert.equal(best(-43), "goes-east", "Rio de Janeiro");
+  assert.equal(best(-157), "goes-west", "Honolulu");
+  // London sits far out on the GOES-East limb, but the disk does include it.
+  assert.equal(best(-0.1), "goes-east", "London");
 });
 
-test("a location near the date line is served by a Pacific satellite", () => {
-  // Fiji sits between Himawari and GOES-West; both should be candidates and
-  // the nearer one should lead.
-  const options = satellitesFor(178);
-  assert.ok(options.length >= 1, 'the Pacific should not be a blind spot');
-  assert.equal(options[0].id, 'himawari');
+test("longitudes with no source say so rather than picking a satellite that cannot see them", () => {
+  // Only the GOES pair is available, so Asia genuinely has no source. This is
+  // reported honestly instead of handing back a disk the observer is not on.
+  assert.deepEqual(satellitesFor(139.7), [], "Tokyo");
+  assert.deepEqual(satellitesFor(77.2), [], "Delhi");
+  assert.deepEqual(satellitesFor(31.2), [], "Cairo");
 });
 
 test("candidates come back ordered by how squarely the satellite faces you", () => {
-  // London is nearly under Meteosat-0 and well off to the side of the others.
-  const options = satellitesFor(-0.1);
-  assert.equal(options[0].id, "meteosat-0");
+  const options = satellitesFor(-100);
+  assert.ok(options.length >= 2, "the Americas should have a fallback");
   for (let i = 1; i < options.length; i++) {
     assert.ok(
-      longitudeSeparation(options[i - 1].longitudeDeg, -0.1) <=
-        longitudeSeparation(options[i].longitudeDeg, -0.1),
+      longitudeSeparation(options[i - 1].longitudeDeg, -100) <=
+        longitudeSeparation(options[i].longitudeDeg, -100),
       "ordering should be by separation"
     );
   }
 });
 
 test("somewhere with several satellites overhead offers a fallback", () => {
-  // The Atlantic is seen by both GOES-East and Meteosat, which is what lets
+  // The eastern Pacific is seen by both GOES spacecraft, which is what lets
   // the probe fall through when one host is down.
-  const options = satellitesFor(-40);
-  assert.ok(options.length >= 2, `expected a fallback over the Atlantic, got ${options.length}`);
+  const options = satellitesFor(-110);
+  assert.ok(options.length >= 2, `expected a fallback, got ${options.length}`);
 });
 
 test("the satellite table is coherent", () => {
@@ -68,12 +66,18 @@ test("the satellite table is coherent", () => {
   }
 });
 
-test("the belt has no large gap in coverage", () => {
-  // Every longitude should be seen by something, or the feature would silently
-  // be unavailable for whole regions.
+test("coverage is exactly the half of the globe the GOES pair can see", () => {
+  // Not a complaint about the gap — a record of it. Only the GOES satellites
+  // have a verified public full-disk URL, so eastern Africa through the
+  // western Pacific has no source, and the endpoint says so rather than
+  // pretending otherwise.
+  const covered: number[] = [];
   const uncovered: number[] = [];
   for (let lon = -180; lon < 180; lon += 5) {
-    if (satellitesFor(lon).length === 0) uncovered.push(lon);
+    (satellitesFor(lon).length > 0 ? covered : uncovered).push(lon);
   }
-  assert.deepEqual(uncovered, [], `no satellite covers longitudes ${uncovered.join(", ")}`);
+  assert.ok(covered.length > 0 && uncovered.length > 0);
+  // The Americas are covered; Asia is not.
+  assert.ok(satellitesFor(-90).length > 0, "the Americas must be covered");
+  assert.ok(satellitesFor(100).length === 0, "Asia has no verified source yet");
 });

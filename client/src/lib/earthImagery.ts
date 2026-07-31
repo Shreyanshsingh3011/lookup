@@ -17,6 +17,9 @@ export interface EarthImage {
   checkedAt: string;
   /** When the host says the frame was published, if it says at all. */
   frameTime: string | null;
+  observerSeparationDeg: number;
+  /** You are near the edge of this satellite's disk, so your region is distorted. */
+  nearLimb: boolean;
 }
 
 export interface EarthImageryResponse {

@@ -42319,7 +42319,8 @@ function findTrains(tles, criteria = DEFAULT_TRAIN_CRITERIA) {
 }
 
 // src/earthImagery.ts
-var USEFUL_LONGITUDE_REACH_DEG = 75;
+var USEFUL_LONGITUDE_REACH_DEG = 81;
+var LIMB_SEPARATION_DEG = 55;
 var GEOSTATIONARY_SATELLITES = [
   {
     id: "goes-east",
@@ -42344,42 +42345,6 @@ var GEOSTATIONARY_SATELLITES = [
     candidates: [
       "https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/GEOCOLOR/latest.jpg",
       "https://cdn.star.nesdis.noaa.gov/GOES17/ABI/FD/GEOCOLOR/latest.jpg"
-    ]
-  },
-  {
-    id: "himawari",
-    name: "Himawari-9",
-    operator: "JMA, rehosted by NOAA",
-    longitudeDeg: 140.7,
-    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
-    candidates: [
-      // NICT has published this path for Himawari for many years.
-      "https://himawari8.nict.go.jp/img/D531106/thumbnail/550/latest.jpg",
-      "https://himawari8-dl.nict.go.jp/himawari8/img/D531106/thumbnail/550/latest.jpg",
-      "https://cdn.star.nesdis.noaa.gov/HIMAWARI9/FULL_DISK/GEOCOLOR/latest.jpg"
-    ]
-  },
-  {
-    id: "meteosat-0",
-    name: "Meteosat (0\xB0)",
-    operator: "EUMETSAT, rehosted by NOAA",
-    longitudeDeg: 0,
-    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
-    candidates: [
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG_RGBNatColourEnhncd_FullResolution.jpg",
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG_RGBNatColour_FullResolution.jpg",
-      "https://cdn.star.nesdis.noaa.gov/METEOSAT0DEG/FULL_DISK/GEOCOLOR/latest.jpg"
-    ]
-  },
-  {
-    id: "meteosat-iodc",
-    name: "Meteosat (Indian Ocean)",
-    operator: "EUMETSAT, rehosted by NOAA",
-    longitudeDeg: 45.5,
-    product: "GeoColor \u2014 true colour by day, multispectral infrared at night",
-    candidates: [
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSGIODC_RGBNatColourEnhncd_FullResolution.jpg",
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSGIODC_RGBNatColour_FullResolution.jpg"
     ]
   }
 ];
@@ -42445,6 +42410,7 @@ async function getEarthImagery(longitudeDeg) {
   const byUrl = new Map(outcomes.map((o) => [o.url, o]));
   const unreachable = [];
   for (const satellite3 of satellites) {
+    const separation = longitudeSeparation(satellite3.longitudeDeg, longitudeDeg);
     const hit = satellite3.candidates.map((url) => byUrl.get(url)).find((o) => o?.ok);
     if (!hit) {
       unreachable.push(satellite3.name);
@@ -42459,7 +42425,9 @@ async function getEarthImagery(longitudeDeg) {
         longitudeDeg: satellite3.longitudeDeg,
         url: hit.url,
         checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        frameTime: hit.lastModified ? new Date(hit.lastModified).toISOString() : null
+        frameTime: hit.lastModified ? new Date(hit.lastModified).toISOString() : null,
+        observerSeparationDeg: Number(separation.toFixed(1)),
+        nearLimb: separation > LIMB_SEPARATION_DEG
       },
       status: "live",
       unreachable
@@ -42470,7 +42438,7 @@ async function getEarthImagery(longitudeDeg) {
   const result = {
     image: null,
     status: "unavailable",
-    error: satellites.length === 0 ? "No geostationary satellite in this catalogue images your longitude." : "None of the imagery hosts for your region answered.",
+    error: satellites.length === 0 ? "No imagery source covers your longitude yet \u2014 currently only the GOES satellites are available, which see the Americas, the Pacific, the Atlantic and western Europe." : "None of the imagery hosts for your region answered.",
     unreachable
   };
   cache4.set(key, { result, at: Date.now() });

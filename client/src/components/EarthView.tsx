@@ -120,6 +120,13 @@ export function EarthView({ observer }: { observer: Observer }) {
               {age ? `Frame ${age}` : 'Latest available frame'}
               {stale && ' — this feed looks stalled'}
             </span>
+            {image.nearLimb && (
+              <p className="basis-full text-[11px] text-space-400">
+                You are {image.observerSeparationDeg.toFixed(0)}° round from this satellite's
+                viewpoint, so your own region sits near the edge of the disk and is heavily
+                foreshortened.
+              </p>
+            )}
           </figcaption>
         </figure>
       )}
@@ -128,7 +135,9 @@ export function EarthView({ observer }: { observer: Observer }) {
         <p className="text-[11px] text-space-400 leading-relaxed">
           {image?.product}. Imagery, not video: a full-disk scan takes about ten minutes, so the
           newest frame is usually ten to twenty minutes behind. Served directly from{' '}
-          {image?.operator ?? 'the imagery host'} and not rehosted here.
+          {image?.operator ?? 'the imagery host'} and not rehosted here. Coverage is currently the
+          two GOES satellites — the Americas, the Pacific, the Atlantic and western Europe; no
+          public full-disk feed has been found for the Meteosat and Himawari regions yet.
         </p>
       )}
     </section>

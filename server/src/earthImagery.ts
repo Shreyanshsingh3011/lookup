@@ -32,11 +32,40 @@ export interface GeostationarySatellite {
 }
 
 /**
- * A geostationary satellite usefully images roughly this far either side of
- * its sub-satellite longitude. Beyond it the limb is so foreshortened that the
- * observer's own region is a smear at the edge of the disk.
+ * How far either side of its sub-satellite longitude a geostationary
+ * satellite is treated as covering.
+ *
+ * Set beyond the comfortable viewing angle on purpose: the full disk genuinely
+ * includes the limb, and a foreshortened view of your own region is far better
+ * than no picture of Earth at all. Callers are told when the observer is out
+ * near the edge rather than being left to wonder why their country is a smear.
  */
-const USEFUL_LONGITUDE_REACH_DEG = 75;
+const USEFUL_LONGITUDE_REACH_DEG = 81;
+
+/**
+ * Beyond this separation the observer's region sits close enough to the limb
+ * to be visibly distorted.
+ */
+const LIMB_SEPARATION_DEG = 55;
+
+/**
+ * Coverage is currently the GOES pair only: the Americas, the Pacific, the
+ * Atlantic and western Europe.
+ *
+ * Himawari and Meteosat were both attempted and neither could be reached from
+ * production. Recorded here so the same ground is not covered again:
+ *
+ *   - cdn.star.nesdis.noaa.gov/{HIMAWARI9,METEOSAT0DEG,METEOSAT12,METEOSAT11,
+ *     METEOSAT45DEG,METEOSAT9}/FULL_DISK/GEOCOLOR/latest.jpg — all time out.
+ *     NOAA does not rehost partner imagery on that CDN.
+ *   - eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG*.jpg —
+ *     answer 200/206 but with content-type text/html, i.e. an error page
+ *     wearing a .jpg extension. Caught by the content-type check.
+ *   - himawari8.nict.go.jp and himawari8-dl.nict.go.jp — both time out.
+ *
+ * Adding a region back is a matter of finding a directly-linkable full-disk
+ * URL and putting it in the table; the probe will confirm or reject it.
+ */
 
 export const GEOSTATIONARY_SATELLITES: GeostationarySatellite[] = [
   {
@@ -62,42 +91,6 @@ export const GEOSTATIONARY_SATELLITES: GeostationarySatellite[] = [
     candidates: [
       "https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/GEOCOLOR/latest.jpg",
       "https://cdn.star.nesdis.noaa.gov/GOES17/ABI/FD/GEOCOLOR/latest.jpg",
-    ],
-  },
-  {
-    id: "himawari",
-    name: "Himawari-9",
-    operator: "JMA, rehosted by NOAA",
-    longitudeDeg: 140.7,
-    product: "GeoColor — true colour by day, multispectral infrared at night",
-    candidates: [
-      // NICT has published this path for Himawari for many years.
-      "https://himawari8.nict.go.jp/img/D531106/thumbnail/550/latest.jpg",
-      "https://himawari8-dl.nict.go.jp/himawari8/img/D531106/thumbnail/550/latest.jpg",
-      "https://cdn.star.nesdis.noaa.gov/HIMAWARI9/FULL_DISK/GEOCOLOR/latest.jpg",
-    ],
-  },
-  {
-    id: "meteosat-0",
-    name: "Meteosat (0°)",
-    operator: "EUMETSAT, rehosted by NOAA",
-    longitudeDeg: 0,
-    product: "GeoColor — true colour by day, multispectral infrared at night",
-    candidates: [
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG_RGBNatColourEnhncd_FullResolution.jpg",
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG_RGBNatColour_FullResolution.jpg",
-      "https://cdn.star.nesdis.noaa.gov/METEOSAT0DEG/FULL_DISK/GEOCOLOR/latest.jpg",
-    ],
-  },
-  {
-    id: "meteosat-iodc",
-    name: "Meteosat (Indian Ocean)",
-    operator: "EUMETSAT, rehosted by NOAA",
-    longitudeDeg: 45.5,
-    product: "GeoColor — true colour by day, multispectral infrared at night",
-    candidates: [
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSGIODC_RGBNatColourEnhncd_FullResolution.jpg",
-      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSGIODC_RGBNatColour_FullResolution.jpg",
     ],
   },
 ];
@@ -257,6 +250,7 @@ export async function getEarthImagery(longitudeDeg: number): Promise<EarthImager
   // Satellites stay in preference order; within one, the first candidate that
   // answered wins. Probing was concurrent, so this is just picking a winner.
   for (const satellite of satellites) {
+    const separation = longitudeSeparation(satellite.longitudeDeg, longitudeDeg);
     const hit = satellite.candidates.map((url) => byUrl.get(url)).find((o) => o?.ok);
     if (!hit) {
       unreachable.push(satellite.name);
@@ -273,6 +267,8 @@ export async function getEarthImagery(longitudeDeg: number): Promise<EarthImager
         url: hit.url,
         checkedAt: new Date().toISOString(),
         frameTime: hit.lastModified ? new Date(hit.lastModified).toISOString() : null,
+        observerSeparationDeg: Number(separation.toFixed(1)),
+        nearLimb: separation > LIMB_SEPARATION_DEG,
       },
       status: "live",
       unreachable,
@@ -286,7 +282,7 @@ export async function getEarthImagery(longitudeDeg: number): Promise<EarthImager
     status: "unavailable",
     error:
       satellites.length === 0
-        ? "No geostationary satellite in this catalogue images your longitude."
+        ? "No imagery source covers your longitude yet — currently only the GOES satellites are available, which see the Americas, the Pacific, the Atlantic and western Europe."
         : "None of the imagery hosts for your region answered.",
     unreachable,
   };
