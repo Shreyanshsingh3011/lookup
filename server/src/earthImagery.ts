@@ -46,6 +46,9 @@ export const GEOSTATIONARY_SATELLITES: GeostationarySatellite[] = [
     longitudeDeg: -75.2,
     product: "GeoColor — true colour by day, multispectral infrared at night",
     candidates: [
+      // Verified reachable from production, serving image/jpeg with a real
+      // Last-Modified. GOES16 is the previous East spacecraft and answers with
+      // the same frame, so it is kept only as a fallback.
       "https://cdn.star.nesdis.noaa.gov/GOES19/ABI/FD/GEOCOLOR/latest.jpg",
       "https://cdn.star.nesdis.noaa.gov/GOES16/ABI/FD/GEOCOLOR/latest.jpg",
     ],
@@ -68,8 +71,10 @@ export const GEOSTATIONARY_SATELLITES: GeostationarySatellite[] = [
     longitudeDeg: 140.7,
     product: "GeoColor — true colour by day, multispectral infrared at night",
     candidates: [
+      // NICT has published this path for Himawari for many years.
+      "https://himawari8.nict.go.jp/img/D531106/thumbnail/550/latest.jpg",
+      "https://himawari8-dl.nict.go.jp/himawari8/img/D531106/thumbnail/550/latest.jpg",
       "https://cdn.star.nesdis.noaa.gov/HIMAWARI9/FULL_DISK/GEOCOLOR/latest.jpg",
-      "https://cdn.star.nesdis.noaa.gov/HIMAWARI/FULL_DISK/GEOCOLOR/latest.jpg",
     ],
   },
   {
@@ -79,9 +84,9 @@ export const GEOSTATIONARY_SATELLITES: GeostationarySatellite[] = [
     longitudeDeg: 0,
     product: "GeoColor — true colour by day, multispectral infrared at night",
     candidates: [
+      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG_RGBNatColourEnhncd_FullResolution.jpg",
+      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSG_RGBNatColour_FullResolution.jpg",
       "https://cdn.star.nesdis.noaa.gov/METEOSAT0DEG/FULL_DISK/GEOCOLOR/latest.jpg",
-      "https://cdn.star.nesdis.noaa.gov/METEOSAT12/FULL_DISK/GEOCOLOR/latest.jpg",
-      "https://cdn.star.nesdis.noaa.gov/METEOSAT11/FULL_DISK/GEOCOLOR/latest.jpg",
     ],
   },
   {
@@ -91,8 +96,8 @@ export const GEOSTATIONARY_SATELLITES: GeostationarySatellite[] = [
     longitudeDeg: 45.5,
     product: "GeoColor — true colour by day, multispectral infrared at night",
     candidates: [
-      "https://cdn.star.nesdis.noaa.gov/METEOSAT45DEG/FULL_DISK/GEOCOLOR/latest.jpg",
-      "https://cdn.star.nesdis.noaa.gov/METEOSAT9/FULL_DISK/GEOCOLOR/latest.jpg",
+      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSGIODC_RGBNatColourEnhncd_FullResolution.jpg",
+      "https://eumetview.eumetsat.int/static-images/latestImages/EUMETSAT_MSGIODC_RGBNatColour_FullResolution.jpg",
     ],
   },
 ];
@@ -148,7 +153,7 @@ export interface EarthImageryResult {
  * probes now run together and the whole step is bounded by one timeout rather
  * than by their sum.
  */
-const PROBE_TIMEOUT_MS = 4_000;
+const PROBE_TIMEOUT_MS = 6_000;
 
 /**
  * Only the two best-placed satellites are probed. Anything further round the
