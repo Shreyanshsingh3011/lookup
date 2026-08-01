@@ -63,10 +63,19 @@ const fragmentShader = /* glsl */ `
     );
   }
 
+  /**
+   * Three octaves, not five.
+   *
+   * This shader is the most expensive thing in the scene by a wide margin —
+   * it covers the whole sky and every fragment pays for it. Measured by
+   * layer, it cost more than every satellite, star and constellation put
+   * together. The fourth and fifth octaves contribute detail finer than the
+   * band's own softness, so they were paying full price for nothing.
+   */
   float fbm(vec3 p) {
     float sum = 0.0;
     float amplitude = 0.5;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 3; i++) {
       sum += amplitude * noise(p);
       p *= 2.03;
       amplitude *= 0.5;
@@ -99,12 +108,19 @@ const fragmentShader = /* glsl */ `
     // sky rather than swimming as the view moves. Weighted so most of the
     // band's brightness comes from the clouds rather than a flat floor —
     // that contrast is what stops it looking like fog.
-    float clouds = fbm(dir * 7.0) * 0.8 + fbm(dir * 21.0) * 0.4;
+    //
+    // Two scales, from two fbm calls rather than three: the rift below reuses
+    // the coarse one instead of sampling its own field, which is one fewer
+    // full noise evaluation on every fragment of the sky.
+    float coarse = fbm(dir * 4.5);
+    float clouds = coarse * 0.8 + fbm(dir * 18.0) * 0.4;
     clouds = pow(clamp(clouds, 0.0, 1.0), 1.5);
 
     // The dark rift: dust lanes cutting the band lengthwise, strongest
-    // between the centre and Cygnus.
-    float riftNoise = fbm(dir * 4.5 + 11.0);
+    // between the centre and Cygnus. Driven by the coarse field offset in
+    // value rather than by a third noise field — the lanes only need to be
+    // decorrelated from the clouds, not independent of them.
+    float riftNoise = fract(coarse * 3.7 + 0.31);
     float riftCore = exp(-pow((b + 0.035) / 0.075, 2.0));
     float rift = riftCore * smoothstep(0.3, 0.7, riftNoise) * (0.35 + 0.65 * towardCentre);
 

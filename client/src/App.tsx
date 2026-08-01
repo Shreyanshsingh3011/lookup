@@ -3,6 +3,7 @@ import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
 import { ConnectionNotice } from './components/ConnectionNotice';
+import { GroupPicker } from './components/GroupPicker';
 import { EarthView } from './components/EarthView';
 import { IssLiveView } from './components/IssLiveView';
 import { LocationPicker } from './components/LocationPicker';
@@ -20,6 +21,7 @@ import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
 import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
 import { isIssName } from './lib/issStream';
+import { DEFAULT_GROUP_IDS, describeGroups, normaliseGroups } from './lib/satelliteGroups';
 import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 const MAX_CUSTOM_SATELLITES = 20;
@@ -28,6 +30,11 @@ function App() {
   const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } = useLocation();
   const time = useTimeControl();
   const connection = useConnection();
+
+  // Which slice of the catalogue to track. Was a hardcoded ['stations'],
+  // which is about twenty objects and routinely yields no passes at all.
+  const [groupIds, setGroupIds] = useState<string[]>(DEFAULT_GROUP_IDS);
+  const groups = useMemo(() => normaliseGroups(groupIds), [groupIds]);
 
   const [passes, setPasses] = useState<Pass[]>([]);
   const [passesLoading, setPassesLoading] = useState(true);
@@ -108,12 +115,32 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     setTlesLoading(true);
-    fetchTles('stations')
-      .then((res) => {
+    // One request per group: the endpoint is per-group, and the results are
+    // concatenated with duplicates dropped, since an object can appear in more
+    // than one Celestrak list.
+    Promise.all(groups.map((group) => fetchTles(group)))
+      .then((results) => {
         if (cancelled) return;
-        setTles(res.tles);
-        setDataSource(res.source);
-        setDataEpoch(res.epoch);
+        const seen = new Set<string>();
+        const merged: TleRecord[] = [];
+        for (const res of results) {
+          for (const tle of res.tles) {
+            if (seen.has(tle.satnum)) continue;
+            seen.add(tle.satnum);
+            merged.push(tle);
+          }
+        }
+        setTles(merged);
+        // Report the oldest elements across the groups, not the newest, so the
+        // staleness banner cannot be quietly reassured by one fresh list.
+        const worst = results.reduce<(typeof results)[number] | null>((acc, res) => {
+          if (!acc) return res;
+          const a = acc.epoch?.newestAgeDays ?? 0;
+          const b = res.epoch?.newestAgeDays ?? 0;
+          return b > a ? res : acc;
+        }, null);
+        setDataSource(worst?.source ?? null);
+        setDataEpoch(worst?.epoch ?? null);
       })
       .catch(() => {
         if (!cancelled) setTles([]);
@@ -124,13 +151,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [groups]);
 
   useEffect(() => {
     let cancelled = false;
     setPassesLoading(true);
     setPassesError(null);
-    fetchPasses(observer, { groups: ['stations'], days: 10 })
+    fetchPasses(observer, { groups, days: 10 })
       .then((res) => {
         if (cancelled) return;
         setPasses(res.passes);
@@ -156,7 +183,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [observer]);
+  }, [observer, groups]);
 
   // Passes for user-added satellites are computed separately from the bundled
   // "stations" group, since they didn't come from a Celestrak group fetch.
@@ -221,6 +248,11 @@ function App() {
             <h2 className="text-lg font-medium text-space-100">What's up right now</h2>
             <p className="text-xs text-space-300 hidden sm:block">Interactive sky dome · your horizon</p>
           </div>
+          <GroupPicker
+            selected={groupIds}
+            onChange={setGroupIds}
+            satelliteCount={tlesLoading ? null : tles.length}
+          />
           <SkyDome
             tles={allTles}
             observer={observer}
@@ -257,7 +289,7 @@ function App() {
             <div>
               <h2 className="text-lg font-medium text-space-100">Upcoming visible passes</h2>
               <p className="text-xs text-space-300">
-                Next 10 days · ISS &amp; space stations
+                Next 10 days · {describeGroups(groups)}
                 <span className="hidden sm:inline"> · click a pass for its sky track</span>
               </p>
             </div>
