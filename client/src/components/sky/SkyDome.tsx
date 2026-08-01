@@ -132,6 +132,8 @@ export interface SkyLayers {
   planets: boolean;
   aircraft: boolean;
   meteors: boolean;
+  /** Draw the planets at their real angular size rather than enlarged. */
+  trueScale: boolean;
 }
 
 interface SceneProps {
@@ -304,6 +306,7 @@ function SkyScene({
           observerLatitude={observer.latitude}
           observerLongitude={observer.longitude}
           observerElevation={observer.elevation}
+          scaleMode={layers.trueScale ? 'true' : 'enhanced'}
         />
       )}
 
@@ -361,6 +364,7 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
   { key: 'planets', label: 'Planets' },
   { key: 'aircraft', label: 'Aircraft' },
   { key: 'meteors', label: 'Meteors' },
+  { key: 'trueScale', label: 'True scale' },
 ];
 
 type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
@@ -385,6 +389,9 @@ export function SkyDome({ tles, observer, displayTime, passes, loading, onSatell
     planets: true,
     aircraft: true,
     meteors: true,
+    // Off by default: at true scale a planet is a point of light, which is
+    // correct but leaves nothing to look at until you zoom in.
+    trueScale: false,
   });
 
   // Aircraft are live-only: they are where they are now, so they are not tied

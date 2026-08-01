@@ -1,39 +1,41 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Billboard } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { DOME_RADIUS, azElToVec3 } from '../../lib/sky';
+import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
 import { sunwardDirection } from '../../lib/phase';
 import { createPlanetMaterial, createRingMaterial } from '../../lib/planetShaders';
+import {
+  apparentDiameterDeg,
+  describeApparentSize,
+  drawnDiameterDeg,
+  exaggerationFactor,
+  sphereRadiusFor,
+  type ScaleMode,
+} from '../../lib/apparentSize';
+import { galileanMoonOffsets, rotationState, saturnRingOpeningDeg } from '../../lib/planetGeometry';
 import { usePlanetPositions, useSunDirection, type PlanetPosition } from '../../hooks/usePlanetPositions';
 import { FrontFacingHtml } from './FrontFacingHtml';
 
 /** Behind the satellite shell, alongside the stars. */
 const PLANET_RADIUS = DOME_RADIUS * 1.005;
 
+const JUPITER_RADIUS_KM = 71_492;
+
 interface BodyStyle {
   label: string;
   /** Label and glow tint. */
   color: string;
-  /**
-   * Apparent size on the dome. Real planets are well under an arcminute
-   * across — Jupiter is about 1/40 the Moon's width — so every one of these
-   * is enormously exaggerated to be findable and clickable at all. The
-   * relative ordering is kept roughly true to life.
-   */
-  scale: number;
-  /** Axial tilt in degrees, so banded worlds are not drawn upright. */
-  tilt: number;
 }
 
 const BODY_STYLES: Record<PlanetPosition['body'], BodyStyle> = {
-  Sun: { label: 'Sun', color: '#ffd977', scale: 3.4, tilt: 7.2 },
-  Moon: { label: 'Moon', color: '#e8e6df', scale: 3.2, tilt: 6.7 },
-  Mercury: { label: 'Mercury', color: '#c9b8a8', scale: 1.5, tilt: 0.03 },
-  Venus: { label: 'Venus', color: '#fff3d4', scale: 2.2, tilt: 177.4 },
-  Mars: { label: 'Mars', color: '#e08060', scale: 1.8, tilt: 25.2 },
-  Jupiter: { label: 'Jupiter', color: '#e8d4a8', scale: 2.6, tilt: 3.1 },
-  Saturn: { label: 'Saturn', color: '#e0d0a0', scale: 2.2, tilt: 26.7 },
+  Sun: { label: 'Sun', color: '#ffd977' },
+  Moon: { label: 'Moon', color: '#e8e6df' },
+  Mercury: { label: 'Mercury', color: '#c9b8a8' },
+  Venus: { label: 'Venus', color: '#fff3d4' },
+  Mars: { label: 'Mars', color: '#e08060' },
+  Jupiter: { label: 'Jupiter', color: '#e8d4a8' },
+  Saturn: { label: 'Saturn', color: '#e0d0a0' },
 };
 
 const glowVertexShader = /* glsl */ `
@@ -78,19 +80,50 @@ function BodyGlow({ color, radius, intensity }: { color: string; radius: number;
   );
 }
 
+/**
+ * Orientation putting the body's north pole where it actually points.
+ *
+ * The pole's own sky position is converted to a scene direction and the
+ * sphere's +Y rotated onto it, then spun about that axis by the body's real
+ * rotation angle. This replaces a fixed slow turn that was, by its own
+ * comment, decoration — it is why Mars's polar caps now face the right way and
+ * why Jupiter turns once every ten hours instead of at whatever looked nice.
+ */
+function orientationFor(
+  body: string,
+  displayTime: Date,
+  lstRad: number,
+  latitude: number
+): THREE.Quaternion | null {
+  const rotation = rotationState(body, displayTime);
+  if (!rotation) return null;
+
+  const pole = raDecToAzEl(rotation.poleRaDeg, rotation.poleDecDeg, lstRad, latitude);
+  const poleVector = new THREE.Vector3(...azElToVec3(pole.azimuthDeg, pole.elevationDeg, 1)).normalize();
+
+  const toPole = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), poleVector);
+  const spin = new THREE.Quaternion().setFromAxisAngle(
+    poleVector,
+    THREE.MathUtils.degToRad(rotation.spinDeg)
+  );
+  return spin.multiply(toPole);
+}
+
 /** One sphere, lit so its terminator falls where it really would. */
 function PlanetBody({
   body,
-  style,
+  radius,
   lightDirection,
+  orientation,
 }: {
   body: PlanetPosition['body'];
-  style: BodyStyle;
+  radius: number;
   lightDirection: THREE.Vector3;
+  orientation: THREE.Quaternion | null;
 }) {
   const material = useMemo(() => createPlanetMaterial(body), [body]);
   const ringMaterial = useMemo(() => (body === 'Saturn' ? createRingMaterial() : null), [body]);
-  const spinRef = useRef<THREE.Group>(null);
+  const groupRef = useRef<THREE.Group>(null);
 
   // Dispose the compiled programs when a body leaves the sky, rather than
   // leaking one per rise/set cycle.
@@ -106,28 +139,105 @@ function PlanetBody({
     if (ringMaterial) ringMaterial.uniforms.uLightDir.value.copy(lightDirection);
   }, [material, ringMaterial, lightDirection]);
 
-  // A slow rotation, so a zoomed-in gas giant is visibly turning rather than
-  // frozen. Not tied to the body's real rotation period — at these speeds
-  // that would be imperceptible — so it is decoration, not data.
-  useFrame((_, delta) => {
-    if (spinRef.current) spinRef.current.rotation.y += delta * 0.06;
-  });
+  useEffect(() => {
+    if (groupRef.current && orientation) groupRef.current.quaternion.copy(orientation);
+  }, [orientation]);
 
   return (
-    <group rotation={[0, 0, THREE.MathUtils.degToRad(style.tilt)]}>
-      <group ref={spinRef}>
-        <mesh material={material}>
-          <sphereGeometry args={[style.scale, 48, 32]} />
-        </mesh>
-      </group>
+    <group ref={groupRef}>
+      <mesh material={material}>
+        <sphereGeometry args={[radius, 48, 32]} />
+      </mesh>
 
+      {/* The rings lie in the equatorial plane, so once the body carries its
+          real pole they need no tilt of their own — the opening angle seen
+          from Earth falls out of that orientation rather than being applied
+          a second time. */}
       {ringMaterial && (
         <mesh material={ringMaterial} rotation={[Math.PI / 2, 0, 0]}>
-          {/* Inner and outer radii track the shader's own uInner/uOuter. */}
-          <ringGeometry args={[style.scale * 1.35, style.scale * 2.3, 96]} />
+          <ringGeometry args={[radius * 1.35, radius * 2.3, 96]} />
         </mesh>
       )}
     </group>
+  );
+}
+
+/**
+ * The four moons Galileo saw, at their real positions.
+ *
+ * Offsets arrive in Jupiter radii, converted to a true angular separation and
+ * then put through the same compression the discs use.
+ *
+ * Neither naive option works. At true separation the moons fall inside an
+ * enlarged disc and vanish; scaled by the disc's own exaggeration they land up
+ * to eleven degrees away, spreading a system that really spans a few arcminutes
+ * across a quarter of the sky. Reusing the disc compression keeps one rule for
+ * the whole view: strictly increasing, so Io through Callisto are always in the
+ * right order, with the ratios squeezed to fit.
+ */
+function GalileanMoons({
+  displayTime,
+  jupiterRadius,
+  jupiterAzimuthDeg,
+  jupiterElevationDeg,
+  jupiterTrueDiameterDeg,
+  scaleMode,
+}: {
+  displayTime: Date;
+  jupiterRadius: number;
+  jupiterAzimuthDeg: number;
+  jupiterElevationDeg: number;
+  jupiterTrueDiameterDeg: number;
+  scaleMode: ScaleMode;
+}) {
+  const placed = useMemo(() => {
+    const moons = galileanMoonOffsets(displayTime);
+    const trueRadiusDeg = jupiterTrueDiameterDeg / 2;
+
+    return moons.map((moon) => {
+      // True separation on the sky, then compressed exactly as a disc would be.
+      const trueSeparationDeg = Math.hypot(moon.x, moon.y) * trueRadiusDeg;
+      const drawnSeparationDeg = drawnDiameterDeg(trueSeparationDeg, scaleMode);
+      const scale = trueSeparationDeg > 0 ? drawnSeparationDeg / trueSeparationDeg : 1;
+
+      const eastDeg = moon.x * trueRadiusDeg * scale;
+      const northDeg = moon.y * trueRadiusDeg * scale;
+      const elevationDeg = jupiterElevationDeg + northDeg;
+      // Azimuth lines converge toward the zenith, so an east-west offset is
+      // worth more degrees of azimuth the higher the planet sits.
+      const azimuthDeg =
+        jupiterAzimuthDeg - eastDeg / Math.max(0.05, Math.cos(THREE.MathUtils.degToRad(elevationDeg)));
+
+      return {
+        ...moon,
+        position: azElToVec3(azimuthDeg, elevationDeg, PLANET_RADIUS),
+        // Behind the disc and within its outline: genuinely hidden.
+        occluded: moon.depth > 0 && Math.hypot(moon.x, moon.y) < 1,
+      };
+    });
+  }, [displayTime, jupiterAzimuthDeg, jupiterElevationDeg, jupiterTrueDiameterDeg, scaleMode]);
+
+  return (
+    <>
+      {placed.map((moon) =>
+        moon.occluded ? null : (
+          <group key={moon.id} position={moon.position}>
+            <mesh>
+              {/* Sized from the real radius ratio against Jupiter, with a floor
+                  so a moon never falls below a pixel and vanishes. */}
+              <sphereGeometry
+                args={[
+                  Math.max(jupiterRadius * 0.07, jupiterRadius * (moon.radiusKm / JUPITER_RADIUS_KM)),
+                  10,
+                  8,
+                ]}
+              />
+              <meshBasicMaterial color="#f4efe4" toneMapped={false} />
+            </mesh>
+          </group>
+        )
+      )}
+    </>
   );
 }
 
@@ -136,6 +246,7 @@ interface Props {
   observerLatitude: number;
   observerLongitude: number;
   observerElevation: number;
+  scaleMode: ScaleMode;
 }
 
 export function PlanetLayer({
@@ -143,6 +254,7 @@ export function PlanetLayer({
   observerLatitude,
   observerLongitude,
   observerElevation,
+  scaleMode,
 }: Props) {
   const positions = usePlanetPositions(displayTime, observerLatitude, observerLongitude, observerElevation);
 
@@ -150,6 +262,13 @@ export function PlanetLayer({
   // means below the horizon and absent from `positions`. Computed separately
   // so a planet's terminator stays correct after dark.
   const sun = useSunDirection(displayTime, observerLatitude, observerLongitude, observerElevation);
+
+  const lstRad = useMemo(
+    () => localSiderealTime(displayTime, observerLongitude),
+    [displayTime, observerLongitude]
+  );
+
+  const ringOpeningDeg = useMemo(() => saturnRingOpeningDeg(displayTime), [displayTime]);
 
   const lightDirections = useMemo(() => {
     const map = new Map<PlanetPosition['body'], THREE.Vector3>();
@@ -180,34 +299,68 @@ export function PlanetLayer({
         const isSun = p.body === 'Sun';
         const lightDirection = lightDirections.get(p.body) ?? new THREE.Vector3(0, 0, 1);
 
+        const trueDeg = apparentDiameterDeg(p.body, displayTime);
+        if (trueDeg === null) return null;
+        const drawnDeg = drawnDiameterDeg(trueDeg, scaleMode);
+        const radius = sphereRadiusFor(drawnDeg, PLANET_RADIUS);
+        const exaggeration = exaggerationFactor(trueDeg, drawnDeg);
+
+        const orientation = orientationFor(p.body, displayTime, lstRad, observerLatitude);
+
+        // A glow floor keeps a true-scale planet visible as the point of light
+        // it genuinely is, rather than disappearing altogether.
+        const glowRadius = Math.max(radius * (isSun ? 4.5 : 3.2), 0.9);
+
         return (
-          <group key={p.body} position={position}>
-            <BodyGlow
-              color={style.color}
-              radius={style.scale * (isSun ? 4.5 : 3.2)}
-              // Dimmed relative to the old flat discs: the sphere is the
-              // subject now, and a heavy halo would drown its detail.
-              intensity={isSun ? 0.8 : 0.28}
-            />
+          <group key={p.body}>
+            <group position={position}>
+              <BodyGlow color={style.color} radius={glowRadius} intensity={isSun ? 0.8 : 0.28} />
 
-            <PlanetBody body={p.body} style={style} lightDirection={lightDirection} />
+              <PlanetBody
+                body={p.body}
+                radius={radius}
+                lightDirection={lightDirection}
+                orientation={orientation}
+              />
 
-            <FrontFacingHtml position={[0, 0, 0]} offsetYPx={-style.scale * 5 - 12}>
-              <div className="text-center whitespace-nowrap">
-                <div
-                  className="text-[10px] font-semibold tracking-wide"
-                  style={{ color: style.color }}
-                >
-                  {style.label}
-                </div>
-                {p.magnitude !== null && (
-                  <div className="text-[9px] text-space-300 font-mono">
-                    mag {p.magnitude.toFixed(1)}
-                    {p.phase !== null && p.body === 'Moon' && ` · ${Math.round(p.phase * 100)}%`}
+              <FrontFacingHtml position={[0, 0, 0]} offsetYPx={-Math.max(radius * 5, 14) - 12}>
+                <div className="text-center whitespace-nowrap">
+                  <div className="text-[10px] font-semibold tracking-wide" style={{ color: style.color }}>
+                    {style.label}
                   </div>
-                )}
-              </div>
-            </FrontFacingHtml>
+                  <div className="text-[9px] text-space-300 font-mono">
+                    {describeApparentSize(trueDeg)}
+                    {p.magnitude !== null && ` · mag ${p.magnitude.toFixed(1)}`}
+                  </div>
+                  {exaggeration > 1.5 && (
+                    // Stated rather than hidden: the disc is not life size, and
+                    // this says by how much.
+                    <div className="text-[9px] text-space-400">
+                      drawn {Math.round(exaggeration)}× life size
+                    </div>
+                  )}
+                  {p.body === 'Saturn' && ringOpeningDeg !== null && (
+                    <div className="text-[9px] text-space-400">
+                      rings {Math.abs(ringOpeningDeg).toFixed(1)}° open
+                    </div>
+                  )}
+                  {p.phase !== null && p.body === 'Moon' && (
+                    <div className="text-[9px] text-space-400">{Math.round(p.phase * 100)}% lit</div>
+                  )}
+                </div>
+              </FrontFacingHtml>
+            </group>
+
+            {p.body === 'Jupiter' && (
+              <GalileanMoons
+                displayTime={displayTime}
+                jupiterRadius={radius}
+                jupiterAzimuthDeg={p.azimuthDeg}
+                jupiterElevationDeg={p.elevationDeg}
+                jupiterTrueDiameterDeg={trueDeg}
+                scaleMode={scaleMode}
+              />
+            )}
           </group>
         );
       })}
