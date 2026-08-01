@@ -6,6 +6,7 @@ import { ConnectionNotice } from './components/ConnectionNotice';
 import { GroupPicker } from './components/GroupPicker';
 import { EarthView } from './components/EarthView';
 import { IssLiveView } from './components/IssLiveView';
+import { LaunchWindows } from './components/LaunchWindows';
 import { LocationPicker } from './components/LocationPicker';
 import { MeteorShowers } from './components/MeteorShowers';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
@@ -15,6 +16,7 @@ import { SourceBanner } from './components/SourceBanner';
 import { StarlinkTrains } from './components/StarlinkTrains';
 import { WeatherNotice } from './components/CloudCover';
 import { TimeScrubber } from './components/TimeScrubber';
+import { TransferWindows } from './components/TransferWindows';
 import { SkyDome } from './components/sky/SkyDome';
 import { useConnection } from './hooks/useConnection';
 import { useLocation } from './hooks/useLocation';
@@ -345,6 +347,10 @@ function App() {
           </div>
           <ConjunctionScan tles={allTles} />
         </section>
+
+        <LaunchWindows observer={observer} tles={allTles} displayTime={time.displayTime} />
+
+        <TransferWindows displayTime={time.displayTime} />
 
         <section className="print:hidden">
           <div className="flex items-baseline justify-between mb-3">
