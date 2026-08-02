@@ -58,19 +58,49 @@ export function minimumInclinationDeg(latitudeDeg: number): number {
 }
 
 /**
+ * Highest latitude an orbit's ground track ever reaches.
+ *
+ * For a prograde orbit this is just the inclination, which is why it is easy to
+ * assume they are the same thing. They are not: a retrograde orbit inclined 98
+ * degrees — the sun-synchronous case, and a large share of the catalogue —
+ * reaches only 82 degrees, because past 90 the track leans back toward the
+ * equator. Comparing a site's latitude against the raw inclination therefore
+ * tells an observer inside that 82-to-98 band that an orbit is reachable when
+ * it never passes overhead at all.
+ */
+export function maxGroundTrackLatitudeDeg(inclinationDeg: number): number {
+  const wrapped = normaliseDeg(inclinationDeg);
+  const folded = wrapped > 180 ? 360 - wrapped : wrapped;
+  return folded > 90 ? 180 - folded : folded;
+}
+
+/** Whether a site can reach an inclination directly, retrograde orbits included. */
+export function inclinationReachableFrom(latitudeDeg: number, inclinationDeg: number): boolean {
+  return Math.abs(latitudeDeg) <= maxGroundTrackLatitudeDeg(inclinationDeg) + 1e-9;
+}
+
+/**
  * Launch azimuth needed to reach a given inclination from a given latitude.
  *
  * Returns null when the inclination is unreachable — the geometry has no
  * solution below the site's latitude, and returning a plausible-looking
- * number there would be inventing one.
+ * number there would be inventing one. Also null at the geographic poles,
+ * where the answer is indeterminate rather than absent: every direction from
+ * the North Pole is south, and any of them enters a polar orbit. Use
+ * `inclinationReachableFrom` to ask whether an orbit is reachable at all.
  */
 export function launchAzimuthDeg(latitudeDeg: number, inclinationDeg: number): number | null {
   const cosLat = Math.cos(latitudeDeg * DEG);
   if (Math.abs(cosLat) < 1e-9) return null;
   const ratio = Math.cos(inclinationDeg * DEG) / cosLat;
-  if (ratio < -1 || ratio > 1) return null;
+  // A site sitting exactly at the orbit's turning latitude is a real, launchable
+  // case — the heading there is due east, or due west for a retrograde orbit —
+  // but the ratio lands a few ulps outside the domain of asin, so rejecting it
+  // outright would refuse a launch that geometry permits. Admit that slop, then
+  // clamp; anything genuinely beyond it is still unreachable.
+  if (ratio < -1 - 1e-9 || ratio > 1 + 1e-9) return null;
   // Measured clockwise from north; the ascending (north-easterly) solution.
-  return (Math.asin(ratio) / DEG + 360) % 360;
+  return (Math.asin(Math.max(-1, Math.min(1, ratio))) / DEG + 360) % 360;
 }
 
 /**
@@ -174,7 +204,7 @@ export function launchWindows(
   from: Date,
   hours = 24
 ): LaunchWindow[] {
-  if (Math.abs(latitudeDeg) > Math.abs(inclinationDeg)) return [];
+  if (!inclinationReachableFrom(latitudeDeg, inclinationDeg)) return [];
 
   const azimuth = launchAzimuthDeg(latitudeDeg, inclinationDeg);
   if (azimuth === null) return [];
@@ -201,7 +231,7 @@ export function launchWindows(
     // forward into the requested window.
     const targetGst = raanDeg + deltaLon - longitudeDeg;
     const nowGst = greenwichSiderealDeg(from);
-    let ahead = ((targetGst - nowGst) % 360 + 360) % 360;
+    const ahead = normaliseDeg(targetGst - nowGst);
 
     // The Earth turns 360 degrees of sidereal angle per sidereal day.
     for (let turn = 0; ; turn++) {
@@ -214,7 +244,6 @@ export function launchWindows(
       });
       if (turn > 10) break;
     }
-    void ahead;
   }
 
   return windows.sort((a, b) => a.time.getTime() - b.time.getTime());

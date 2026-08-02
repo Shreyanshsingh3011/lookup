@@ -41,10 +41,15 @@ function describeLead(deg: number): string {
 }
 
 export function TransferWindows({ displayTime }: { displayTime: Date }) {
-  // Recomputed only once a day: the windows are months apart, and re-running an
-  // ephemeris search on every scrubber tick would cost far more than it tells.
-  const day = Math.floor(displayTime.getTime() / 86_400_000);
-  const windows = useMemo(() => allTransferWindows(new Date(day * 86_400_000)), [day]);
+  // The ephemeris search costs about 60 ms and the windows are months apart, so
+  // it is pinned to the top of the hour rather than re-run on every scrubber
+  // tick. Crucially the *same* instant is then used to measure how far off each
+  // window is: searching from midnight while counting down from now reported a
+  // departure earlier today as "-1 days away", which happened on every day a
+  // window actually opened.
+  const hour = Math.floor(displayTime.getTime() / 3600_000);
+  const searchFrom = useMemo(() => new Date(hour * 3600_000), [hour]);
+  const windows = useMemo(() => allTransferWindows(searchFrom), [searchFrom]);
 
   if (windows.length === 0) return null;
 
@@ -76,7 +81,7 @@ export function TransferWindows({ displayTime }: { displayTime: Date }) {
               // a target sitting almost exactly at the required angle, with the
               // next chance years away. Saying so is the whole lesson — this is
               // why a slipped Mars window costs twenty-six months.
-              const waitDays = (w.departure.getTime() - displayTime.getTime()) / 86_400_000;
+              const waitDays = (w.departure.getTime() - searchFrom.getTime()) / 86_400_000;
               const justMissed = waitDays > 0.85 * w.synodicPeriodDays;
               return (
                 <tr key={w.target.body}>
@@ -89,7 +94,7 @@ export function TransferWindows({ displayTime }: { displayTime: Date }) {
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="font-mono text-space-100">{formatDate(w.departure)}</div>
-                    <div className="text-[11px] text-space-400">{describeWait(displayTime, w.departure)}</div>
+                    <div className="text-[11px] text-space-400">{describeWait(searchFrom, w.departure)}</div>
                     {justMissed && (
                       <div className="text-[11px] text-amber-glow">just missed — waiting a full cycle</div>
                     )}

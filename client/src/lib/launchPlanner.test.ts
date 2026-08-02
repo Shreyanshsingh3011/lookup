@@ -4,9 +4,11 @@ import * as satellite from 'satellite.js';
 import {
   REPRESENTATIVE_LOSSES_KMS,
   ascentBudget,
+  missionBudget,
   planeAt,
   rendezvousWindows,
   siteDirection,
+  targetOrbit,
 } from './launchPlanner';
 
 // A real ISS element set. Inclination 51.6393, RAAN 339.7896 at epoch.
@@ -155,6 +157,62 @@ test('the ascent budget adds up and rewards launching east', () => {
   const west = ascentBudget(28.6, 400, 270);
   assert.ok(west.rotationAssistKmS < 0, 'launching west must fight the rotation');
   assert.ok(west.totalKmS - east.totalKmS > 0.8, 'the swing is twice the assist');
+});
+
+test('the target orbit is read from the elements, not assumed', () => {
+  // The ISS element set says 15.502 revolutions a day, which is a 400 km orbit.
+  const low = targetOrbit(iss)!;
+  assert.ok(Math.abs(low.meanAltitudeKm - 409) < 15, `got ${low.meanAltitudeKm.toFixed(0)} km`);
+  assert.ok(low.eccentricity < 0.001, 'the station’s orbit is very nearly circular');
+  assert.ok(low.apogeeAltitudeKm - low.perigeeAltitudeKm < 10, 'so perigee and apogee nearly coincide');
+
+  // A GPS satellite: 2 revolutions a day, half a sidereal day, 20,200 km up.
+  // This is the case that used to be labelled "400 km" regardless.
+  const gps = satellite.twoline2satrec(
+    '1 24876U 97035A   26212.50000000 -.00000023  00000-0  00000-0 0  9999',
+    '2 24876  55.4000 200.0000 0100000  50.0000 310.0000  2.00560000    09'
+  );
+  const high = targetOrbit(gps)!;
+  assert.ok(Math.abs(high.meanAltitudeKm - 20_180) < 200, `got ${high.meanAltitudeKm.toFixed(0)} km`);
+  assert.ok(Math.abs(high.eccentricity - 0.01) < 1e-6, 'the 0100000 field is an eccentricity of 0.01');
+  assert.ok(high.apogeeAltitudeKm > high.perigeeAltitudeKm);
+});
+
+test('a target too high to fly to directly gets a parking orbit and a transfer', () => {
+  const gps = satellite.twoline2satrec(
+    '1 24876U 97035A   26212.50000000 -.00000023  00000-0  00000-0 0  9999',
+    '2 24876  55.4000 200.0000 0100000  50.0000 310.0000  2.00560000    09'
+  );
+  const high = missionBudget(28.6, 90, targetOrbit(gps)!);
+  assert.ok(high.transfer !== null, 'twenty thousand kilometres is not a direct ascent');
+  assert.ok(
+    Math.abs(high.parkingAltitudeKm - 200) < 1e-9,
+    `parking orbit was ${high.parkingAltitudeKm} km`
+  );
+  assert.ok(
+    Math.abs(high.transfer!.toAltitudeKm - 20_180) < 200,
+    'the transfer must end at the target, not somewhere nominal'
+  );
+  // Reaching a GPS orbit from a 200 km parking orbit: 2.07 km/s to depart plus
+  // 1.43 to circularise, so 3.50 total.
+  assert.ok(
+    Math.abs(high.transfer!.totalDeltaV - 3.50) < 0.05,
+    `transfer was ${high.transfer!.totalDeltaV.toFixed(2)} km/s`
+  );
+  assert.ok(
+    Math.abs(high.totalKmS - (high.ascent.totalKmS + high.transfer!.totalDeltaV)) < 1e-9,
+    'the legs must sum'
+  );
+
+  // A low target is flown to directly, with no transfer leg at all.
+  const low = missionBudget(28.6, 90, targetOrbit(iss)!);
+  assert.equal(low.transfer, null);
+  assert.ok(Math.abs(low.parkingAltitudeKm - targetOrbit(iss)!.meanAltitudeKm) < 1e-9);
+
+  // And the high target must genuinely cost more, which is the whole point of
+  // not labelling it with the low one's figure.
+  assert.ok(high.totalKmS > low.totalKmS + 3, 'a GPS orbit must cost far more than the station');
+  assert.ok(high.massRatio > low.massRatio, 'and demand a bigger vehicle');
 });
 
 test('the rocket equation makes that budget expensive', () => {

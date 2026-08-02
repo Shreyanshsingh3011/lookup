@@ -1,9 +1,11 @@
 import * as satellite from 'satellite.js';
 import {
   EARTH_RADIUS_KM,
+  MU_EARTH,
   circularSpeed,
   exhaustVelocityKmS,
   greenwichSiderealDeg,
+  hohmannTransfer,
   launchAzimuthDeg,
   massRatio,
   rotationalAssistKmS,
@@ -204,6 +206,111 @@ export interface AscentBudget {
  * shown.
  */
 export const REPRESENTATIVE_LOSSES_KMS = 1.7;
+
+export interface TargetOrbit {
+  semiMajorAxisKm: number;
+  perigeeAltitudeKm: number;
+  apogeeAltitudeKm: number;
+  meanAltitudeKm: number;
+  eccentricity: number;
+}
+
+/**
+ * Where the target actually is, from its own element set.
+ *
+ * Mean motion fixes the semi-major axis, and eccentricity splits that into
+ * perigee and apogee. Reading these rather than assuming a low orbit is what
+ * stops a budget for a satellite twenty thousand kilometres up being labelled
+ * with someone else's altitude.
+ */
+export function targetOrbit(satrec: satellite.SatRec): TargetOrbit | null {
+  // satrec.no is mean motion in radians per minute.
+  const n = satrec.no / 60;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const a = Math.cbrt(MU_EARTH / (n * n));
+  if (!Number.isFinite(a) || a <= EARTH_RADIUS_KM) return null;
+  const e = Number.isFinite(satrec.ecco) ? Math.max(0, Math.min(0.999, satrec.ecco)) : 0;
+
+  return {
+    semiMajorAxisKm: a,
+    perigeeAltitudeKm: a * (1 - e) - EARTH_RADIUS_KM,
+    apogeeAltitudeKm: a * (1 + e) - EARTH_RADIUS_KM,
+    meanAltitudeKm: a - EARTH_RADIUS_KM,
+    eccentricity: e,
+  };
+}
+
+/**
+ * Above this, a launcher does not fly straight there — it parks low and
+ * transfers. Direct ascent to a high orbit wastes enormous amounts of energy
+ * fighting gravity on the way up.
+ */
+const DIRECT_ASCENT_CEILING_KM = 2000;
+const PARKING_ALTITUDE_KM = 200;
+
+export interface MissionBudget {
+  /** Altitude the ascent actually targets — the target's own, or a parking orbit. */
+  parkingAltitudeKm: number;
+  ascent: AscentBudget;
+  /** Only when the target sits too high to fly to directly. */
+  transfer: {
+    toAltitudeKm: number;
+    departureDeltaV: number;
+    arrivalDeltaV: number;
+    totalDeltaV: number;
+    flightTimeSeconds: number;
+  } | null;
+  totalKmS: number;
+  massRatio: number;
+  propellantFraction: number;
+}
+
+/**
+ * What it costs to reach a specific target, rather than a nominal orbit.
+ *
+ * Low targets are flown to directly. High ones get the profile real missions
+ * use: ascend to a low parking orbit, then a Hohmann transfer up. Both legs are
+ * summed into one mass ratio, because the rocket equation does not care which
+ * burn is which — only the total.
+ */
+export function missionBudget(
+  latitudeDeg: number,
+  azimuthDeg: number,
+  orbit: TargetOrbit,
+  specificImpulseSeconds = 330,
+  lossesKmS = REPRESENTATIVE_LOSSES_KMS
+): MissionBudget {
+  const direct = orbit.meanAltitudeKm <= DIRECT_ASCENT_CEILING_KM;
+  const parkingAltitudeKm = direct ? Math.max(orbit.meanAltitudeKm, PARKING_ALTITUDE_KM) : PARKING_ALTITUDE_KM;
+  const ascent = ascentBudget(latitudeDeg, parkingAltitudeKm, azimuthDeg, specificImpulseSeconds, lossesKmS);
+
+  let transfer: MissionBudget['transfer'] = null;
+  if (!direct) {
+    const t = hohmannTransfer(
+      EARTH_RADIUS_KM + parkingAltitudeKm,
+      EARTH_RADIUS_KM + orbit.meanAltitudeKm
+    );
+    transfer = {
+      toAltitudeKm: orbit.meanAltitudeKm,
+      departureDeltaV: t.departureDeltaV,
+      arrivalDeltaV: t.arrivalDeltaV,
+      totalDeltaV: t.totalDeltaV,
+      flightTimeSeconds: t.flightTimeSeconds,
+    };
+  }
+
+  const totalKmS = ascent.totalKmS + (transfer?.totalDeltaV ?? 0);
+  const ratio = massRatio(totalKmS, exhaustVelocityKmS(specificImpulseSeconds));
+
+  return {
+    parkingAltitudeKm,
+    ascent,
+    transfer,
+    totalKmS,
+    massRatio: ratio,
+    propellantFraction: 1 - 1 / ratio,
+  };
+}
 
 export function ascentBudget(
   latitudeDeg: number,

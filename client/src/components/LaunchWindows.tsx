@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react';
 import type { SatRec } from 'satellite.js';
-import { ascentBudget, planeAt, rendezvousWindows } from '../lib/launchPlanner';
-import { minimumInclinationDeg, rotationalAssistKmS } from '../lib/orbitalMechanics';
+import { missionBudget, planeAt, rendezvousWindows, targetOrbit } from '../lib/launchPlanner';
+import {
+  inclinationReachableFrom,
+  maxGroundTrackLatitudeDeg,
+  minimumInclinationDeg,
+  rotationalAssistKmS,
+} from '../lib/orbitalMechanics';
 import { azToCompass, parseSatrec } from '../lib/sky';
 import type { Observer, TleRecord } from '../types';
 
@@ -16,7 +21,6 @@ import type { Observer, TleRecord } from '../types';
  * timezone rather than someone else's.
  */
 
-const ALTITUDE_KM = 400;
 /** Kerosene-class first stage; the Isp most launch vehicles actually fly. */
 const ISP_SECONDS = 330;
 
@@ -27,6 +31,10 @@ function formatTime(date: Date): string {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+function formatAltitude(km: number): string {
+  return `${Math.round(km).toLocaleString()} km`;
 }
 
 function countdown(from: Date, to: Date): string {
@@ -68,21 +76,36 @@ export function LaunchWindows({
     return targets.find((t) => /\bISS\b|ZARYA/i.test(t.tle.name)) ?? targets[0];
   }, [targets, selected]);
 
+  // The 48-hour plane search costs a couple of milliseconds, and displayTime
+  // ticks every second in live mode and about 25 times a second during
+  // playback. Pinning the search to the start of the minute keeps it off the
+  // hot path; the countdown below still reads displayTime directly, so it
+  // updates every second as it should.
+  const searchFrom = useMemo(
+    () => new Date(Math.floor(displayTime.getTime() / 60_000) * 60_000),
+    [displayTime]
+  );
+
   const plan = useMemo(() => {
     if (!target) return null;
-    const plane = planeAt(target.satrec, displayTime);
+    const plane = planeAt(target.satrec, searchFrom);
     if (!plane) return null;
 
-    const reachable = Math.abs(observer.latitude) <= plane.inclinationDeg;
+    // Not the raw inclination: a retrograde orbit inclined 98 degrees only
+    // reaches 82, so comparing against the inclination would promise a window
+    // to anyone between those latitudes and then quietly find none.
+    const reachable = inclinationReachableFrom(observer.latitude, plane.inclinationDeg);
     const windows = reachable
-      ? rendezvousWindows(target.satrec, observer.latitude, observer.longitude, displayTime, 48).slice(0, 4)
+      ? rendezvousWindows(target.satrec, observer.latitude, observer.longitude, searchFrom, 48).slice(0, 4)
       : [];
-    const budget = windows[0]
-      ? ascentBudget(observer.latitude, ALTITUDE_KM, windows[0].azimuthDeg, ISP_SECONDS)
-      : null;
+    const orbit = targetOrbit(target.satrec);
+    const budget =
+      windows[0] && orbit
+        ? missionBudget(observer.latitude, windows[0].azimuthDeg, orbit, ISP_SECONDS)
+        : null;
 
-    return { plane, reachable, windows, budget };
-  }, [target, observer.latitude, observer.longitude, displayTime]);
+    return { plane, reachable, windows, budget, orbit, ceiling: maxGroundTrackLatitudeDeg(plane.inclinationDeg) };
+  }, [target, observer.latitude, observer.longitude, searchFrom]);
 
   if (!target || !plan) return null;
 
@@ -134,10 +157,11 @@ export function LaunchWindows({
 
         {!plan.reachable ? (
           <p className="px-4 py-4 text-sm text-space-300">
-            No window exists at all. This orbit is inclined {plan.plane.inclinationDeg.toFixed(1)}°, less
-            than your latitude of {Math.abs(observer.latitude).toFixed(1)}°, so its ground track never
-            reaches you — there is no heading and no time of day that would work. This is the constraint
-            that decides where launch sites get built.
+            No window exists at all. This orbit is inclined {plan.plane.inclinationDeg.toFixed(1)}°, so its
+            ground track never gets above {plan.ceiling.toFixed(1)}° of latitude
+            {plan.plane.inclinationDeg > 90 && ' — past 90° an orbit leans back toward the equator rather than reaching higher'}
+            , and you are at {Math.abs(observer.latitude).toFixed(1)}°. There is no heading and no time of
+            day that would work. This is the constraint that decides where launch sites get built.
           </p>
         ) : plan.windows.length === 0 ? (
           <p className="px-4 py-4 text-sm text-space-300">No crossing in the next 48 hours.</p>
@@ -170,37 +194,70 @@ export function LaunchWindows({
               </tbody>
             </table>
 
-            {plan.plane.inclinationDeg - Math.abs(observer.latitude) < 3 && (
+            {plan.ceiling - Math.abs(observer.latitude) < 3 && (
               <p className="px-4 py-2 text-[11px] text-space-300 border-t border-space-800/70 leading-relaxed">
-                Your latitude is within {(plan.plane.inclinationDeg - Math.abs(observer.latitude)).toFixed(1)}°
-                of this orbit's inclination, so you sit almost at the highest point its ground track reaches.
-                That is why the two crossings fall so close together and why the heading is nearly due east:
-                a site at exactly the inclination has one tangent window a day, not two.
+                Your latitude is within {(plan.ceiling - Math.abs(observer.latitude)).toFixed(1)}° of the
+                highest point this orbit's ground track reaches, so you sit almost at its turning point.
+                That is why the two crossings fall so close together and why the heading is nearly
+                east–west: a site at exactly that latitude gets one tangent window a day, not two.
               </p>
             )}
 
-            {plan.budget && (
+            {plan.budget && plan.orbit && (
               <div className="px-4 py-3 border-t border-space-800/70">
                 <h3 className="text-xs uppercase tracking-wide text-space-400 mb-2">
-                  What it costs to get there — {ALTITUDE_KM} km, {ISP_SECONDS}s engine
+                  What it costs to get there — {formatAltitude(plan.orbit.meanAltitudeKm)}, {ISP_SECONDS}s engine
                 </h3>
                 <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-sm">
-                  <Line label="Orbital speed" value={`+${plan.budget.orbitalSpeedKmS.toFixed(2)} km/s`} />
+                  <Line
+                    label={`Orbital speed at ${formatAltitude(plan.budget.parkingAltitudeKm)}`}
+                    value={`+${plan.budget.ascent.orbitalSpeedKmS.toFixed(2)} km/s`}
+                  />
                   <Line
                     label="Earth's rotation"
-                    value={`${plan.budget.rotationAssistKmS >= 0 ? '−' : '+'}${Math.abs(
-                      plan.budget.rotationAssistKmS
+                    value={`${plan.budget.ascent.rotationAssistKmS >= 0 ? '−' : '+'}${Math.abs(
+                      plan.budget.ascent.rotationAssistKmS
                     ).toFixed(2)} km/s`}
-                    tone={plan.budget.rotationAssistKmS >= 0 ? 'good' : 'bad'}
+                    tone={plan.budget.ascent.rotationAssistKmS >= 0 ? 'good' : 'bad'}
                   />
-                  <Line label="Gravity & drag" value={`+${plan.budget.lossesKmS.toFixed(2)} km/s`} tone="estimate" />
+                  <Line
+                    label="Gravity & drag"
+                    value={`+${plan.budget.ascent.lossesKmS.toFixed(2)} km/s`}
+                    tone="estimate"
+                  />
+                  {plan.budget.transfer ? (
+                    <Line
+                      label={`Transfer to ${formatAltitude(plan.budget.transfer.toAltitudeKm)}`}
+                      value={`+${plan.budget.transfer.totalDeltaV.toFixed(2)} km/s`}
+                    />
+                  ) : (
+                    <span className="hidden sm:block" />
+                  )}
                   <Line label="Total" value={`${plan.budget.totalKmS.toFixed(2)} km/s`} strong />
                 </dl>
                 <p className="text-[11px] text-space-400 leading-relaxed mt-2">
                   Which means a vehicle {plan.budget.massRatio.toFixed(1)}× its own dry mass at lift-off —{' '}
                   {(plan.budget.propellantFraction * 100).toFixed(1)}% propellant. The rocket equation is
-                  exponential, so shaving the {(plan.budget.rotationAssistKmS * 1000).toFixed(0)} m/s the
-                  rotation gives you off the top is worth far more than it looks.
+                  exponential, so shaving the {(plan.budget.ascent.rotationAssistKmS * 1000).toFixed(0)} m/s
+                  the rotation gives you off the top is worth far more than it looks.
+                  {plan.budget.transfer && (
+                    <>
+                      {' '}
+                      This target is too high to fly to directly, so the profile is the one real missions
+                      use: ascend to a {formatAltitude(plan.budget.parkingAltitudeKm)} parking orbit, then a{' '}
+                      {(plan.budget.transfer.flightTimeSeconds / 3600).toFixed(1)}-hour Hohmann transfer up.
+                    </>
+                  )}
+                  {plan.orbit.eccentricity > 0.05 && (
+                    <>
+                      {' '}
+                      Its orbit is noticeably eccentric —{' '}
+                      {plan.orbit.perigeeAltitudeKm.toFixed(0)} km at perigee,{' '}
+                      {plan.orbit.apogeeAltitudeKm.toFixed(0)} km at apogee — so a real mission would match
+                      that shape rather than circularise. The figure above is for a circular orbit at the
+                      same mean altitude.
+                    </>
+                  )}
                 </p>
               </div>
             )}

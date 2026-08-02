@@ -8,8 +8,10 @@ import {
   exhaustVelocityKmS,
   greenwichSiderealDeg,
   hohmannTransfer,
+  inclinationReachableFrom,
   launchAzimuthDeg,
   launchWindows,
+  maxGroundTrackLatitudeDeg,
   minimumInclinationDeg,
   orbitalPeriod,
   phaseAngleAtDepartureDeg,
@@ -50,6 +52,44 @@ test('a site cannot reach an inclination below its own latitude', () => {
   assert.equal(launchAzimuthDeg(45.6, 28), null);
   // But it reaches the ISS's 51.6 degrees comfortably.
   assert.ok(launchAzimuthDeg(45.6, 51.6) !== null);
+});
+
+test('a retrograde orbit reaches lower than its inclination suggests', () => {
+  // Prograde: the ground track's highest latitude is the inclination itself.
+  assert.ok(Math.abs(maxGroundTrackLatitudeDeg(51.6) - 51.6) < 1e-9);
+  assert.ok(Math.abs(maxGroundTrackLatitudeDeg(90) - 90) < 1e-9);
+
+  // Retrograde: past 90 degrees the track leans back toward the equator, so a
+  // sun-synchronous orbit at 98.2 degrees only ever reaches 81.8. Treating the
+  // inclination as the ceiling promises a window to everyone in between.
+  assert.ok(Math.abs(maxGroundTrackLatitudeDeg(98.2) - 81.8) < 1e-9);
+  assert.ok(Math.abs(maxGroundTrackLatitudeDeg(180) - 0) < 1e-9);
+
+  // Svalbard at 78 N can see a sun-synchronous orbit pass overhead...
+  assert.equal(inclinationReachableFrom(78, 98.2), true);
+  // ...but a site at 85 cannot, even though 85 is less than 98.2.
+  assert.equal(inclinationReachableFrom(85, 98.2), false);
+  assert.equal(launchAzimuthDeg(85, 98.2), null, 'and so there is no azimuth either');
+
+  // The two must never disagree: wherever an azimuth exists, the orbit is
+  // reachable, and wherever it does not, it is not. The geographic poles are
+  // the one genuine exception — see below.
+  for (let lat = -89; lat <= 89; lat += 1.5) {
+    for (const inc of [0, 28.5, 51.6, 63.4, 90, 98.2, 116, 145]) {
+      assert.equal(
+        inclinationReachableFrom(lat, inc),
+        launchAzimuthDeg(lat, inc) !== null,
+        `lat ${lat}, inclination ${inc}`
+      );
+    }
+  }
+
+  // At a pole a polar orbit is reachable but has no particular heading: every
+  // direction from the North Pole is south, and any of them enters a 90 degree
+  // orbit. The azimuth is indeterminate there, not impossible, which is why
+  // these two answers legitimately differ at exactly this point.
+  assert.equal(inclinationReachableFrom(90, 90), true);
+  assert.equal(launchAzimuthDeg(90, 90), null);
 });
 
 test('launch azimuth matches the known cases', () => {
