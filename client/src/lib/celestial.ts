@@ -1,22 +1,14 @@
-import * as satellite from 'satellite.js';
 import * as THREE from 'three';
+import { sceneRotationRows } from './celestialMath';
 import { DOME_RADIUS } from './sky';
 
 /**
- * Unit vector in the J2000 equatorial frame: +x toward the vernal equinox,
- * +z toward the north celestial pole.
+ * The renderer-free maths lives in `./celestialMath`, so that panels wanting
+ * only a sidereal time do not pull three.js — and by extension the whole 3D
+ * engine — into the initial bundle. Re-exported here so the sky components can
+ * keep importing everything from one place.
  */
-export function raDecToEquatorial(raDeg: number, decDeg: number): [number, number, number] {
-  const ra = (raDeg * Math.PI) / 180;
-  const dec = (decDeg * Math.PI) / 180;
-  const cosDec = Math.cos(dec);
-  return [cosDec * Math.cos(ra), cosDec * Math.sin(ra), Math.sin(dec)];
-}
-
-/** Local apparent sidereal time in radians (GMST plus the observer's longitude). */
-export function localSiderealTime(date: Date, longitudeDeg: number): number {
-  return satellite.gstime(date) + (longitudeDeg * Math.PI) / 180;
-}
+export { localSiderealTime, raDecToAzEl, raDecToEquatorial, sceneRotationRows } from './celestialMath';
 
 /**
  * Rotation taking the equatorial frame into dome/scene coordinates
@@ -39,37 +31,14 @@ export function localSiderealTime(date: Date, longitudeDeg: number): number {
  * moves, instead of re-deriving horizontal coordinates per star per frame.
  */
 export function equatorialToSceneMatrix(lstRad: number, latitudeDeg: number): THREE.Matrix4 {
-  const phi = (latitudeDeg * Math.PI) / 180;
-  const sinL = Math.sin(lstRad);
-  const cosL = Math.cos(lstRad);
-  const sinPhi = Math.sin(phi);
-  const cosPhi = Math.cos(phi);
-
+  const [r0, r1, r2] = sceneRotationRows(lstRad, latitudeDeg);
   // Row-major, matching Matrix4.set.
   return new THREE.Matrix4().set(
-    -sinL,          cosL,          0,       0,
-    cosPhi * cosL,  cosPhi * sinL, sinPhi,  0,
-    sinPhi * cosL,  sinPhi * sinL, -cosPhi, 0,
-    0,              0,             0,       1
+    r0[0], r0[1], r0[2], 0,
+    r1[0], r1[1], r1[2], 0,
+    r2[0], r2[1], r2[2], 0,
+    0,     0,     0,     1
   );
-}
-
-/**
- * Horizontal coordinates for a fixed equatorial position. Used for labels and
- * hit-testing; bulk star rendering uses the matrix above instead.
- */
-export function raDecToAzEl(
-  raDeg: number,
-  decDeg: number,
-  lstRad: number,
-  latitudeDeg: number
-): { azimuthDeg: number; elevationDeg: number } {
-  const [ex, ey, ez] = raDecToEquatorial(raDeg, decDeg);
-  const v = new THREE.Vector3(ex, ey, ez).applyMatrix4(equatorialToSceneMatrix(lstRad, latitudeDeg));
-  const elevationDeg = (Math.asin(THREE.MathUtils.clamp(v.y, -1, 1)) * 180) / Math.PI;
-  let azimuthDeg = (Math.atan2(v.x, -v.z) * 180) / Math.PI;
-  if (azimuthDeg < 0) azimuthDeg += 360;
-  return { azimuthDeg, elevationDeg };
 }
 
 /**

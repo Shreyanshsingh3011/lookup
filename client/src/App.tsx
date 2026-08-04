@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
@@ -18,7 +18,16 @@ import { StarlinkTrains } from './components/StarlinkTrains';
 import { WeatherNotice } from './components/CloudCover';
 import { TimeScrubber } from './components/TimeScrubber';
 import { TransferWindows } from './components/TransferWindows';
-import { SkyDome } from './components/sky/SkyDome';
+/**
+ * The 3D sky is the whole of three.js — about a megabyte before anything is
+ * drawn — and it is the one part of this page that nobody can read. Loading it
+ * separately lets the pass table, the meteor showers and the launch windows
+ * paint immediately instead of waiting behind a WebGL engine, which on a phone
+ * on a slow connection is the difference between a usable page and a blank one.
+ */
+const SkyDome = lazy(() =>
+  import('./components/sky/SkyDome').then((m) => ({ default: m.SkyDome }))
+);
 import { useConnection } from './hooks/useConnection';
 import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
@@ -293,14 +302,16 @@ function App() {
             satelliteCount={tlesLoading ? null : tles.length}
             maxScanned={catalogue.maxScanned}
           />
-          <SkyDome
-            tles={allTles}
-            observer={observer}
-            displayTime={time.displayTime}
-            passes={allPasses}
-            loading={tlesLoading}
-            onSatelliteSelected={handleSatelliteSelected}
-          />
+          <Suspense fallback={<SkyDomePlaceholder />}>
+            <SkyDome
+              tles={allTles}
+              observer={observer}
+              displayTime={time.displayTime}
+              passes={allPasses}
+              loading={tlesLoading}
+              onSatelliteSelected={handleSatelliteSelected}
+            />
+          </Suspense>
           <TimeScrubber control={time} />
         </section>
 
@@ -398,6 +409,20 @@ function App() {
           <OrbitAdvisor observer={observer} />
         </section>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Holds the dome's space while its chunk arrives.
+ *
+ * Sized to match so the rest of the page does not jump when it lands — a
+ * layout shift under someone's thumb is a worse trade than the wait it saves.
+ */
+function SkyDomePlaceholder() {
+  return (
+    <div className="glass-panel rounded-xl w-full aspect-[4/3] sm:aspect-[16/9] flex items-center justify-center">
+      <p className="text-xs text-space-400">Loading the sky…</p>
     </div>
   );
 }

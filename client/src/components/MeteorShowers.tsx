@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { localSiderealTime, raDecToAzEl } from '../lib/celestial';
+import { localSiderealTime, raDecToAzEl } from '../lib/celestialMath';
 import {
   activeShowers,
   describePeak,
