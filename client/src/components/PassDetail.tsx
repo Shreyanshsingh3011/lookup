@@ -24,6 +24,8 @@ interface Props {
   tles: TleRecord[];
   onClose: () => void;
   onShowInSky: (pass: Pass) => void;
+  /** Record this pass as something actually seen. */
+  onLogSighting: (pass: Pass) => void;
 }
 
 function EventRow({ label, time, altitudeDeg, azimuthDeg, direction }: {
@@ -51,7 +53,7 @@ function EventRow({ label, time, altitudeDeg, azimuthDeg, direction }: {
   );
 }
 
-export function PassDetail({ pass, observer, tles, onClose, onShowInSky }: Props) {
+export function PassDetail({ pass, observer, tles, onClose, onShowInSky, onLogSighting }: Props) {
   const tle = useMemo(() => tles.find((t) => t.satnum === pass.satnum), [tles, pass.satnum]);
 
   const track = useMemo(
@@ -83,6 +85,13 @@ export function PassDetail({ pass, observer, tles, onClose, onShowInSky }: Props
             className="text-xs px-2.5 py-1.5 rounded-lg bg-glow-600/15 text-glow-400 border border-glow-600/30 hover:bg-glow-600/25 hover:shadow-[var(--shadow-glow-sm)] transition"
           >
             Show in 3D
+          </button>
+          <button
+            type="button"
+            onClick={() => onLogSighting(pass)}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-space-700/60 text-space-200 border border-space-600 hover:bg-space-700 transition"
+          >
+            I saw this
           </button>
           <button
             type="button"

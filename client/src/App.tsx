@@ -8,6 +8,7 @@ import { EarthView } from './components/EarthView';
 import { IssLiveView } from './components/IssLiveView';
 import { LaunchWindows } from './components/LaunchWindows';
 import { LocationPicker } from './components/LocationPicker';
+import { Logbook } from './components/Logbook';
 import { MeteorShowers } from './components/MeteorShowers';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
@@ -117,6 +118,28 @@ function App() {
 
   const removeCustomSatellite = (satnum: string) => {
     setCustomTles((prev) => prev.filter((t) => t.satnum !== satnum));
+  };
+
+  // A sighting handed from the pass table to the logbook, so recording
+  // something you just watched is confirming rather than transcribing.
+  const [logPrefill, setLogPrefill] = useState<{
+    subject: string;
+    satnum: string | null;
+    magnitude: number | null;
+    maxElevationDeg: number | null;
+    observedAt: Date;
+  } | null>(null);
+  const logbookRef = useRef<HTMLDivElement>(null);
+
+  const logSighting = (pass: Pass) => {
+    setLogPrefill({
+      subject: pass.name,
+      satnum: pass.satnum,
+      magnitude: pass.magnitude ?? null,
+      maxElevationDeg: pass.max.altitudeDeg,
+      observedAt: new Date(pass.max.time),
+    });
+    logbookRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const skySectionRef = useRef<HTMLElement>(null);
@@ -326,6 +349,7 @@ function App() {
             tles={allTles}
             onClose={() => setSelectedPass(null)}
             onShowInSky={showPassInSky}
+            onLogSighting={logSighting}
           />
         )}
 
@@ -392,6 +416,14 @@ function App() {
           </div>
           <AddSatellite customTles={customTles} onAdd={addCustomSatellite} onRemove={removeCustomSatellite} />
         </section>
+
+        <div ref={logbookRef} className="scroll-mt-24">
+          <Logbook
+            observer={observer}
+            prefill={logPrefill}
+            onPrefillUsed={() => setLogPrefill(null)}
+          />
+        </div>
 
         <RadioPasses tles={allTles} observer={observer} displayTime={time.displayTime} />
 
