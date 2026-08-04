@@ -3,7 +3,7 @@ import type { Observer } from '../types';
 
 interface Props {
   observer: Observer;
-  source: 'default' | 'stored' | 'geolocation' | 'manual';
+  source: 'default' | 'stored' | 'geolocation' | 'manual' | 'shared';
   geoStatus: 'idle' | 'locating' | 'error';
   geoError: string | null;
   onUseGeolocation: () => void;
@@ -40,6 +40,7 @@ export function LocationPicker({ observer, source, geoStatus, geoError, onUseGeo
             {source === 'manual' && 'manually set'}
             {source === 'stored' && 'saved location'}
             {source === 'default' && 'default: Greenwich Observatory'}
+            {source === 'shared' && 'from a shared link'}
           </div>
         </div>
         <div className="flex flex-col gap-1.5 shrink-0">

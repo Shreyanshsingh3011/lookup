@@ -12,6 +12,7 @@ import { MeteorShowers } from './components/MeteorShowers';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
+import { ShareLink } from './components/ShareLink';
 import { SourceBanner } from './components/SourceBanner';
 import { StarlinkTrains } from './components/StarlinkTrains';
 import { WeatherNotice } from './components/CloudCover';
@@ -25,19 +26,30 @@ import { useTimeControl } from './hooks/useTimeControl';
 import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
 import { isIssName } from './lib/issStream';
 import { DEFAULT_GROUP_IDS, describeGroups, normaliseGroups } from './lib/satelliteGroups';
+import { decodeShareState, encodeShareState } from './lib/shareUrl';
 import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 const MAX_CUSTOM_SATELLITES = 20;
 
+/**
+ * The link that opened this page.
+ *
+ * Read once, at module scope, deliberately. Reading it inside the component
+ * would re-apply the shared state every time the URL is rewritten below, so
+ * the view could never be moved off the one it was shared at.
+ */
+const INITIAL_SHARE = decodeShareState(window.location.search);
+
 function App() {
-  const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } = useLocation();
-  const time = useTimeControl();
+  const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } =
+    useLocation(INITIAL_SHARE.observer);
+  const time = useTimeControl(INITIAL_SHARE.time);
   const connection = useConnection();
   const catalogue = useGroupCatalogue();
 
   // Which slice of the catalogue to track. Was a hardcoded ['stations'],
   // which is about twenty objects and routinely yields no passes at all.
-  const [groupIds, setGroupIds] = useState<string[]>(DEFAULT_GROUP_IDS);
+  const [groupIds, setGroupIds] = useState<string[]>(INITIAL_SHARE.groups ?? DEFAULT_GROUP_IDS);
   const groups = useMemo(() => normaliseGroups(groupIds, catalogue.groups), [groupIds, catalogue.groups]);
 
   const [passes, setPasses] = useState<Pass[]>([]);
@@ -224,6 +236,28 @@ function App() {
     };
   }, [observer, customTles]);
 
+  // Keep the address bar describing what is on screen, so copying it from the
+  // browser works as well as pressing the button. replaceState rather than
+  // pushState: scrubbing time would otherwise stack a history entry per tick
+  // and turn the back button into an undo log nobody asked for.
+  const shareState = useMemo(
+    () => ({
+      observer,
+      time: time.anchoredToNow && time.live ? null : time.displayTime,
+      groups,
+      satnum: selectedPass?.satnum ?? null,
+    }),
+    [observer, time.anchoredToNow, time.live, time.displayTime, groups, selectedPass]
+  );
+
+  useEffect(() => {
+    const query = encodeShareState(shareState);
+    const next = `${window.location.pathname}${query ? `?${query}` : ''}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) {
+      window.history.replaceState(null, '', next);
+    }
+  }, [shareState]);
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-space-800/80 sticky top-0 z-20 backdrop-blur-lg bg-space-950/70 print:hidden">
@@ -248,9 +282,9 @@ function App() {
         <ConnectionNotice {...connection} />
 
         <section className="flex flex-col gap-2 print:hidden" ref={skySectionRef}>
-          <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
             <h2 className="text-lg font-medium text-space-100">What's up right now</h2>
-            <p className="text-xs text-space-300 hidden sm:block">Interactive sky dome · your horizon</p>
+            <ShareLink state={shareState} pinned={shareState.time !== null} />
           </div>
           <GroupPicker
             selected={groupIds}

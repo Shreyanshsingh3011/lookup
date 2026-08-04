@@ -19,15 +19,24 @@ function loadStored(): Observer | null {
   return null;
 }
 
-export function useLocation() {
-  const [observer, setObserver] = useState<Observer>(() => loadStored() ?? DEFAULT_OBSERVER);
-  const [source, setSource] = useState<'default' | 'stored' | 'geolocation' | 'manual'>(() => (loadStored() ? 'stored' : 'default'));
+/**
+ * @param shared Location from a shared link, which outranks stored and default.
+ */
+export function useLocation(shared?: Observer | null) {
+  const [observer, setObserver] = useState<Observer>(() => shared ?? loadStored() ?? DEFAULT_OBSERVER);
+  const [source, setSource] = useState<'default' | 'stored' | 'geolocation' | 'manual' | 'shared'>(() =>
+    shared ? 'shared' : loadStored() ? 'stored' : 'default'
+  );
   const [geoStatus, setGeoStatus] = useState<'idle' | 'locating' | 'error'>('idle');
   const [geoError, setGeoError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Someone else's link should not quietly replace the location you saved.
+    // Opening a shared view shows you that sky; it does not move your home.
+    // The moment you pick a location yourself, that is stored as normal.
+    if (source === 'shared') return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(observer));
-  }, [observer]);
+  }, [observer, source]);
 
   const useGeolocation = useCallback(() => {
     if (!navigator.geolocation) {

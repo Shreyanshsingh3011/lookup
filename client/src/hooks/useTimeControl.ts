@@ -38,13 +38,19 @@ export interface TimeControl {
  * playing freezes the anchor and moves an offset instead, so satellite
  * positions can be previewed up to 24 hours ahead.
  */
-export function useTimeControl(): TimeControl {
-  const [anchor, setAnchor] = useState(() => Date.now());
+/**
+ * @param pinnedTo Instant from a shared link. Opening one lands on that moment
+ *   rather than on now, since the whole point of sharing a pass is the moment.
+ */
+export function useTimeControl(pinnedTo?: Date | null): TimeControl {
+  const [anchor, setAnchor] = useState(() => pinnedTo?.getTime() ?? Date.now());
   const [offsetMs, setOffsetMsState] = useState(0);
-  const [live, setLive] = useState(true);
+  const [live, setLive] = useState(!pinnedTo);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaybackSpeed>(60);
-  const [anchoredToNow, setAnchoredToNow] = useState(true);
+  // A shared instant is not "now", so the scrubber must not label offsets from
+  // it as "+2h from now" — that would be a lie about a time somebody else chose.
+  const [anchoredToNow, setAnchoredToNow] = useState(!pinnedTo);
 
   // Live mode: follow the real clock.
   useEffect(() => {
