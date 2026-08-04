@@ -41698,6 +41698,7 @@ var DEFAULT_PASS_OPTIONS = {
   // civil twilight
   coarseStepMinutes: 5,
   fineStepSeconds: 10,
+  horizonScanSeconds: 60,
   maxMagnitude: 5.5
 };
 function azToCompass(azDeg) {
@@ -41817,7 +41818,7 @@ function buildObserverContext(observer, opts, from, to) {
 }
 function computePassesForMany(tles, observer, options = {}) {
   const opts = { ...DEFAULT_PASS_OPTIONS, ...options };
-  const now = /* @__PURE__ */ new Date();
+  const now = opts.now ?? /* @__PURE__ */ new Date();
   const end = new Date(now.getTime() + opts.days * 24 * 60 * 60 * 1e3);
   const context = buildObserverContext(observer, opts, now, end);
   const passes = [];
@@ -41834,28 +41835,62 @@ function computePassesForMany(tles, observer, options = {}) {
   passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());
   return { passes, tooFaintCount, brightestRejectedMagnitude: brightest };
 }
+function elevationDegAt(satrec, observerGd, date) {
+  const pv = satellite.propagate(satrec, date);
+  if (!pv || !pv.position) return null;
+  const positionEcf = satellite.eciToEcf(pv.position, satellite.gstime(date));
+  const elevation = satellite.radiansToDegrees(satellite.ecfToLookAngles(observerGd, positionEcf).elevation);
+  return Number.isFinite(elevation) ? elevation : null;
+}
+function aboveHorizonSpans(satrec, observerGd, winStart, winEnd, coarseMs) {
+  const spans = [];
+  const pad = 2 * coarseMs;
+  let openedAt = null;
+  for (let t = winStart; t <= winEnd + coarseMs; t += coarseMs) {
+    const elevation = elevationDegAt(satrec, observerGd, new Date(Math.min(t, winEnd)));
+    const up = elevation !== null && elevation > 0;
+    if (up && openedAt === null) openedAt = t;
+    else if (!up && openedAt !== null) {
+      spans.push([Math.max(winStart, openedAt - pad), Math.min(winEnd, t + pad)]);
+      openedAt = null;
+    }
+  }
+  if (openedAt !== null) spans.push([Math.max(winStart, openedAt - pad), winEnd]);
+  const merged = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push(span);
+  }
+  return merged;
+}
 function passesForSatellite(tle, context, opts) {
   const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
   const { observerGd, darkWindows, sunAltitudeAt } = context;
   const passes = [];
   const rejected = [];
   const stepMs = opts.fineStepSeconds * 1e3;
+  const coarseMs = opts.horizonScanSeconds * 1e3;
   for (const [winStart, winEnd] of darkWindows) {
-    let current = null;
-    for (let t = winStart.getTime(); t <= winEnd.getTime(); t += stepMs) {
-      const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
-      if (!sample) continue;
-      const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
-      if (visible) {
-        if (!current) current = [];
-        current.push(sample);
-      } else if (current) {
-        finalizePass(current, tle, opts, passes, rejected, sample);
-        current = null;
+    const spans = coarseMs > 0 ? aboveHorizonSpans(satrec, observerGd, winStart.getTime(), winEnd.getTime(), coarseMs) : [[winStart.getTime(), winEnd.getTime()]];
+    for (const [spanStart, spanEnd] of spans) {
+      let current = null;
+      const gridStart = winStart.getTime() + Math.ceil((spanStart - winStart.getTime()) / stepMs) * stepMs;
+      for (let t = gridStart; t <= spanEnd; t += stepMs) {
+        const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
+        if (!sample) continue;
+        const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
+        if (visible) {
+          if (!current) current = [];
+          current.push(sample);
+        } else if (current) {
+          finalizePass(current, tle, opts, passes, rejected, sample);
+          current = null;
+        }
       }
-    }
-    if (current) {
-      finalizePass(current, tle, opts, passes, rejected, null);
+      if (current) {
+        finalizePass(current, tle, opts, passes, rejected, null);
+      }
     }
   }
   passes.sort((a, b) => new Date(a.start.time).getTime() - new Date(b.start.time).getTime());

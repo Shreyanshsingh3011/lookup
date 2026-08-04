@@ -127,6 +127,10 @@ export interface EarthImage {
   checkedAt: string;
   /** Last-Modified from the image host, when it sends one — the frame's real age. */
   frameTime: string | null;
+  /** How far round the equator the observer sits from this satellite's sub-point. */
+  observerSeparationDeg: number;
+  /** You are near the edge of this satellite's disk, so your region is distorted. */
+  nearLimb: boolean;
 }
 
 export interface EarthImageryResult {

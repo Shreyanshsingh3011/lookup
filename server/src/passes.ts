@@ -37,6 +37,21 @@ export interface PassOptions {
   coarseStepMinutes: number; // resolution for the darkness scan
   fineStepSeconds: number; // resolution for the pass scan inside dark windows
   /**
+   * Step for the cheap above-horizon pre-scan that decides where the fine scan
+   * runs at all. Must stay well below the shortest pass worth reporting: a pass
+   * peaking at the ten-degree cutoff is above the horizon for four minutes or
+   * more, so a minute leaves a wide margin. Set to 0 to fine-scan everything,
+   * which is what the equivalence test compares against.
+   */
+  horizonScanSeconds: number;
+  /**
+   * Instant the search starts from. Defaults to the real clock; overridable so
+   * a search can be reproduced exactly, which is the only way to compare two
+   * scanning strategies — otherwise each call samples a slightly different
+   * grid and every timestamp disagrees by however long the first run took.
+   */
+  now?: Date;
+  /**
    * Faintest peak magnitude still reported. Roughly the naked-eye limit under
    * suburban skies — without it, "visible passes" would include objects no
    * observer could actually pick out.
@@ -50,6 +65,7 @@ export const DEFAULT_PASS_OPTIONS: PassOptions = {
   sunAltitudeThresholdDeg: -6, // civil twilight
   coarseStepMinutes: 5,
   fineStepSeconds: 10,
+  horizonScanSeconds: 60,
   maxMagnitude: 5.5,
 };
 
@@ -294,7 +310,7 @@ export function computeVisiblePasses(
   options: Partial<PassOptions> = {}
 ): PassSearchResult {
   const opts: PassOptions = { ...DEFAULT_PASS_OPTIONS, ...options };
-  const now = new Date();
+  const now = opts.now ?? new Date();
   const end = new Date(now.getTime() + opts.days * 24 * 60 * 60 * 1000);
   return passesForSatellite(tle, buildObserverContext(observer, opts, now, end), opts);
 }
@@ -311,7 +327,7 @@ export function computePassesForMany(
   options: Partial<PassOptions> = {}
 ): PassSearchResult {
   const opts: PassOptions = { ...DEFAULT_PASS_OPTIONS, ...options };
-  const now = new Date();
+  const now = opts.now ?? new Date();
   const end = new Date(now.getTime() + opts.days * 24 * 60 * 60 * 1000);
   const context = buildObserverContext(observer, opts, now, end);
 
@@ -335,6 +351,71 @@ export function computePassesForMany(
   return { passes, tooFaintCount, brightestRejectedMagnitude: brightest };
 }
 
+/**
+ * Elevation only — no sun, no shadow, no magnitude.
+ *
+ * The coarse scan below asks one question of a great many instants ("is this
+ * thing above the horizon at all?"), and answering it does not need the solar
+ * geometry that dominates the cost of a full sample.
+ */
+function elevationDegAt(
+  satrec: satellite.SatRec,
+  observerGd: satellite.GeodeticLocation,
+  date: Date
+): number | null {
+  const pv = satellite.propagate(satrec, date);
+  if (!pv || !pv.position) return null;
+  const positionEcf = satellite.eciToEcf(pv.position, satellite.gstime(date));
+  const elevation = satellite.radiansToDegrees(satellite.ecfToLookAngles(observerGd, positionEcf).elevation);
+  return Number.isFinite(elevation) ? elevation : null;
+}
+
+/**
+ * Spans where the satellite is above the horizon, bracketed generously.
+ *
+ * A low-orbit satellite is above any given horizon for roughly a tenth of the
+ * time, so sampling every dark second at ten-second resolution spends about
+ * ninety percent of its effort on a satellite that is underground. This walks
+ * the window at a coarse step and returns only the stretches worth looking at
+ * closely, padded by two coarse steps either side so the fine scan always
+ * starts before the true rise and continues past the true set — which is what
+ * makes the two-stage result identical to scanning everything.
+ */
+function aboveHorizonSpans(
+  satrec: satellite.SatRec,
+  observerGd: satellite.GeodeticLocation,
+  winStart: number,
+  winEnd: number,
+  coarseMs: number
+): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const pad = 2 * coarseMs;
+  let openedAt: number | null = null;
+
+  for (let t = winStart; t <= winEnd + coarseMs; t += coarseMs) {
+    const elevation = elevationDegAt(satrec, observerGd, new Date(Math.min(t, winEnd)));
+    // A null reading means SGP4 declined; treat it as "not up" but do not let
+    // it split a span, since the fine scan skips those instants anyway.
+    const up = elevation !== null && elevation > 0;
+
+    if (up && openedAt === null) openedAt = t;
+    else if (!up && openedAt !== null) {
+      spans.push([Math.max(winStart, openedAt - pad), Math.min(winEnd, t + pad)]);
+      openedAt = null;
+    }
+  }
+  if (openedAt !== null) spans.push([Math.max(winStart, openedAt - pad), winEnd]);
+
+  // Merge spans whose padding made them overlap, so no instant is scanned twice.
+  const merged: Array<[number, number]> = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push(span);
+  }
+  return merged;
+}
+
 function passesForSatellite(
   tle: TleRecord,
   context: ObserverContext,
@@ -346,27 +427,44 @@ function passesForSatellite(
   const passes: Pass[] = [];
   const rejected: number[] = [];
   const stepMs = opts.fineStepSeconds * 1000;
+  const coarseMs = opts.horizonScanSeconds * 1000;
 
   for (const [winStart, winEnd] of darkWindows) {
-    let current: Sample[] | null = null;
+    const spans =
+      coarseMs > 0
+        ? aboveHorizonSpans(satrec, observerGd, winStart.getTime(), winEnd.getTime(), coarseMs)
+        : [[winStart.getTime(), winEnd.getTime()] as [number, number]];
 
-    for (let t = winStart.getTime(); t <= winEnd.getTime(); t += stepMs) {
-      const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
-      if (!sample) continue;
+    for (const [spanStart, spanEnd] of spans) {
+      let current: Sample[] | null = null;
 
-      const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
+      // Sample on the same grid the window would have used if it were scanned
+      // end to end. Starting each span wherever its padding happened to fall
+      // would shift every sample instant, and a pass peaking within a whisker
+      // of the ten-degree cutoff would then be reported or not depending on
+      // where the coarse scan opened the span — the same sky giving different
+      // answers for no physical reason.
+      const gridStart =
+        winStart.getTime() + Math.ceil((spanStart - winStart.getTime()) / stepMs) * stepMs;
 
-      if (visible) {
-        if (!current) current = [];
-        current.push(sample);
-      } else if (current) {
-        // This sample is why the pass ended, so it carries the reason.
-        finalizePass(current, tle, opts, passes, rejected, sample);
-        current = null;
+      for (let t = gridStart; t <= spanEnd; t += stepMs) {
+        const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
+        if (!sample) continue;
+
+        const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
+
+        if (visible) {
+          if (!current) current = [];
+          current.push(sample);
+        } else if (current) {
+          // This sample is why the pass ended, so it carries the reason.
+          finalizePass(current, tle, opts, passes, rejected, sample);
+          current = null;
+        }
       }
-    }
-    if (current) {
-      finalizePass(current, tle, opts, passes, rejected, null);
+      if (current) {
+        finalizePass(current, tle, opts, passes, rejected, null);
+      }
     }
   }
 

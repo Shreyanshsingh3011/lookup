@@ -1,0 +1,143 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import * as satellite from "satellite.js";
+import { parseTle, type TleRecord } from "./celestrak.js";
+import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
+import type { Observer } from "./types.js";
+
+/**
+ * The bundled element set is from early 2024, so SGP4 refuses to propagate it
+ * anywhere near the present and every scan comes back empty — which would make
+ * these tests pass by finding nothing. Rewriting the epoch to now gives real
+ * orbits to scan without needing the network.
+ */
+function checksum(line: string): string {
+  let sum = 0;
+  for (const c of line.slice(0, 68)) {
+    if (c >= "0" && c <= "9") sum += Number(c);
+    else if (c === "-") sum += 1;
+  }
+  return line.slice(0, 68) + (sum % 10);
+}
+
+function reEpoch(line1: string, when: Date): string {
+  const year = String(when.getUTCFullYear() % 100).padStart(2, "0");
+  const dayOfYear =
+    (when.getTime() - Date.UTC(when.getUTCFullYear(), 0, 1)) / 86_400_000 + 1;
+  return checksum(line1.slice(0, 18) + year + dayOfYear.toFixed(8).padStart(12, "0") + line1.slice(32));
+}
+
+function currentCatalogue(): TleRecord[] {
+  const now = new Date();
+  return parseTle(readFileSync(new URL("../elements.txt", import.meta.url), "utf8"))
+    .map((t) => ({ ...t, line1: reEpoch(t.line1, now) }))
+    .filter((t) => {
+      const rec = satellite.twoline2satrec(t.line1, t.line2);
+      return !rec.error && Boolean(satellite.propagate(rec, now));
+    });
+}
+
+const CATALOGUE = currentCatalogue();
+
+// Both scans must start from the same instant, or every sample lands on a
+// different grid and the comparison measures the clock rather than the code.
+const NOW = new Date();
+
+// Somewhere with real nights and plenty of overhead traffic.
+const OBSERVER: Observer = { latitude: 1.35, longitude: 103.8, elevation: 0 };
+
+test("the element fixture still gives something to scan", () => {
+  assert.ok(CATALOGUE.length > 5, `only ${CATALOGUE.length} objects propagate`);
+});
+
+test("the coarse pre-scan finds exactly the same passes as scanning everything", () => {
+  // This is the only thing that makes the optimisation legitimate. The cheap
+  // above-horizon scan exists to skip the ninety percent of the night the
+  // satellite spends underground; if it skipped even one real pass, the app
+  // would silently under-report and look merely "quiet" rather than broken.
+  const days = 3;
+  const exhaustive = computePassesForMany(CATALOGUE, OBSERVER, { days, horizonScanSeconds: 0, now: NOW });
+  const staged = computePassesForMany(CATALOGUE, OBSERVER, { days, now: NOW });
+
+  assert.ok(exhaustive.passes.length > 0, "the exhaustive scan must find passes to compare against");
+  assert.equal(
+    staged.passes.length,
+    exhaustive.passes.length,
+    `staged found ${staged.passes.length}, exhaustive found ${exhaustive.passes.length}`
+  );
+  assert.deepEqual(staged.passes, exhaustive.passes, "every field of every pass must match");
+  assert.equal(staged.tooFaintCount, exhaustive.tooFaintCount);
+  assert.equal(staged.brightestRejectedMagnitude, exhaustive.brightestRejectedMagnitude);
+});
+
+test("the pre-scan is what makes the search affordable", () => {
+  // The endpoint runs against a ~170-object catalogue inside a 30 second
+  // function limit, so the margin here is the difference between working and
+  // an intermittent timeout on a slower production CPU.
+  const days = 3;
+  const start = process.hrtime.bigint();
+  computePassesForMany(CATALOGUE, OBSERVER, { days, now: NOW });
+  const stagedMs = Number(process.hrtime.bigint() - start) / 1e6;
+
+  const exhaustiveStart = process.hrtime.bigint();
+  computePassesForMany(CATALOGUE, OBSERVER, { days, horizonScanSeconds: 0, now: NOW });
+  const exhaustiveMs = Number(process.hrtime.bigint() - exhaustiveStart) / 1e6;
+
+  assert.ok(
+    stagedMs * 2 < exhaustiveMs,
+    `staged ${stagedMs.toFixed(0)}ms vs exhaustive ${exhaustiveMs.toFixed(0)}ms — expected at least a 2x saving`
+  );
+});
+
+test("passes come back in time order and internally consistent", () => {
+  const { passes } = computePassesForMany(CATALOGUE, OBSERVER, { days: 3, now: NOW });
+  assert.ok(passes.length > 0);
+
+  for (let i = 1; i < passes.length; i++) {
+    assert.ok(
+      new Date(passes[i].start.time) >= new Date(passes[i - 1].start.time),
+      "passes must be sorted by start time"
+    );
+  }
+
+  for (const pass of passes) {
+    assert.ok(new Date(pass.end.time) >= new Date(pass.start.time), `${pass.name} ends before it starts`);
+    assert.ok(
+      pass.max.altitudeDeg >= DEFAULT_PASS_OPTIONS.minElevationDeg,
+      `${pass.name} peaked at ${pass.max.altitudeDeg}°, below the reporting cutoff`
+    );
+    assert.ok(
+      pass.max.altitudeDeg >= pass.start.altitudeDeg && pass.max.altitudeDeg >= pass.end.altitudeDeg,
+      `${pass.name} peaks lower than it starts or ends`
+    );
+    assert.ok(
+      pass.magnitude <= DEFAULT_PASS_OPTIONS.maxMagnitude,
+      `${pass.name} at magnitude ${pass.magnitude} is fainter than the cutoff`
+    );
+    assert.ok(pass.durationSeconds > 0, `${pass.name} has no duration`);
+    assert.ok(["set", "shadow", "daylight"].includes(pass.endReason));
+  }
+});
+
+test("the far north is handled in both its extremes", () => {
+  // Svalbard is the hard case at either end of the year: under the midnight sun
+  // there is no dark window at all, and in polar night the whole search range
+  // is one continuous dark window rather than a string of nights. Both used to
+  // be reached only in production.
+  const svalbard: Observer = { latitude: 78.22, longitude: 15.63, elevation: 0 };
+  const year = NOW.getUTCFullYear();
+
+  for (const [season, now] of [
+    ["midnight sun", new Date(Date.UTC(year + 1, 5, 21))],
+    ["polar night", new Date(Date.UTC(year + 1, 11, 21))],
+  ] as const) {
+    const result = computePassesForMany(CATALOGUE, svalbard, { days: 3, now });
+    assert.ok(Array.isArray(result.passes), `${season} must return a list`);
+    for (const pass of result.passes) {
+      assert.ok(Number.isFinite(pass.max.altitudeDeg), `${season}: non-finite elevation`);
+      assert.ok(Number.isFinite(pass.magnitude), `${season}: non-finite magnitude`);
+      assert.ok(pass.durationSeconds > 0, `${season}: zero-length pass`);
+    }
+  }
+});
