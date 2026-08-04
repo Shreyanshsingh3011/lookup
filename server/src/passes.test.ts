@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as satellite from "satellite.js";
 import { parseTle, type TleRecord } from "./celestrak.js";
-import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
+import {
+  computePassesForMany,
+  DEFAULT_PASS_OPTIONS,
+  MAX_SCANNED_SATELLITES,
+  rankForVisibility,
+  standardMagnitude,
+} from "./passes.js";
 import type { Observer } from "./types.js";
 
 /**
@@ -140,4 +146,39 @@ test("the far north is handled in both its extremes", () => {
       assert.ok(pass.durationSeconds > 0, `${season}: zero-length pass`);
     }
   }
+});
+
+test("the scan cap keeps the bright objects and drops the hopeless ones", () => {
+  // Selecting Starlink means asking about thousands of satellites. The cap has
+  // to be a ranking, not a truncation: chopping the list arbitrarily would drop
+  // the ISS because its catalogue number happened to sort late.
+  const filler: TleRecord[] = Array.from({ length: MAX_SCANNED_SATELLITES + 500 }, (_, i) => ({
+    name: `COSMOS 1234 DEB ${i}`,
+    satnum: String(90_000 + i),
+    line1: CATALOGUE[0].line1,
+    line2: CATALOGUE[0].line2,
+  }));
+  const station: TleRecord = { ...CATALOGUE[0], name: "ISS (ZARYA)", satnum: "25544" };
+  // Deliberately last, where a plain slice would lose it.
+  const oversized = [...filler, station];
+
+  const { scanned, skipped } = rankForVisibility(oversized);
+  assert.equal(scanned.length, MAX_SCANNED_SATELLITES);
+  assert.equal(skipped, oversized.length - MAX_SCANNED_SATELLITES);
+  assert.ok(
+    scanned.some((t) => t.satnum === "25544"),
+    "the brightest object in the catalogue must survive the cap"
+  );
+
+  // Under the cap nothing is touched at all.
+  const small = rankForVisibility([station, ...filler.slice(0, 10)]);
+  assert.equal(small.skipped, 0);
+  assert.deepEqual(small.scanned.map((t) => t.satnum), [station, ...filler.slice(0, 10)].map((t) => t.satnum));
+});
+
+test("the brightness ranking knows a station from a fragment", () => {
+  // The cap is only defensible if the ordering it uses is meaningful.
+  assert.ok(standardMagnitude("ISS (ZARYA)") < standardMagnitude("STARLINK-1234"));
+  assert.ok(standardMagnitude("SL-16 R/B") < standardMagnitude("COSMOS 1234 DEB"));
+  assert.ok(standardMagnitude("CZ-6A DEB") > standardMagnitude("HST"));
 });

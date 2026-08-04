@@ -48,7 +48,13 @@ export interface PassesResponse {
   maxMagnitude: number;
   source: TleSource;
   epoch: EpochSpan | null;
+  /** Objects actually scanned, after the cap. */
   satelliteCount: number;
+  /** Everything the chosen groups contain, before the cap. */
+  catalogueCount?: number;
+  /** Objects the cap ranked out as the faintest candidates and never scanned. */
+  notScannedCount?: number;
+  maxScannedSatellites?: number;
   passCount: number;
   /** Geometrically valid passes omitted for being fainter than the cutoff. */
   tooFaintCount: number;
@@ -67,6 +73,10 @@ export interface TleRecord {
 export interface TleResponse {
   group: string;
   count: number;
+  /** Everything in the group upstream, before any limit was applied. */
+  catalogueCount?: number;
+  /** Objects the limit ranked out as too faint to draw. */
+  omittedCount?: number;
   fetchedAt: string;
   source: TleSource;
   epoch: EpochSpan | null;
@@ -96,4 +106,21 @@ export interface CustomPassesResponse {
   brightestRejectedMagnitude: number | null;
   weather: { status: 'live' | 'cache' | 'unavailable'; error?: string };
   passes: Pass[];
+}
+
+export interface GroupCatalogueResponse {
+  groups: import('./lib/satelliteGroups').SatelliteGroup[];
+  /** Most objects a single pass search will scan, whatever is selected. */
+  maxScannedSatellites: number;
+}
+
+export interface SatelliteSearchResponse {
+  query: string;
+  count: number;
+  /** The upstream had more matches than were returned. */
+  truncated: boolean;
+  limit: number;
+  source: 'live' | 'cache';
+  epoch: EpochSpan | null;
+  tles: TleRecord[];
 }

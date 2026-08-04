@@ -1,11 +1,26 @@
 import express from "express";
 import cors from "cors";
 import * as satellite from "satellite.js";
-import { fetchSatelliteByCatnr, getTleGroup, TLE_GROUPS, type TleRecord, type TleSource } from "./celestrak.js";
+import {
+  fetchSatelliteByCatnr,
+  getTleGroup,
+  MIN_SEARCH_LENGTH,
+  SATELLITE_GROUPS,
+  SEARCH_RESULT_LIMIT,
+  searchSatellitesByName,
+  TLE_GROUPS,
+  type TleRecord,
+  type TleSource,
+} from "./celestrak.js";
 import { epochSpan, type EpochSpan } from "./elements.js";
 import { cloudCoverAt, getCloudForecast, type WeatherStatus } from "./weather.js";
 import { getAircraft } from "./aircraft.js";
-import { computePassesForMany, DEFAULT_PASS_OPTIONS } from "./passes.js";
+import {
+  computePassesForMany,
+  DEFAULT_PASS_OPTIONS,
+  MAX_SCANNED_SATELLITES,
+  rankForVisibility,
+} from "./passes.js";
 import type { Observer } from "./types.js";
 import { explainObject, parseExplainSubject } from "./explain.js";
 import { adviseOnOrbit, MISSION_TYPES, parseOrbitAdviceRequest } from "./orbitAdvice.js";
@@ -24,17 +39,62 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
+/**
+ * The catalogue the picker is built from.
+ *
+ * Served rather than duplicated in the client so adding a group is a one-file
+ * change, and so the two can never disagree about what a group id means — an
+ * id that appears in a shared permalink has to keep meaning the same thing.
+ */
+app.get("/api/groups", (_req, res) => {
+  res.json({ groups: SATELLITE_GROUPS, maxScannedSatellites: MAX_SCANNED_SATELLITES });
+});
+
+app.get("/api/satellites/search", async (req, res) => {
+  const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (query.length < MIN_SEARCH_LENGTH) {
+    res.status(400).json({
+      error: `Search needs at least ${MIN_SEARCH_LENGTH} characters — shorter queries match most of the catalogue.`,
+    });
+    return;
+  }
+  try {
+    const { tles, truncated, source, epoch } = await searchSatellitesByName(query);
+    res.json({ query, count: tles.length, truncated, limit: SEARCH_RESULT_LIMIT, source, epoch, tles });
+  } catch (err) {
+    // The upstream status code means nothing to someone typing a satellite
+    // name, so say what happened and point at the route that does not depend
+    // on search being up.
+    const detail = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error:
+        `Could not reach the catalogue to search for '${query}'. ` +
+        `If you know the NORAD catalog number you can still add it directly. (${detail})`,
+    });
+  }
+});
+
 app.get("/api/tle/:group", async (req, res) => {
   const { group } = req.params;
   if (!TLE_GROUPS[group]) {
     res.status(404).json({ error: `Unknown group '${group}'. Valid groups: ${Object.keys(TLE_GROUPS).join(", ")}` });
     return;
   }
+  // A group like Starlink is eight thousand objects — over a megabyte of JSON,
+  // and every one of them propagated in the browser on each frame of the sky
+  // dome. Callers that only intend to draw them say how many they can take, and
+  // the brightest are the ones kept, since the rest would be invisible anyway.
+  const requested = Number(req.query.limit);
+  const limit = Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : null;
+
   try {
-    const { tles, fetchedAt, source, epoch } = await getTleGroup(group);
+    const { tles: all, fetchedAt, source, epoch } = await getTleGroup(group);
+    const { scanned: tles, skipped } = limit ? rankForVisibility(all, limit) : { scanned: all, skipped: 0 };
     res.json({
       group,
       count: tles.length,
+      catalogueCount: all.length,
+      omittedCount: skipped,
       fetchedAt: new Date(fetchedAt).toISOString(),
       source,
       epoch,
@@ -115,10 +175,15 @@ app.get("/api/passes", async (req, res) => {
     const maxMagnitude =
       req.query.maxMag !== undefined ? Number(req.query.maxMag) : DEFAULT_PASS_OPTIONS.maxMagnitude;
 
+    // A group like Starlink is thousands of objects, which is minutes of
+    // compute inside a thirty-second function. Scan the brightest that fit and
+    // report the rest rather than truncating quietly or timing out.
+    const { scanned, skipped } = rankForVisibility(tles);
+
     // Shares one observer-context build (darkness windows, sun-altitude table)
     // across every satellite instead of recomputing it per object.
     const { passes, tooFaintCount, brightestRejectedMagnitude: brightestRejected } =
-      computePassesForMany(tles, observer, { days, minElevationDeg, maxMagnitude });
+      computePassesForMany(scanned, observer, { days, minElevationDeg, maxMagnitude });
 
     // Cloud cover is advisory: a forecast failure must not fail the prediction,
     // so this never rejects and passes simply carry a null when it is missing.
@@ -140,7 +205,12 @@ app.get("/api/passes", async (req, res) => {
       maxMagnitude,
       source,
       epoch,
-      satelliteCount: tles.length,
+      satelliteCount: scanned.length,
+      /** Everything the chosen groups contain, before the scan cap. */
+      catalogueCount: tles.length,
+      /** Objects dropped by the cap, ranked out as the faintest candidates. */
+      notScannedCount: skipped,
+      maxScannedSatellites: MAX_SCANNED_SATELLITES,
       passCount: passes.length,
       weather: { status: weatherStatus, error: weatherError },
       // Reported so an empty list can explain itself rather than looking broken.

@@ -1,49 +1,65 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 import {
+  CATEGORY_ORDER,
   DEFAULT_GROUP_IDS,
-  SATELLITE_GROUPS,
+  FALLBACK_GROUPS,
   describeGroups,
+  estimatedSize,
+  groupsByCategory,
   normaliseGroups,
+  type SatelliteGroup,
 } from './satelliteGroups';
 
-test('the default covers both the stations and the bright catalogue', () => {
-  // Celestrak's "visual" list does not contain the ISS — it lives in
-  // "stations" — so defaulting to either one alone leaves an obvious hole.
-  assert.ok(DEFAULT_GROUP_IDS.includes('stations'));
-  assert.ok(DEFAULT_GROUP_IDS.includes('visual'));
+const CATALOGUE: SatelliteGroup[] = [
+  { id: 'stations', label: 'Space stations', description: '', category: 'Easy to see', approximateSize: 30 },
+  { id: 'visual', label: 'Brightest objects', description: '', category: 'Easy to see', approximateSize: 160 },
+  { id: 'starlink', label: 'Starlink', description: '', category: 'Constellations', approximateSize: 8000 },
+  { id: 'gps-ops', label: 'GPS', description: '', category: 'Navigation', approximateSize: 32 },
+];
+
+test('an unknown group is dropped rather than passed through', () => {
+  // A shared link can name a group that has since been removed. Trusting it
+  // would turn someone else's stale bookmark into a 404 on the pass search.
+  assert.deepEqual(normaliseGroups(['visual', 'no-such-group'], CATALOGUE), ['visual']);
+  assert.deepEqual(normaliseGroups(['nonsense'], CATALOGUE), DEFAULT_GROUP_IDS);
 });
 
 test('clearing every group falls back rather than blanking the sky', () => {
-  // An empty selection would fetch nothing and read as a broken app.
-  assert.deepEqual(normaliseGroups([]), DEFAULT_GROUP_IDS);
-  assert.deepEqual(normaliseGroups(['nonsense']), DEFAULT_GROUP_IDS);
+  assert.deepEqual(normaliseGroups([], CATALOGUE), DEFAULT_GROUP_IDS);
+  // And the fallback itself must be selectable, or the fallback is a dead end.
+  assert.deepEqual(normaliseGroups(DEFAULT_GROUP_IDS, CATALOGUE), DEFAULT_GROUP_IDS);
 });
 
-test('a single valid group is respected', () => {
-  assert.deepEqual(normaliseGroups(['stations']), ['stations']);
-  assert.deepEqual(normaliseGroups(['visual']), ['visual']);
+test('the bundled fallback covers the defaults', () => {
+  // The picker renders from FALLBACK_GROUPS until the server answers. If the
+  // defaults were not in it, a first paint would show them as unselectable.
+  for (const id of DEFAULT_GROUP_IDS) {
+    assert.ok(FALLBACK_GROUPS.some((g) => g.id === id), `${id} missing from the fallback`);
+  }
+  assert.deepEqual(normaliseGroups(DEFAULT_GROUP_IDS), DEFAULT_GROUP_IDS);
 });
 
-test('unknown ids are dropped without discarding the valid ones', () => {
-  assert.deepEqual(normaliseGroups(['visual', 'not-a-group']), ['visual']);
+test('selections are described without turning into a list of twenty', () => {
+  assert.equal(describeGroups(['visual'], CATALOGUE), 'Brightest objects');
+  assert.equal(describeGroups(['stations', 'visual'], CATALOGUE), 'space stations and brightest objects');
+  assert.equal(describeGroups(['stations', 'visual', 'starlink', 'gps-ops'], CATALOGUE), '4 groups');
 });
 
-test('selection order is preserved, since it drives fetch order', () => {
-  assert.deepEqual(normaliseGroups(['visual', 'stations']), ['visual', 'stations']);
+test('the estimated size warns before an expensive pick, not after', () => {
+  assert.equal(estimatedSize(['stations', 'visual'], CATALOGUE), 190);
+  assert.equal(estimatedSize(['starlink'], CATALOGUE), 8000);
+  // Unknown ids contribute nothing rather than NaN, which would render as
+  // "NaN objects" next to a perfectly valid selection.
+  assert.equal(estimatedSize(['stations', 'ghost'], CATALOGUE), 30);
 });
 
-test('the description reads as a sentence fragment', () => {
-  assert.equal(describeGroups(['stations']), 'Space stations');
-  assert.equal(describeGroups(['stations', 'visual']), 'space stations and brightest objects');
-  assert.equal(describeGroups([]), 'space stations and brightest objects');
-});
-
-test('every offered group states how big it is', () => {
-  // The count is the whole basis for choosing, so a description without one
-  // leaves the user guessing at the cost of ticking a box.
-  for (const group of SATELLITE_GROUPS) {
-    assert.ok(group.id.length > 0 && group.label.length > 0);
-    assert.match(group.description, /\d/, `${group.id} should say roughly how many objects`);
+test('groups are grouped, and empty categories do not render', () => {
+  const grouped = groupsByCategory(CATALOGUE);
+  assert.deepEqual(grouped.map(([c]) => c), ['Easy to see', 'Constellations', 'Navigation']);
+  assert.deepEqual(grouped[0][1].map((g) => g.id), ['stations', 'visual']);
+  // Every category a group can claim must have somewhere to go.
+  for (const group of CATALOGUE) {
+    assert.ok(CATEGORY_ORDER.includes(group.category), `${group.category} has no position`);
   }
 });

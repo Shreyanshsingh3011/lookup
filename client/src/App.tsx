@@ -19,6 +19,7 @@ import { TimeScrubber } from './components/TimeScrubber';
 import { TransferWindows } from './components/TransferWindows';
 import { SkyDome } from './components/sky/SkyDome';
 import { useConnection } from './hooks/useConnection';
+import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
 import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
@@ -32,11 +33,12 @@ function App() {
   const { observer, source: locationSource, geoStatus, geoError, useGeolocation, setManualLocation } = useLocation();
   const time = useTimeControl();
   const connection = useConnection();
+  const catalogue = useGroupCatalogue();
 
   // Which slice of the catalogue to track. Was a hardcoded ['stations'],
   // which is about twenty objects and routinely yields no passes at all.
   const [groupIds, setGroupIds] = useState<string[]>(DEFAULT_GROUP_IDS);
-  const groups = useMemo(() => normaliseGroups(groupIds), [groupIds]);
+  const groups = useMemo(() => normaliseGroups(groupIds, catalogue.groups), [groupIds, catalogue.groups]);
 
   const [passes, setPasses] = useState<Pass[]>([]);
   const [passesLoading, setPassesLoading] = useState(true);
@@ -253,7 +255,9 @@ function App() {
           <GroupPicker
             selected={groupIds}
             onChange={setGroupIds}
+            catalogue={catalogue.groups}
             satelliteCount={tlesLoading ? null : tles.length}
+            maxScanned={catalogue.maxScanned}
           />
           <SkyDome
             tles={allTles}
@@ -291,7 +295,7 @@ function App() {
             <div>
               <h2 className="text-lg font-medium text-space-100">Upcoming visible passes</h2>
               <p className="text-xs text-space-300">
-                Next 10 days · {describeGroups(groups)}
+                Next 10 days · {describeGroups(groups, catalogue.groups)}
                 <span className="hidden sm:inline"> · click a pass for its sky track</span>
               </p>
             </div>
@@ -324,7 +328,7 @@ function App() {
             <div>
               <h2 className="text-lg font-medium text-space-100">Track a satellite of your own</h2>
               <p className="text-xs text-space-300">
-                {customPassesLoading ? 'Computing passes…' : 'By NORAD ID or a pasted TLE'}
+                {customPassesLoading ? 'Computing passes…' : 'Search by name, NORAD ID, or a pasted TLE'}
               </p>
             </div>
             {allTles.length > 0 && (

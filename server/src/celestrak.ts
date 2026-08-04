@@ -18,12 +18,207 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
-// Groups exposed to the frontend. Keys are our own route names, values are
-// the Celestrak GROUP query param.
+export type GroupCategory = "Easy to see" | "Constellations" | "Navigation" | "Earth & science" | "Recent";
+
+export interface CatalogueGroup {
+  /** Our route key. Kept stable — it appears in shared permalinks. */
+  id: string;
+  /** Celestrak's GROUP query parameter. */
+  celestrak: string;
+  label: string;
+  description: string;
+  category: GroupCategory;
+  /**
+   * Rough object count. Not authoritative — Celestrak's groups grow and shrink
+   * constantly — but enough to warn someone before they select eight thousand
+   * satellites, and to sort the picker so the useful ones come first.
+   */
+  approximateSize: number;
+}
+
+/**
+ * The slices of the catalogue this app will fetch.
+ *
+ * Celestrak publishes about a hundred groups. Most are of no use to someone
+ * standing outside looking up — a group of decayed analyst objects tells you
+ * nothing — so this is a curated set rather than a mirror, ordered by how
+ * likely you are to actually see one of its members.
+ *
+ * The very large groups are included because people ask for them by name, not
+ * because tracking eight thousand Starlinks is sensible; the pass search caps
+ * what it will scan and says so.
+ */
+export const SATELLITE_GROUPS: CatalogueGroup[] = [
+  {
+    id: "stations",
+    celestrak: "stations",
+    label: "Space stations",
+    description: "ISS, Tiangong and the vehicles visiting them",
+    category: "Easy to see",
+    approximateSize: 30,
+  },
+  {
+    id: "visual",
+    celestrak: "visual",
+    label: "Brightest objects",
+    description: "Celestrak's brightest ~150, mostly spent rocket bodies",
+    category: "Easy to see",
+    approximateSize: 160,
+  },
+  {
+    id: "amateur",
+    celestrak: "amateur",
+    label: "Amateur radio",
+    description: "Satellites you can work with a handheld and a bit of patience",
+    category: "Easy to see",
+    approximateSize: 100,
+  },
+  {
+    id: "starlink",
+    celestrak: "starlink",
+    label: "Starlink",
+    description: "The whole constellation — huge, and mostly too faint once on station",
+    category: "Constellations",
+    approximateSize: 8000,
+  },
+  {
+    id: "oneweb",
+    celestrak: "oneweb",
+    label: "OneWeb",
+    description: "Higher and dimmer than Starlink, but the trains are still visible",
+    category: "Constellations",
+    approximateSize: 650,
+  },
+  {
+    id: "iridium-next",
+    celestrak: "iridium-NEXT",
+    label: "Iridium NEXT",
+    description: "Successors to the flare-famous originals — these do not flare",
+    category: "Constellations",
+    approximateSize: 80,
+  },
+  {
+    id: "planet",
+    celestrak: "planet",
+    label: "Planet Labs",
+    description: "Small Earth-imaging craft in sun-synchronous orbits",
+    category: "Constellations",
+    approximateSize: 200,
+  },
+  {
+    id: "globalstar",
+    celestrak: "globalstar",
+    label: "Globalstar",
+    description: "Satellite phone and messaging relays",
+    category: "Constellations",
+    approximateSize: 50,
+  },
+  {
+    id: "gps-ops",
+    celestrak: "gps-ops",
+    label: "GPS",
+    description: "Operational US navigation satellites, 20,000 km up",
+    category: "Navigation",
+    approximateSize: 32,
+  },
+  {
+    id: "galileo",
+    celestrak: "galileo",
+    label: "Galileo",
+    description: "Europe's navigation constellation",
+    category: "Navigation",
+    approximateSize: 30,
+  },
+  {
+    id: "glo-ops",
+    celestrak: "glo-ops",
+    label: "GLONASS",
+    description: "Russia's navigation constellation",
+    category: "Navigation",
+    approximateSize: 25,
+  },
+  {
+    id: "beidou",
+    celestrak: "beidou",
+    label: "BeiDou",
+    description: "China's navigation constellation, part of it geostationary",
+    category: "Navigation",
+    approximateSize: 60,
+  },
+  {
+    id: "weather",
+    celestrak: "weather",
+    label: "Weather",
+    description: "Polar and geostationary meteorological satellites",
+    category: "Earth & science",
+    approximateSize: 70,
+  },
+  {
+    id: "noaa",
+    celestrak: "noaa",
+    label: "NOAA",
+    description: "The polar orbiters whose APT signals hobbyists decode",
+    category: "Earth & science",
+    approximateSize: 20,
+  },
+  {
+    id: "goes",
+    celestrak: "goes",
+    label: "GOES",
+    description: "Geostationary weather satellites — the Earth imagery source",
+    category: "Earth & science",
+    approximateSize: 30,
+  },
+  {
+    id: "resource",
+    celestrak: "resource",
+    label: "Earth resources",
+    description: "Landsat, Sentinel and other land-observation craft",
+    category: "Earth & science",
+    approximateSize: 60,
+  },
+  {
+    id: "science",
+    celestrak: "science",
+    label: "Science",
+    description: "Space telescopes and research spacecraft, Hubble among them",
+    category: "Earth & science",
+    approximateSize: 80,
+  },
+  {
+    id: "geodetic",
+    celestrak: "geodetic",
+    label: "Geodetic",
+    description: "Laser-ranged spheres used to measure the shape of the Earth",
+    category: "Earth & science",
+    approximateSize: 40,
+  },
+  {
+    id: "cubesat",
+    celestrak: "cubesat",
+    label: "CubeSats",
+    description: "Shoebox-sized craft — numerous, and almost all far too faint",
+    category: "Earth & science",
+    approximateSize: 1800,
+  },
+  {
+    id: "tle-new",
+    celestrak: "last-30-days",
+    label: "Launched recently",
+    description: "Everything catalogued in the last 30 days, still in early orbits",
+    category: "Recent",
+    approximateSize: 300,
+  },
+];
+
+/**
+ * Groups exposed to the frontend, as route key to Celestrak group.
+ *
+ * Derived from the catalogue above so the two cannot drift. The `brightest`
+ * alias predates the catalogue and is kept because it may sit in a bookmark.
+ */
 export const TLE_GROUPS: Record<string, string> = {
-  stations: "stations", // ISS, Tiangong, other crewed stations
-  visual: "visual", // ~100 brightest satellites by visual magnitude
-  starlink: "starlink",
+  ...Object.fromEntries(SATELLITE_GROUPS.map((g) => [g.id, g.celestrak])),
   brightest: "visual",
 };
 
@@ -233,4 +428,96 @@ export async function fetchSatelliteByCatnr(catnr: string): Promise<SingleTleRes
     }
     throw err;
   }
+}
+
+/**
+ * Find satellites by name.
+ *
+ * Delegated to Celestrak's own `NAME=` substring query rather than downloading
+ * groups and filtering them here. That matters: the alternative is pulling the
+ * whole active catalogue — some eleven thousand objects — on every keystroke to
+ * answer a question the upstream can answer directly, and it would still only
+ * search the groups this app happens to know about rather than all of them.
+ *
+ * Results are capped because a query like "starlink" matches thousands, and a
+ * search box that returns thousands has not answered anything.
+ */
+export const SEARCH_RESULT_LIMIT = 50;
+export const MIN_SEARCH_LENGTH = 3;
+
+export interface SearchResult {
+  tles: TleRecord[];
+  /** True when the upstream had more matches than were returned. */
+  truncated: boolean;
+  source: "live" | "cache" | "file";
+  epoch: EpochSpan | null;
+}
+
+const searchCache = new Map<string, CacheEntry>();
+const searchInFlight = new Map<string, Promise<TleRecord[]>>();
+
+async function fetchByName(query: string): Promise<TleRecord[]> {
+  const url = `${CELESTRAK_BASE}?NAME=${encodeURIComponent(query)}&FORMAT=tle`;
+  const res = await fetch(url, { headers: { "User-Agent": "lookup-satellite-tracker/0.1" } });
+  if (!res.ok) {
+    throw new Error(`Celestrak search failed for '${query}': ${res.status}`);
+  }
+  // A search matching nothing is a legitimate answer, not a failure, so an
+  // empty list is returned rather than thrown — unlike a group fetch, where
+  // empty means the upstream gave us something unusable.
+  return parseTle(await res.text());
+}
+
+export async function searchSatellitesByName(rawQuery: string): Promise<SearchResult> {
+  const query = rawQuery.trim();
+  const key = query.toLowerCase();
+
+  // An operator-supplied element file wins here for the same reason it wins for
+  // groups: whoever set TLE_FILE meant it, and an air-gapped deployment where
+  // every other feature works offline should not have search be the one thing
+  // that always fails.
+  const overridePath = elementFilePath();
+  if (overridePath) {
+    const local = parseTle(readElementFile(overridePath)).filter((t) =>
+      t.name.toLowerCase().includes(key)
+    );
+    return capSearch(local, "file");
+  }
+
+  const cached = searchCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return capSearch(cached.tles, "live");
+  }
+
+  let pending = searchInFlight.get(key);
+  if (!pending) {
+    pending = fetchByName(query)
+      .then((tles) => {
+        searchCache.set(key, { tles, fetchedAt: Date.now() });
+        return tles;
+      })
+      .finally(() => {
+        searchInFlight.delete(key);
+      });
+    searchInFlight.set(key, pending);
+  }
+
+  try {
+    return capSearch(await pending, "live");
+  } catch (err) {
+    // Serving a stale result beats serving an error: the catalogue barely
+    // changes, and the name a satellite had four hours ago is still its name.
+    if (cached) return capSearch(cached.tles, "cache");
+    throw err;
+  }
+}
+
+function capSearch(tles: TleRecord[], source: "live" | "cache" | "file"): SearchResult {
+  const capped = tles.slice(0, SEARCH_RESULT_LIMIT);
+  return {
+    tles: capped,
+    truncated: tles.length > capped.length,
+    source,
+    epoch: epochSpan(capped.map((t) => t.line1)),
+  };
 }

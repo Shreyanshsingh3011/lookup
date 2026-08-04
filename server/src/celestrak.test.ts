@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseTle } from "./celestrak.js";
+import { SATELLITE_GROUPS, TLE_GROUPS, parseTle } from "./celestrak.js";
 
 /**
  * Celestrak's gp.php serves CRLF line endings and pads the name line with
@@ -69,4 +69,38 @@ test("reads the NORAD id from the element line, not the name", () => {
   const records = parseTle(CRLF_RESPONSE);
   // Columns 3-7 of line 1 hold the catalog number.
   assert.equal(records[0].satnum, records[0].line1.slice(2, 7).trim());
+});
+
+test("the group catalogue is internally consistent", () => {
+  assert.ok(SATELLITE_GROUPS.length > 15, "the point of this was to stop being two groups");
+
+  const ids = new Set<string>();
+  for (const group of SATELLITE_GROUPS) {
+    assert.ok(!ids.has(group.id), `duplicate group id '${group.id}'`);
+    ids.add(group.id);
+    // Ids travel in shared permalinks, so they must be URL-safe and stable.
+    assert.match(group.id, /^[a-z0-9-]+$/, `group id '${group.id}' is not URL-safe`);
+    assert.ok(group.label.length > 0 && group.description.length > 0, `${group.id} is unlabelled`);
+    assert.ok(group.approximateSize > 0, `${group.id} claims a non-positive size`);
+    assert.ok(group.celestrak.length > 0, `${group.id} has no upstream group`);
+  }
+
+  // Every catalogue entry must be fetchable, and the legacy alias must survive
+  // because it may be sitting in someone's bookmark.
+  for (const group of SATELLITE_GROUPS) {
+    assert.equal(TLE_GROUPS[group.id], group.celestrak, `${group.id} missing from TLE_GROUPS`);
+  }
+  assert.equal(TLE_GROUPS.brightest, "visual", "the pre-catalogue alias must keep working");
+  assert.ok(TLE_GROUPS.stations && TLE_GROUPS.visual, "the defaults must still resolve");
+});
+
+test("the defaults are small enough to be worth defaulting to", () => {
+  // Whatever ships selected has to stay scannable without hitting the cap, or
+  // a first visit lands on a truncation notice.
+  const defaults = ["stations", "visual"];
+  const total = defaults.reduce(
+    (sum, id) => sum + SATELLITE_GROUPS.find((g) => g.id === id)!.approximateSize,
+    0
+  );
+  assert.ok(total < 500, `defaults come to about ${total} objects`);
 });

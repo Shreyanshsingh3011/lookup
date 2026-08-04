@@ -69,6 +69,36 @@ export const DEFAULT_PASS_OPTIONS: PassOptions = {
   maxMagnitude: 5.5,
 };
 
+/**
+ * Most objects a single pass search will scan.
+ *
+ * Selecting Starlink means asking about eight thousand satellites, and at
+ * roughly six milliseconds each over a ten-day search that is a minute of
+ * compute inside a thirty-second function. The cap is what stops a legitimate
+ * choice in the picker from becoming a gateway timeout.
+ */
+export const MAX_SCANNED_SATELLITES = 900;
+
+/**
+ * Trim a catalogue to what can be scanned, keeping the objects most likely to
+ * produce a visible pass.
+ *
+ * Truncating arbitrarily would be worse than useless — it would drop the ISS
+ * because its catalogue number sorted late. Ranking by the same brightness
+ * estimate the magnitude filter uses means the objects discarded are the ones
+ * that would have been rejected as too faint anyway.
+ */
+export function rankForVisibility(tles: TleRecord[], limit = MAX_SCANNED_SATELLITES): {
+  scanned: TleRecord[];
+  skipped: number;
+} {
+  if (tles.length <= limit) return { scanned: tles, skipped: 0 };
+  const byBrightness = [...tles].sort(
+    (a, b) => standardMagnitude(a.name) - standardMagnitude(b.name)
+  );
+  return { scanned: byBrightness.slice(0, limit), skipped: tles.length - limit };
+}
+
 export interface PassSearchResult {
   passes: Pass[];
   /** Geometrically valid passes rejected for being fainter than the cutoff. */
@@ -93,7 +123,7 @@ function azToCompass(azDeg: number): string {
  * magnitude star would have the app confidently list passes of things nobody
  * could ever see.
  */
-function standardMagnitude(name: string): number {
+export function standardMagnitude(name: string): number {
   const n = name.toUpperCase();
 
   if (n.includes("ZARYA") || /\bISS\b/.test(n)) return -1.8;

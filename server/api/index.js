@@ -35585,12 +35585,170 @@ function readElementFile(path5) {
 // src/celestrak.ts
 var CELESTRAK_BASE = "https://celestrak.org/NORAD/elements/gp.php";
 var CACHE_TTL_MS = 4 * 60 * 60 * 1e3;
+var SATELLITE_GROUPS = [
+  {
+    id: "stations",
+    celestrak: "stations",
+    label: "Space stations",
+    description: "ISS, Tiangong and the vehicles visiting them",
+    category: "Easy to see",
+    approximateSize: 30
+  },
+  {
+    id: "visual",
+    celestrak: "visual",
+    label: "Brightest objects",
+    description: "Celestrak's brightest ~150, mostly spent rocket bodies",
+    category: "Easy to see",
+    approximateSize: 160
+  },
+  {
+    id: "amateur",
+    celestrak: "amateur",
+    label: "Amateur radio",
+    description: "Satellites you can work with a handheld and a bit of patience",
+    category: "Easy to see",
+    approximateSize: 100
+  },
+  {
+    id: "starlink",
+    celestrak: "starlink",
+    label: "Starlink",
+    description: "The whole constellation \u2014 huge, and mostly too faint once on station",
+    category: "Constellations",
+    approximateSize: 8e3
+  },
+  {
+    id: "oneweb",
+    celestrak: "oneweb",
+    label: "OneWeb",
+    description: "Higher and dimmer than Starlink, but the trains are still visible",
+    category: "Constellations",
+    approximateSize: 650
+  },
+  {
+    id: "iridium-next",
+    celestrak: "iridium-NEXT",
+    label: "Iridium NEXT",
+    description: "Successors to the flare-famous originals \u2014 these do not flare",
+    category: "Constellations",
+    approximateSize: 80
+  },
+  {
+    id: "planet",
+    celestrak: "planet",
+    label: "Planet Labs",
+    description: "Small Earth-imaging craft in sun-synchronous orbits",
+    category: "Constellations",
+    approximateSize: 200
+  },
+  {
+    id: "globalstar",
+    celestrak: "globalstar",
+    label: "Globalstar",
+    description: "Satellite phone and messaging relays",
+    category: "Constellations",
+    approximateSize: 50
+  },
+  {
+    id: "gps-ops",
+    celestrak: "gps-ops",
+    label: "GPS",
+    description: "Operational US navigation satellites, 20,000 km up",
+    category: "Navigation",
+    approximateSize: 32
+  },
+  {
+    id: "galileo",
+    celestrak: "galileo",
+    label: "Galileo",
+    description: "Europe's navigation constellation",
+    category: "Navigation",
+    approximateSize: 30
+  },
+  {
+    id: "glo-ops",
+    celestrak: "glo-ops",
+    label: "GLONASS",
+    description: "Russia's navigation constellation",
+    category: "Navigation",
+    approximateSize: 25
+  },
+  {
+    id: "beidou",
+    celestrak: "beidou",
+    label: "BeiDou",
+    description: "China's navigation constellation, part of it geostationary",
+    category: "Navigation",
+    approximateSize: 60
+  },
+  {
+    id: "weather",
+    celestrak: "weather",
+    label: "Weather",
+    description: "Polar and geostationary meteorological satellites",
+    category: "Earth & science",
+    approximateSize: 70
+  },
+  {
+    id: "noaa",
+    celestrak: "noaa",
+    label: "NOAA",
+    description: "The polar orbiters whose APT signals hobbyists decode",
+    category: "Earth & science",
+    approximateSize: 20
+  },
+  {
+    id: "goes",
+    celestrak: "goes",
+    label: "GOES",
+    description: "Geostationary weather satellites \u2014 the Earth imagery source",
+    category: "Earth & science",
+    approximateSize: 30
+  },
+  {
+    id: "resource",
+    celestrak: "resource",
+    label: "Earth resources",
+    description: "Landsat, Sentinel and other land-observation craft",
+    category: "Earth & science",
+    approximateSize: 60
+  },
+  {
+    id: "science",
+    celestrak: "science",
+    label: "Science",
+    description: "Space telescopes and research spacecraft, Hubble among them",
+    category: "Earth & science",
+    approximateSize: 80
+  },
+  {
+    id: "geodetic",
+    celestrak: "geodetic",
+    label: "Geodetic",
+    description: "Laser-ranged spheres used to measure the shape of the Earth",
+    category: "Earth & science",
+    approximateSize: 40
+  },
+  {
+    id: "cubesat",
+    celestrak: "cubesat",
+    label: "CubeSats",
+    description: "Shoebox-sized craft \u2014 numerous, and almost all far too faint",
+    category: "Earth & science",
+    approximateSize: 1800
+  },
+  {
+    id: "tle-new",
+    celestrak: "last-30-days",
+    label: "Launched recently",
+    description: "Everything catalogued in the last 30 days, still in early orbits",
+    category: "Recent",
+    approximateSize: 300
+  }
+];
 var TLE_GROUPS = {
-  stations: "stations",
-  // ISS, Tiangong, other crewed stations
-  visual: "visual",
-  // ~100 brightest satellites by visual magnitude
-  starlink: "starlink",
+  ...Object.fromEntries(SATELLITE_GROUPS.map((g) => [g.id, g.celestrak])),
   brightest: "visual"
 };
 var cache = /* @__PURE__ */ new Map();
@@ -35711,6 +35869,58 @@ async function fetchSatelliteByCatnr(catnr) {
     }
     throw err;
   }
+}
+var SEARCH_RESULT_LIMIT = 50;
+var MIN_SEARCH_LENGTH = 3;
+var searchCache = /* @__PURE__ */ new Map();
+var searchInFlight = /* @__PURE__ */ new Map();
+async function fetchByName(query) {
+  const url = `${CELESTRAK_BASE}?NAME=${encodeURIComponent(query)}&FORMAT=tle`;
+  const res = await fetch(url, { headers: { "User-Agent": "lookup-satellite-tracker/0.1" } });
+  if (!res.ok) {
+    throw new Error(`Celestrak search failed for '${query}': ${res.status}`);
+  }
+  return parseTle(await res.text());
+}
+async function searchSatellitesByName(rawQuery) {
+  const query = rawQuery.trim();
+  const key = query.toLowerCase();
+  const overridePath = elementFilePath();
+  if (overridePath) {
+    const local = parseTle(readElementFile(overridePath)).filter(
+      (t) => t.name.toLowerCase().includes(key)
+    );
+    return capSearch(local, "file");
+  }
+  const cached = searchCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return capSearch(cached.tles, "live");
+  }
+  let pending = searchInFlight.get(key);
+  if (!pending) {
+    pending = fetchByName(query).then((tles) => {
+      searchCache.set(key, { tles, fetchedAt: Date.now() });
+      return tles;
+    }).finally(() => {
+      searchInFlight.delete(key);
+    });
+    searchInFlight.set(key, pending);
+  }
+  try {
+    return capSearch(await pending, "live");
+  } catch (err) {
+    if (cached) return capSearch(cached.tles, "cache");
+    throw err;
+  }
+}
+function capSearch(tles, source) {
+  const capped = tles.slice(0, SEARCH_RESULT_LIMIT);
+  return {
+    tles: capped,
+    truncated: tles.length > capped.length,
+    source,
+    epoch: epochSpan(capped.map((t) => t.line1))
+  };
 }
 
 // src/weather.ts
@@ -41701,6 +41911,14 @@ var DEFAULT_PASS_OPTIONS = {
   horizonScanSeconds: 60,
   maxMagnitude: 5.5
 };
+var MAX_SCANNED_SATELLITES = 900;
+function rankForVisibility(tles, limit2 = MAX_SCANNED_SATELLITES) {
+  if (tles.length <= limit2) return { scanned: tles, skipped: 0 };
+  const byBrightness = [...tles].sort(
+    (a, b) => standardMagnitude(a.name) - standardMagnitude(b.name)
+  );
+  return { scanned: byBrightness.slice(0, limit2), skipped: tles.length - limit2 };
+}
 function azToCompass(azDeg) {
   const idx = Math.round((azDeg % 360 + 360) % 360 / 22.5) % 16;
   return COMPASS[idx];
@@ -42488,17 +42706,43 @@ app.use(import_express.default.json());
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: (/* @__PURE__ */ new Date()).toISOString() });
 });
+app.get("/api/groups", (_req, res) => {
+  res.json({ groups: SATELLITE_GROUPS, maxScannedSatellites: MAX_SCANNED_SATELLITES });
+});
+app.get("/api/satellites/search", async (req, res) => {
+  const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (query.length < MIN_SEARCH_LENGTH) {
+    res.status(400).json({
+      error: `Search needs at least ${MIN_SEARCH_LENGTH} characters \u2014 shorter queries match most of the catalogue.`
+    });
+    return;
+  }
+  try {
+    const { tles, truncated, source, epoch } = await searchSatellitesByName(query);
+    res.json({ query, count: tles.length, truncated, limit: SEARCH_RESULT_LIMIT, source, epoch, tles });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    res.status(502).json({
+      error: `Could not reach the catalogue to search for '${query}'. If you know the NORAD catalog number you can still add it directly. (${detail})`
+    });
+  }
+});
 app.get("/api/tle/:group", async (req, res) => {
   const { group } = req.params;
   if (!TLE_GROUPS[group]) {
     res.status(404).json({ error: `Unknown group '${group}'. Valid groups: ${Object.keys(TLE_GROUPS).join(", ")}` });
     return;
   }
+  const requested = Number(req.query.limit);
+  const limit2 = Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : null;
   try {
-    const { tles, fetchedAt, source, epoch } = await getTleGroup(group);
+    const { tles: all, fetchedAt, source, epoch } = await getTleGroup(group);
+    const { scanned: tles, skipped } = limit2 ? rankForVisibility(all, limit2) : { scanned: all, skipped: 0 };
     res.json({
       group,
       count: tles.length,
+      catalogueCount: all.length,
+      omittedCount: skipped,
       fetchedAt: new Date(fetchedAt).toISOString(),
       source,
       epoch,
@@ -42567,7 +42811,8 @@ app.get("/api/passes", async (req, res) => {
       }
     }
     const maxMagnitude = req.query.maxMag !== void 0 ? Number(req.query.maxMag) : DEFAULT_PASS_OPTIONS.maxMagnitude;
-    const { passes, tooFaintCount, brightestRejectedMagnitude: brightestRejected } = computePassesForMany(tles, observer, { days, minElevationDeg, maxMagnitude });
+    const { scanned, skipped } = rankForVisibility(tles);
+    const { passes, tooFaintCount, brightestRejectedMagnitude: brightestRejected } = computePassesForMany(scanned, observer, { days, minElevationDeg, maxMagnitude });
     let weatherStatus = "unavailable";
     let weatherError;
     if (req.query.weather !== "0") {
@@ -42585,7 +42830,12 @@ app.get("/api/passes", async (req, res) => {
       maxMagnitude,
       source,
       epoch,
-      satelliteCount: tles.length,
+      satelliteCount: scanned.length,
+      /** Everything the chosen groups contain, before the scan cap. */
+      catalogueCount: tles.length,
+      /** Objects dropped by the cap, ranked out as the faintest candidates. */
+      notScannedCount: skipped,
+      maxScannedSatellites: MAX_SCANNED_SATELLITES,
       passCount: passes.length,
       weather: { status: weatherStatus, error: weatherError },
       // Reported so an empty list can explain itself rather than looking broken.

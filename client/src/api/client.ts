@@ -3,7 +3,16 @@ import type { StarlinkTrainsResponse } from '../lib/starlinkTrains';
 import type { EarthImageryResponse } from '../lib/earthImagery';
 import type { ExplainResult, ExplainSubject } from '../lib/explain';
 import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
-import type { CustomPassesResponse, Observer, PassesResponse, SingleTleResponse, TleRecord, TleResponse } from '../types';
+import type {
+  CustomPassesResponse,
+  GroupCatalogueResponse,
+  Observer,
+  PassesResponse,
+  SatelliteSearchResponse,
+  SingleTleResponse,
+  TleRecord,
+  TleResponse,
+} from '../types';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -26,8 +35,18 @@ export function fetchPasses(observer: Observer, opts: { groups?: string[]; days?
   return apiFetch<PassesResponse>(`/api/passes?${params.toString()}`);
 }
 
-export function fetchTles(group = 'stations'): Promise<TleResponse> {
-  return apiFetch<TleResponse>(`/api/tle/${encodeURIComponent(group)}`);
+/**
+ * Most objects the sky dome will draw from any one group.
+ *
+ * Every one is propagated in the browser on each frame, and a group like
+ * Starlink is eight thousand of them — over a megabyte of JSON before the
+ * first triangle is drawn. The server keeps the brightest, which for a naked-eye
+ * sky view is the only part that would have been visible anyway.
+ */
+export const SKY_DOME_LIMIT = 600;
+
+export function fetchTles(group = 'stations', limit = SKY_DOME_LIMIT): Promise<TleResponse> {
+  return apiFetch<TleResponse>(`/api/tle/${encodeURIComponent(group)}?limit=${limit}`);
 }
 
 export function fetchExplanation(subject: ExplainSubject): Promise<ExplainResult> {
@@ -97,4 +116,18 @@ export function fetchStarlinkTrains(observer: Observer, days = 5): Promise<Starl
  */
 export function fetchEarthImagery(longitudeDeg: number): Promise<EarthImageryResponse> {
   return apiFetch<EarthImageryResponse>(`/api/earth-imagery?lon=${encodeURIComponent(longitudeDeg)}`);
+}
+
+export function fetchGroupCatalogue(): Promise<GroupCatalogueResponse> {
+  return apiFetch<GroupCatalogueResponse>('/api/groups');
+}
+
+/**
+ * Search the catalogue by name.
+ *
+ * Answered by Celestrak's own name query rather than by filtering groups here,
+ * so it reaches objects in groups this app does not track at all.
+ */
+export function searchSatellites(query: string): Promise<SatelliteSearchResponse> {
+  return apiFetch<SatelliteSearchResponse>(`/api/satellites/search?q=${encodeURIComponent(query)}`);
 }
