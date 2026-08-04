@@ -17,6 +17,7 @@ import { SourceBanner } from './components/SourceBanner';
 import { StarlinkTrains } from './components/StarlinkTrains';
 import { WeatherNotice } from './components/CloudCover';
 import { TimeScrubber } from './components/TimeScrubber';
+import { Tonight } from './components/Tonight';
 import { TransferWindows } from './components/TransferWindows';
 /**
  * The 3D sky is the whole of three.js — about a megabyte before anything is
@@ -289,6 +290,8 @@ function App() {
       <main className="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-6">
         <SourceBanner source={dataSource} epoch={dataEpoch} />
         <ConnectionNotice {...connection} />
+
+        <Tonight observer={observer} passes={allPasses} displayTime={time.displayTime} />
 
         <section className="flex flex-col gap-2 print:hidden" ref={skySectionRef}>
           <div className="flex items-baseline justify-between gap-3 flex-wrap">
