@@ -20904,7 +20904,7 @@ var require_application = __commonJS({
     };
     app2.del = deprecate.function(app2.delete, "app.del: Use app.delete instead");
     app2.render = function render(name, options, callback) {
-      var cache6 = this.cache;
+      var cache7 = this.cache;
       var done = callback;
       var engines = this.engines;
       var opts = options;
@@ -20923,7 +20923,7 @@ var require_application = __commonJS({
         renderOptions.cache = this.enabled("view cache");
       }
       if (renderOptions.cache) {
-        view = cache6[name];
+        view = cache7[name];
       }
       if (!view) {
         var View2 = this.get("view");
@@ -20939,7 +20939,7 @@ var require_application = __commonJS({
           return done(err);
         }
         if (renderOptions.cache) {
-          cache6[name] = view;
+          cache7[name] = view;
         }
       }
       tryRender(view, renderOptions, done);
@@ -25259,7 +25259,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client2) {
   };
 }
 function createMiddlewareContext(options, client2) {
-  const cache6 = /* @__PURE__ */ new WeakMap();
+  const cache7 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -25269,10 +25269,10 @@ function createMiddlewareContext(options, client2) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options);
       }
-      let parsed = cache6.get(response);
+      let parsed = cache7.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options);
-        cache6.set(response, parsed);
+        cache7.set(response, parsed);
       }
       return parsed;
     }
@@ -38760,14 +38760,14 @@ function GravFromState(entry) {
   const grav = new body_grav_calc_t(state.tt, r, v, a);
   return new grav_sim_t(bary, grav);
 }
-function GetSegment(cache6, tt) {
+function GetSegment(cache7, tt) {
   const t0 = PlutoStateTable[0][0];
   if (tt < t0 || tt > PlutoStateTable[PLUTO_NUM_STATES - 1][0]) {
     return null;
   }
   const seg_index = ClampIndex((tt - t0) / PLUTO_TIME_STEP, PLUTO_NUM_STATES - 1);
-  if (!cache6[seg_index]) {
-    const seg = cache6[seg_index] = [];
+  if (!cache7[seg_index]) {
+    const seg = cache7[seg_index] = [];
     seg[0] = GravFromState(PlutoStateTable[seg_index]).grav;
     seg[PLUTO_NSTEPS - 1] = GravFromState(PlutoStateTable[seg_index + 1]).grav;
     let i;
@@ -38786,7 +38786,7 @@ function GetSegment(cache6, tt) {
       seg[i].a = seg[i].a.mul(1 - ramp).add(reverse[i].a.mul(ramp));
     }
   }
-  return cache6[seg_index];
+  return cache7[seg_index];
 }
 function CalcPlutoOneWay(entry, target_tt, dt) {
   let sim = GravFromState(entry);
@@ -42802,6 +42802,172 @@ async function getTransmitters(satnum) {
   }
 }
 
+// src/smallBodies.ts
+var SBDB_QUERY = "https://ssd-api.jpl.nasa.gov/sbdb_query.api";
+var CACHE_TTL_MS6 = 12 * 60 * 60 * 1e3;
+var FETCH_TIMEOUT_MS2 = 8e3;
+function julianToIso(jd) {
+  return new Date((jd - 24405875e-1) * 864e5).toISOString();
+}
+var BUILTIN_BODIES = [
+  {
+    id: "1",
+    name: "1 Ceres",
+    kind: "asteroid",
+    e: 0.0785,
+    q: 2.5489,
+    tp: "2026-03-25T00:00:00.000Z",
+    i: 10.588,
+    node: 80.26,
+    peri: 73.7,
+    absoluteMagnitude: 3.34,
+    slope: 0.12
+  },
+  {
+    id: "4",
+    name: "4 Vesta",
+    kind: "asteroid",
+    e: 0.0894,
+    q: 2.1517,
+    tp: "2025-12-22T00:00:00.000Z",
+    i: 7.142,
+    node: 103.71,
+    peri: 151.66,
+    absoluteMagnitude: 3.2,
+    slope: 0.32
+  },
+  {
+    id: "2",
+    name: "2 Pallas",
+    kind: "asteroid",
+    e: 0.2299,
+    q: 2.1319,
+    tp: "2026-06-06T00:00:00.000Z",
+    i: 34.925,
+    node: 172.92,
+    peri: 310.87,
+    absoluteMagnitude: 4.11,
+    slope: 0.11
+  },
+  {
+    id: "7",
+    name: "7 Iris",
+    kind: "asteroid",
+    e: 0.2299,
+    q: 1.8377,
+    tp: "2026-02-15T00:00:00.000Z",
+    i: 5.523,
+    node: 259.56,
+    peri: 145.29,
+    absoluteMagnitude: 5.51,
+    slope: 0.15
+  }
+];
+var cache6 = null;
+var inFlight5 = null;
+function parseRow(fields, row) {
+  const value = (name) => {
+    const index = fields.indexOf(name);
+    return index === -1 ? void 0 : row[index];
+  };
+  const num = (name) => {
+    const raw = value(name);
+    if (raw === null || raw === void 0 || raw === "") return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const e = num("e");
+  const q = num("q");
+  const tpJd = num("tp");
+  const i = num("i");
+  const node = num("om");
+  const peri = num("w");
+  if (e === null || q === null || tpJd === null || i === null || node === null || peri === null) {
+    return null;
+  }
+  if (e < 0 || q <= 0) return null;
+  const fullName = String(value("full_name") ?? value("pdes") ?? "").trim();
+  if (!fullName) return null;
+  const m1 = num("M1");
+  const k1 = num("K1");
+  const h = num("H");
+  const g = num("G");
+  const isComet = m1 !== null || /^[0-9]+P|^C\//.test(fullName);
+  return {
+    id: String(value("pdes") ?? fullName),
+    name: fullName,
+    kind: isComet ? "comet" : "asteroid",
+    e,
+    q,
+    tp: julianToIso(tpJd),
+    i,
+    node,
+    peri,
+    absoluteMagnitude: isComet ? m1 : h,
+    slope: isComet ? k1 : g
+  };
+}
+function parseSbdb(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  const { fields, data } = payload;
+  if (!Array.isArray(fields) || !Array.isArray(data)) return [];
+  const names = fields.map(String);
+  const out = [];
+  for (const row of data) {
+    if (!Array.isArray(row)) continue;
+    const parsed = parseRow(names, row);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+async function fetchFromJpl() {
+  const params = new URLSearchParams({
+    fields: "full_name,pdes,e,q,tp,i,om,w,H,G,M1,K1",
+    "sb-cdata": JSON.stringify({
+      AND: ["H|LT|11", "q|LT|4"]
+    }),
+    limit: "60"
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS2);
+  try {
+    const res = await fetch(`${SBDB_QUERY}?${params.toString()}`, {
+      headers: { "User-Agent": "lookup-satellite-tracker/0.1" },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`JPL returned ${res.status}`);
+    const parsed = parseSbdb(await res.json());
+    if (parsed.length === 0) throw new Error("JPL returned no usable element sets");
+    return parsed;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function getSmallBodies() {
+  if (cache6 && Date.now() - cache6.fetchedAt < CACHE_TTL_MS6) {
+    return { bodies: cache6.bodies, source: "live" };
+  }
+  if (!inFlight5) {
+    inFlight5 = fetchFromJpl().then((bodies) => {
+      cache6 = { bodies, fetchedAt: Date.now() };
+      return bodies;
+    }).finally(() => {
+      inFlight5 = null;
+    });
+  }
+  try {
+    return { bodies: await inFlight5, source: "live" };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    if (cache6) return { bodies: cache6.bodies, source: "cache" };
+    return {
+      bodies: BUILTIN_BODIES,
+      source: "builtin",
+      error: `Could not reach JPL's small-body database (${detail}).`
+    };
+  }
+}
+
 // src/index.ts
 var PORT = Number(process.env.PORT) || 3001;
 var app = (0, import_express.default)();
@@ -42855,6 +43021,9 @@ app.get("/api/tle/:group", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to fetch TLE data" });
   }
+});
+app.get("/api/small-bodies", async (_req, res) => {
+  res.json(await getSmallBodies());
 });
 app.get("/api/radio/:catnr", async (req, res) => {
   const { catnr } = req.params;

@@ -29,6 +29,7 @@ import { rateLimit } from "./rateLimit.js";
 import { findTrains } from "./starlink.js";
 import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 import { getTransmitters } from "./radio.js";
+import { getSmallBodies } from "./smallBodies.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -113,6 +114,16 @@ app.get("/api/tle/:group", async (req, res) => {
  * Doppler figures, which are computed from the orbit and do not depend on it,
  * can still be shown against a frequency the operator types in themselves.
  */
+/**
+ * Comets and asteroids bright enough to look for.
+ *
+ * Never fails: an unreachable JPL falls back to a few long-known asteroids and
+ * says so, rather than leaving the sky empty with no explanation.
+ */
+app.get("/api/small-bodies", async (_req, res) => {
+  res.json(await getSmallBodies());
+});
+
 app.get("/api/radio/:catnr", async (req, res) => {
   const { catnr } = req.params;
   if (!/^\d{1,9}$/.test(catnr)) {

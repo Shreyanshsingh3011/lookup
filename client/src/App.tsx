@@ -15,6 +15,7 @@ import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
 import { RadioPasses } from './components/RadioPasses';
 import { ShareLink } from './components/ShareLink';
+import { SmallBodies } from './components/SmallBodies';
 import { SourceBanner } from './components/SourceBanner';
 import { StarlinkTrains } from './components/StarlinkTrains';
 import { WeatherNotice } from './components/CloudCover';
@@ -360,6 +361,8 @@ function App() {
         <EarthView observer={observer} />
 
         <MeteorShowers observer={observer} displayTime={time.displayTime} />
+
+        <SmallBodies observer={observer} displayTime={time.displayTime} />
 
         <StarlinkTrains observer={observer} />
 

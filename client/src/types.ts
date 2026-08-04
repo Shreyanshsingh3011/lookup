@@ -142,3 +142,27 @@ export interface TransmitterResponse {
   source: 'live' | 'cache' | 'builtin' | 'unavailable';
   error?: string;
 }
+
+export interface SmallBodyRecord {
+  id: string;
+  name: string;
+  kind: 'comet' | 'asteroid';
+  e: number;
+  /** Perihelion distance, AU. */
+  q: number;
+  /** Time of perihelion passage, ISO. */
+  tp: string;
+  i: number;
+  node: number;
+  peri: number;
+  /** H for an asteroid, M1 for a comet. */
+  absoluteMagnitude: number | null;
+  /** G for an asteroid, K1 for a comet. */
+  slope: number | null;
+}
+
+export interface SmallBodyResponse {
+  bodies: SmallBodyRecord[];
+  source: 'live' | 'cache' | 'builtin';
+  error?: string;
+}

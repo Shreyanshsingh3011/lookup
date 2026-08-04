@@ -10,6 +10,7 @@ import type {
   PassesResponse,
   SatelliteSearchResponse,
   SingleTleResponse,
+  SmallBodyResponse,
   TleRecord,
   TleResponse,
   TransmitterResponse,
@@ -136,4 +137,9 @@ export function searchSatellites(query: string): Promise<SatelliteSearchResponse
 /** Amateur radio services for a satellite. Never rejects on an unreachable register. */
 export function fetchTransmitters(satnum: string): Promise<TransmitterResponse> {
   return apiFetch<TransmitterResponse>(`/api/radio/${encodeURIComponent(satnum)}`);
+}
+
+/** Comets and asteroids bright enough to look for. Never rejects. */
+export function fetchSmallBodies(): Promise<SmallBodyResponse> {
+  return apiFetch<SmallBodyResponse>('/api/small-bodies');
 }
