@@ -20904,7 +20904,7 @@ var require_application = __commonJS({
     };
     app2.del = deprecate.function(app2.delete, "app.del: Use app.delete instead");
     app2.render = function render(name, options, callback) {
-      var cache5 = this.cache;
+      var cache6 = this.cache;
       var done = callback;
       var engines = this.engines;
       var opts = options;
@@ -20923,7 +20923,7 @@ var require_application = __commonJS({
         renderOptions.cache = this.enabled("view cache");
       }
       if (renderOptions.cache) {
-        view = cache5[name];
+        view = cache6[name];
       }
       if (!view) {
         var View2 = this.get("view");
@@ -20939,7 +20939,7 @@ var require_application = __commonJS({
           return done(err);
         }
         if (renderOptions.cache) {
-          cache5[name] = view;
+          cache6[name] = view;
         }
       }
       tryRender(view, renderOptions, done);
@@ -25259,7 +25259,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client2) {
   };
 }
 function createMiddlewareContext(options, client2) {
-  const cache5 = /* @__PURE__ */ new WeakMap();
+  const cache6 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -25269,10 +25269,10 @@ function createMiddlewareContext(options, client2) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options);
       }
-      let parsed = cache5.get(response);
+      let parsed = cache6.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options);
-        cache5.set(response, parsed);
+        cache6.set(response, parsed);
       }
       return parsed;
     }
@@ -38760,14 +38760,14 @@ function GravFromState(entry) {
   const grav = new body_grav_calc_t(state.tt, r, v, a);
   return new grav_sim_t(bary, grav);
 }
-function GetSegment(cache5, tt) {
+function GetSegment(cache6, tt) {
   const t0 = PlutoStateTable[0][0];
   if (tt < t0 || tt > PlutoStateTable[PLUTO_NUM_STATES - 1][0]) {
     return null;
   }
   const seg_index = ClampIndex((tt - t0) / PLUTO_TIME_STEP, PLUTO_NUM_STATES - 1);
-  if (!cache5[seg_index]) {
-    const seg = cache5[seg_index] = [];
+  if (!cache6[seg_index]) {
+    const seg = cache6[seg_index] = [];
     seg[0] = GravFromState(PlutoStateTable[seg_index]).grav;
     seg[PLUTO_NSTEPS - 1] = GravFromState(PlutoStateTable[seg_index + 1]).grav;
     let i;
@@ -38786,7 +38786,7 @@ function GetSegment(cache5, tt) {
       seg[i].a = seg[i].a.mul(1 - ramp).add(reverse[i].a.mul(ramp));
     }
   }
-  return cache5[seg_index];
+  return cache6[seg_index];
 }
 function CalcPlutoOneWay(entry, target_tt, dt) {
   let sim = GravFromState(entry);
@@ -42698,6 +42698,110 @@ async function getEarthImagery(longitudeDeg) {
   return result;
 }
 
+// src/radio.ts
+var SATNOGS_BASE = "https://db.satnogs.org/api/transmitters/";
+var CACHE_TTL_MS5 = 24 * 60 * 60 * 1e3;
+var FETCH_TIMEOUT_MS = 6e3;
+var BUILTIN = {
+  "25544": [
+    {
+      description: "APRS / packet digipeater",
+      uplinkHz: 145825e3,
+      downlinkHz: 145825e3,
+      mode: "FM AFSK 1k2",
+      alive: true,
+      type: "Transceiver"
+    },
+    {
+      description: "SSTV downlink",
+      uplinkHz: null,
+      downlinkHz: 1458e5,
+      mode: "FM SSTV",
+      alive: true,
+      type: "Transmitter"
+    },
+    {
+      description: "Voice repeater (67.0 Hz tone)",
+      uplinkHz: 14599e4,
+      downlinkHz: 4378e5,
+      mode: "FM",
+      alive: true,
+      type: "Transponder"
+    }
+  ]
+};
+var cache5 = /* @__PURE__ */ new Map();
+var inFlight4 = /* @__PURE__ */ new Map();
+function parseSatnogs(payload) {
+  if (!Array.isArray(payload)) return [];
+  const out = [];
+  for (const raw of payload) {
+    if (!raw || typeof raw !== "object") continue;
+    const uplinkHz = Number.isFinite(raw.uplink_low) ? Number(raw.uplink_low) : null;
+    const downlinkHz = Number.isFinite(raw.downlink_low) ? Number(raw.downlink_low) : null;
+    if (uplinkHz === null && downlinkHz === null) continue;
+    out.push({
+      description: typeof raw.description === "string" && raw.description ? raw.description : "Unnamed service",
+      uplinkHz,
+      downlinkHz,
+      mode: typeof raw.mode === "string" ? raw.mode : null,
+      // The register marks dead transmitters rather than deleting them, which
+      // is useful: "this used to work" beats an unexplained absence.
+      alive: raw.alive !== false && raw.status !== "dead",
+      type: typeof raw.type === "string" ? raw.type : null
+    });
+  }
+  return out.sort((a, b) => {
+    if (a.alive !== b.alive) return a.alive ? -1 : 1;
+    return (a.downlinkHz ?? Infinity) - (b.downlinkHz ?? Infinity);
+  });
+}
+async function fetchFromSatnogs(satnum) {
+  const url = `${SATNOGS_BASE}?satellite__norad_cat_id=${encodeURIComponent(satnum)}&format=json`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "lookup-satellite-tracker/0.1" },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`SatNOGS returned ${res.status}`);
+    return parseSatnogs(await res.json());
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function getTransmitters(satnum) {
+  const cached = cache5.get(satnum);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS5) {
+    return { satnum, transmitters: cached.transmitters, source: "live" };
+  }
+  let pending = inFlight4.get(satnum);
+  if (!pending) {
+    pending = fetchFromSatnogs(satnum).then((transmitters) => {
+      cache5.set(satnum, { transmitters, fetchedAt: Date.now() });
+      return transmitters;
+    }).finally(() => {
+      inFlight4.delete(satnum);
+    });
+    inFlight4.set(satnum, pending);
+  }
+  try {
+    const transmitters = await pending;
+    return { satnum, transmitters, source: "live" };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    if (cached) return { satnum, transmitters: cached.transmitters, source: "cache" };
+    if (BUILTIN[satnum]) return { satnum, transmitters: BUILTIN[satnum], source: "builtin" };
+    return {
+      satnum,
+      transmitters: [],
+      source: "unavailable",
+      error: `Could not reach the frequency register (${detail}).`
+    };
+  }
+}
+
 // src/index.ts
 var PORT = Number(process.env.PORT) || 3001;
 var app = (0, import_express.default)();
@@ -42751,6 +42855,14 @@ app.get("/api/tle/:group", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to fetch TLE data" });
   }
+});
+app.get("/api/radio/:catnr", async (req, res) => {
+  const { catnr } = req.params;
+  if (!/^\d{1,9}$/.test(catnr)) {
+    res.status(400).json({ error: "NORAD catalog number must be numeric." });
+    return;
+  }
+  res.json(await getTransmitters(catnr));
 });
 app.get("/api/tle/satellite/:catnr", async (req, res) => {
   const { catnr } = req.params;

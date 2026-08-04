@@ -12,6 +12,7 @@ import type {
   SingleTleResponse,
   TleRecord,
   TleResponse,
+  TransmitterResponse,
 } from '../types';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -130,4 +131,9 @@ export function fetchGroupCatalogue(): Promise<GroupCatalogueResponse> {
  */
 export function searchSatellites(query: string): Promise<SatelliteSearchResponse> {
   return apiFetch<SatelliteSearchResponse>(`/api/satellites/search?q=${encodeURIComponent(query)}`);
+}
+
+/** Amateur radio services for a satellite. Never rejects on an unreachable register. */
+export function fetchTransmitters(satnum: string): Promise<TransmitterResponse> {
+  return apiFetch<TransmitterResponse>(`/api/radio/${encodeURIComponent(satnum)}`);
 }

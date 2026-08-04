@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "vercel-build": "node scripts/vercel-build.mjs",
     "start": "node dist/index.js",
-    "test": "node --import tsx --test src/celestrak.test.ts src/elements.test.ts src/weather.test.ts src/explain.test.ts src/orbitAdvice.test.ts src/aircraft.test.ts src/starlink.test.ts src/earthImagery.test.ts src/passes.test.ts",
+    "test": "node --import tsx --test src/celestrak.test.ts src/elements.test.ts src/weather.test.ts src/explain.test.ts src/orbitAdvice.test.ts src/aircraft.test.ts src/starlink.test.ts src/earthImagery.test.ts src/passes.test.ts src/radio.test.ts",
     "check:live": "tsx src/check-live.ts",
     "check:explain": "tsx src/check-explain.ts",
     "check:orbit-advice": "tsx src/check-orbit-advice.ts"

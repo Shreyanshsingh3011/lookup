@@ -12,6 +12,7 @@ import { MeteorShowers } from './components/MeteorShowers';
 import { OrbitAdvisor } from './components/OrbitAdvisor';
 import { PassDetail } from './components/PassDetail';
 import { PassTable } from './components/PassTable';
+import { RadioPasses } from './components/RadioPasses';
 import { ShareLink } from './components/ShareLink';
 import { SourceBanner } from './components/SourceBanner';
 import { StarlinkTrains } from './components/StarlinkTrains';
@@ -391,6 +392,8 @@ function App() {
           </div>
           <AddSatellite customTles={customTles} onAdd={addCustomSatellite} onRemove={removeCustomSatellite} />
         </section>
+
+        <RadioPasses tles={allTles} observer={observer} displayTime={time.displayTime} />
 
         <section className="print:hidden">
           <div className="flex items-baseline justify-between mb-3">

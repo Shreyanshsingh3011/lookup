@@ -28,6 +28,7 @@ import { aiAvailable } from "./ai.js";
 import { rateLimit } from "./rateLimit.js";
 import { findTrains } from "./starlink.js";
 import { getEarthImagery, probeCandidates } from "./earthImagery.js";
+import { getTransmitters } from "./radio.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -103,6 +104,22 @@ app.get("/api/tle/:group", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to fetch TLE data" });
   }
+});
+
+/**
+ * Amateur radio services for a satellite.
+ *
+ * Never fails the request: an unreachable register reports itself so the
+ * Doppler figures, which are computed from the orbit and do not depend on it,
+ * can still be shown against a frequency the operator types in themselves.
+ */
+app.get("/api/radio/:catnr", async (req, res) => {
+  const { catnr } = req.params;
+  if (!/^\d{1,9}$/.test(catnr)) {
+    res.status(400).json({ error: "NORAD catalog number must be numeric." });
+    return;
+  }
+  res.json(await getTransmitters(catnr));
 });
 
 app.get("/api/tle/satellite/:catnr", async (req, res) => {

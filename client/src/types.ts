@@ -124,3 +124,21 @@ export interface SatelliteSearchResponse {
   epoch: EpochSpan | null;
   tles: TleRecord[];
 }
+
+export interface Transmitter {
+  description: string;
+  /** Hz, or null for a service that only goes one way. */
+  uplinkHz: number | null;
+  downlinkHz: number | null;
+  mode: string | null;
+  /** Whether the register believes this service still works. */
+  alive: boolean;
+  type: string | null;
+}
+
+export interface TransmitterResponse {
+  satnum: string;
+  transmitters: Transmitter[];
+  source: 'live' | 'cache' | 'builtin' | 'unavailable';
+  error?: string;
+}
