@@ -150,9 +150,24 @@ export function DebrisScreen({
                   </span>
                 </div>
                 <p className="text-[11px] text-space-300 leading-relaxed mt-0.5">{cloud.event}</p>
+                {/* Two different numbers, and saying which is which matters:
+                    the peak is history, the live count is what is still up
+                    there. Showing the peak alone read as the present and
+                    overstated every cloud — Cosmos 1408 by five hundred fold. */}
                 <p className="text-[11px] text-space-400 mt-1">
-                  about {cloud.approximateCount.toLocaleString()} catalogued fragments, spread from{' '}
-                  {cloud.altitudeBandKm[0]} to {cloud.altitudeBandKm[1].toLocaleString()} km
+                  {openCloud?.cloud.id === cloud.id ? (
+                    <>
+                      <span className="text-amber-glow">
+                        {openCloud.count.toLocaleString()} still catalogued
+                      </span>{' '}
+                      of about {cloud.peakCatalogued.toLocaleString()} at its peak
+                    </>
+                  ) : (
+                    <>about {cloud.peakCatalogued.toLocaleString()} fragments catalogued at its peak</>
+                  )}
+                  , spread from {cloud.altitudeBandKm[0]} to{' '}
+                  {cloud.altitudeBandKm[1].toLocaleString()} km. Drag has been removing them from the
+                  bottom up ever since.
                 </p>
               </div>
               <button

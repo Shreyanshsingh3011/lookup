@@ -177,7 +177,8 @@ export interface DebrisCloud {
   event: string;
   eventDate: string;
   parentNorad: string | null;
-  approximateCount: number;
+  /** Historical peak, not the current population. See server/src/debris.ts. */
+  peakCatalogued: number;
   altitudeBandKm: [number, number];
 }
 

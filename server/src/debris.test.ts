@@ -111,7 +111,7 @@ test("every named cloud is actually fetchable", () => {
       `${cloud.label} names a group the fetcher does not know`
     );
     assert.match(cloud.id, /^[a-z0-9-]+$/, `${cloud.id} is not URL-safe, and ids go in permalinks`);
-    assert.ok(cloud.approximateCount > 0 && cloud.event.length > 0, `${cloud.label} is under-described`);
+    assert.ok(cloud.peakCatalogued > 0 && cloud.event.length > 0, `${cloud.label} is under-described`);
     assert.ok(!Number.isNaN(Date.parse(cloud.eventDate)), `${cloud.label} has an unparseable date`);
     const [low, high] = cloud.altitudeBandKm;
     assert.ok(low > 0 && high > low, `${cloud.label} has a nonsense altitude band`);
@@ -225,4 +225,53 @@ test("no derelict claims a catalogue number belonging to something else", () => 
   // The destroyed parent of the 2009 collision must not be listed as an intact
   // object, whatever its number.
   assert.ok(!NOTABLE_DERELICTS.some((d) => /cosmos 2251/i.test(d.label)));
+});
+
+/**
+ * The peak count is history, and every cloud has shrunk since.
+ *
+ * Measured against the live catalogue on 2026-08-05, via production:
+ *
+ *   Fengyun-1C    3400 -> 1932
+ *   Cosmos 2251   1700 ->  594
+ *   Iridium 33     630 ->  111
+ *   Cosmos 1408   1500 ->    3
+ *
+ * The app previously showed the left-hand column as though it were the right,
+ * which overstated the population by 2.7x overall and by five hundred fold for
+ * Cosmos 1408 — a 2021 test into orbits low enough that drag has taken almost
+ * all of it back already. This test exists so the field's meaning cannot drift
+ * back to being read as current: a peak below an observed live count would
+ * mean the two have been confused again.
+ */
+test("peak fragment counts are consistent with the live populations observed in production", () => {
+  const observed: Record<string, number> = {
+    "fengyun-1c": 1932,
+    "cosmos-2251": 594,
+    "iridium-33": 111,
+    "cosmos-1408": 3,
+  };
+
+  for (const cloud of DEBRIS_CLOUDS) {
+    const live = observed[cloud.id];
+    assert.ok(live !== undefined, `${cloud.id} has no observed live count recorded`);
+    assert.ok(
+      cloud.peakCatalogued >= live,
+      `${cloud.label}: peak ${cloud.peakCatalogued} is below the observed live count ${live}, ` +
+        `which means the field is being used as a current population again`
+    );
+  }
+});
+
+test("a cloud's altitude band is consistent with how much of it survives", () => {
+  // Not a coincidence worth leaving unstated: the cloud that has almost
+  // entirely gone is the one whose band starts lowest and ends lowest.
+  const cosmos1408 = DEBRIS_CLOUDS.find((c) => c.id === "cosmos-1408");
+  const fengyun = DEBRIS_CLOUDS.find((c) => c.id === "fengyun-1c");
+  assert.ok(cosmos1408 && fengyun);
+
+  assert.ok(
+    cosmos1408.altitudeBandKm[1] < fengyun.altitudeBandKm[1],
+    "Cosmos 1408 should reach lower than Fengyun-1C, which is why so little of it is left"
+  );
 });

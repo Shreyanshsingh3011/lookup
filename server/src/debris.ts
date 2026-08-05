@@ -94,8 +94,21 @@ export interface DebrisCloud {
   eventDate: string;
   /** Catalogue number of the object that broke up, where it still exists. */
   parentNorad: string | null;
-  /** Rough number of catalogued fragments, for warning before an expensive load. */
-  approximateCount: number;
+  /**
+   * Fragments catalogued in the years after the event — a historical figure,
+   * not a current one, and the two differ by a lot.
+   *
+   * Drag removes fragments continuously, fastest from the lowest orbits, so a
+   * cloud shrinks from the bottom up. Measured against the live catalogue on
+   * 2026-08-05: Fengyun-1C 3400 -> 1932, Cosmos 2251 1700 -> 594, Iridium 33
+   * 630 -> 111, and Cosmos 1408 1500 -> 3, that last one being a 2021 test
+   * into orbits low enough that almost all of it is already back down.
+   *
+   * So this must never be presented as "what is up there". It is only here to
+   * warn about the size of the fetch before making it; the live count comes
+   * back with the fragments and is the number to show.
+   */
+  peakCatalogued: number;
   /** Typical altitude band of the cloud, km. */
   altitudeBandKm: [number, number];
 }
@@ -116,7 +129,7 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
       "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
     eventDate: "2007-01-11",
     parentNorad: null,
-    approximateCount: 3400,
+    peakCatalogued: 3400,
     altitudeBandKm: [200, 3800],
   },
   {
@@ -127,7 +140,7 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
       "A derelict Russian communications satellite collided with the working Iridium 33 — the first accidental collision between two intact satellites.",
     eventDate: "2009-02-10",
     parentNorad: null,
-    approximateCount: 1700,
+    peakCatalogued: 1700,
     altitudeBandKm: [200, 1700],
   },
   {
@@ -137,7 +150,7 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
     eventDate: "2009-02-10",
     parentNorad: null,
-    approximateCount: 630,
+    peakCatalogued: 630,
     altitudeBandKm: [200, 1400],
   },
   {
@@ -148,7 +161,7 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
       "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
     eventDate: "2021-11-15",
     parentNorad: null,
-    approximateCount: 1500,
+    peakCatalogued: 1500,
     altitudeBandKm: [200, 1100],
   },
 ];
