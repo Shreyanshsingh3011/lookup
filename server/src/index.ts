@@ -31,7 +31,14 @@ import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 import { getTransmitters } from "./radio.js";
 import { getSmallBodies } from "./smallBodies.js";
 import { getSatcatForGroup, isDerelictByStatus, toAlpha5 } from "./satcat.js";
-import { credentialsConfigured, getSpaceTrackDebris } from "./spacetrack.js";
+import {
+  catalogueFacets,
+  credentialsConfigured,
+  getFullCatalogue,
+  getSpaceTrackDebris,
+  searchCatalogue,
+  SEARCH_LIMIT,
+} from "./spacetrack.js";
 import { buildRouteIndex } from "./routes.js";
 import {
   classify,
@@ -241,6 +248,53 @@ app.get("/api/spacetrack/debris", async (req, res) => {
     requestsLastHour: result.requestsLastHour,
     error: result.error,
     objects: result.objects,
+  });
+});
+
+/**
+ * Search the full non-active catalogue.
+ *
+ * Serves from the same cached join as the route above, so a search costs
+ * Space-Track nothing — a query per keystroke would breach their fair-use
+ * policy in seconds, and the answer is already in memory.
+ *
+ * Results are capped, and deliberately: they exist to be read and chosen from
+ * one at a time. Handing back thousands would invite the "add everything"
+ * gesture that the dome then has to refuse anyway, at which point the refusal
+ * is a worse experience than never offering it.
+ */
+app.get("/api/spacetrack/search", async (req, res) => {
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+  const catalogue = await getFullCatalogue(toAlpha5);
+
+  if (catalogue.source === "unavailable") {
+    res.json({
+      results: [],
+      count: 0,
+      limit: SEARCH_LIMIT,
+      searchable: 0,
+      facets: { types: [], sizes: [] },
+      source: catalogue.source,
+      configured: credentialsConfigured(),
+      error: catalogue.error,
+    });
+    return;
+  }
+
+  const results = searchCatalogue(catalogue.objects, {
+    q: str(req.query.q),
+    type: str(req.query.type),
+    size: str(req.query.size),
+  });
+
+  res.json({
+    results,
+    count: results.length,
+    limit: SEARCH_LIMIT,
+    searchable: catalogue.objects.length,
+    facets: catalogueFacets(catalogue.objects),
+    source: catalogue.source,
+    configured: true,
   });
 });
 

@@ -420,3 +420,83 @@ export function resetSpaceTrackState(): void {
   sessionCookie = null;
   cache = null;
 }
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+export interface CatalogueQuery {
+  /** Free text, matched against the name and the catalogue number. */
+  q?: string;
+  /** PAYLOAD / ROCKET BODY / DEBRIS / UNKNOWN. */
+  type?: string;
+  /** LARGE / MEDIUM / SMALL. */
+  size?: string;
+  limit?: number;
+}
+
+export const SEARCH_LIMIT = 60;
+
+/**
+ * Search the cached catalogue.
+ *
+ * A pure filter over data already in memory, deliberately. Searching must never
+ * reach Space-Track: a query per keystroke would breach their fair-use policy
+ * within seconds, and the answer is already local — one refresh serves every
+ * search for six hours.
+ *
+ * Results are capped because they exist to be looked at and chosen from. The
+ * dome takes objects one at a time by design; handing back thousands would
+ * invite exactly the "add everything" gesture that the cap on the dome side
+ * then has to refuse.
+ */
+export function searchCatalogue(objects: JoinedObject[], query: CatalogueQuery): JoinedObject[] {
+  const text = query.q?.trim().toUpperCase() ?? "";
+  const type = query.type?.trim().toUpperCase();
+  const size = query.size?.trim().toUpperCase();
+  const limit = Math.min(query.limit ?? SEARCH_LIMIT, SEARCH_LIMIT);
+
+  const matches: JoinedObject[] = [];
+  for (const obj of objects) {
+    if (type && obj.objectType.toUpperCase() !== type) continue;
+    if (size && (obj.rcsSize ?? "").toUpperCase() !== size) continue;
+    if (text) {
+      // Catalogue number matched without padding too, since that is how people
+      // read them out and how Space-Track itself writes them.
+      const num = String(Number(obj.satnum.replace(/^0+/, "")) || obj.satnum);
+      if (!obj.name.toUpperCase().includes(text) && !obj.satnum.includes(text) && !num.includes(text)) {
+        continue;
+      }
+    }
+    matches.push(obj);
+    if (matches.length >= limit) break;
+  }
+  return matches;
+}
+
+/** Object types and sizes actually present, so a picker offers only real options. */
+export function catalogueFacets(objects: JoinedObject[]): { types: string[]; sizes: string[] } {
+  const types = new Set<string>();
+  const sizes = new Set<string>();
+  for (const o of objects) {
+    types.add(o.objectType);
+    if (o.rcsSize) sizes.add(o.rcsSize);
+  }
+  return {
+    types: [...types].sort(),
+    // Size is ordinal, not alphabetical — LARGE before MEDIUM before SMALL.
+    sizes: ["LARGE", "MEDIUM", "SMALL"].filter((s) => sizes.has(s)),
+  };
+}
+
+/**
+ * The whole cached catalogue, for searching over.
+ *
+ * Separate from getSpaceTrackDebris because that caps its result for the dome,
+ * and a search has to see everything the cache holds.
+ */
+export async function getFullCatalogue(
+  normaliseId: (id: string) => string
+): Promise<DebrisCatalogue> {
+  return getSpaceTrackDebris(normaliseId, Number.MAX_SAFE_INTEGER);
+}

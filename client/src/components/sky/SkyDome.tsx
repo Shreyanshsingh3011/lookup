@@ -118,9 +118,12 @@ function FovZoom() {
  */
 function DevProbe({
   satellites,
+  debris,
   aircraft,
 }: {
   satellites: ReturnType<typeof useSkyObjects>;
+  /** Exposed too, or a derelict's position cannot be checked from outside. */
+  debris: ReturnType<typeof useSkyObjects>;
   aircraft: LiveAircraft[];
 }) {
   const camera = useThree((s) => s.camera);
@@ -128,8 +131,8 @@ function DevProbe({
   const controls = useThree((s) => s.controls);
 
   useEffect(() => {
-    (window as unknown as Record<string, unknown>).__sky = { camera, scene, satellites, controls, aircraft };
-  }, [camera, scene, satellites, controls, aircraft]);
+    (window as unknown as Record<string, unknown>).__sky = { camera, scene, satellites, debris, controls, aircraft };
+  }, [camera, scene, satellites, debris, controls, aircraft]);
 
   return null;
 }
@@ -421,7 +424,7 @@ function SkyScene({
       />
       <FovZoom />
       {orientationLook ? <OrientationCamera look={orientationLook} /> : <CameraAim target={aimTarget} />}
-      {import.meta.env.DEV && <DevProbe satellites={satellites} aircraft={aircraft} />}
+      {import.meta.env.DEV && <DevProbe satellites={satellites} debris={debris} aircraft={aircraft} />}
     </>
   );
 }

@@ -281,3 +281,15 @@ export interface SpaceTrackDebrisResponse {
   error?: string;
   objects: SpaceTrackObject[];
 }
+
+export interface CatalogueSearchResponse {
+  results: SpaceTrackObject[];
+  count: number;
+  limit: number;
+  /** How many objects the cache holds, so a result count has a denominator. */
+  searchable: number;
+  facets: { types: string[]; sizes: string[] };
+  source: 'live' | 'cache' | 'unavailable';
+  configured: boolean;
+  error?: string;
+}

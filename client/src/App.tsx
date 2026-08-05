@@ -3,6 +3,7 @@ import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
 import { ConnectionNotice } from './components/ConnectionNotice';
+import { CatalogueSearch } from './components/CatalogueSearch';
 import { DebrisScreen } from './components/DebrisScreen';
 import { GroupPicker } from './components/GroupPicker';
 import { EarthView } from './components/EarthView';
@@ -36,6 +37,7 @@ const SkyDome = lazy(() =>
 import { useConnection } from './hooks/useConnection';
 import { useDebrisSky } from './hooks/useDebrisSky';
 import { useSatcat } from './hooks/useSatcat';
+import { usePinnedObjects, MAX_PINNED } from './hooks/usePinnedObjects';
 import { useCloudRegion } from './hooks/useCloudRegion';
 import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
@@ -150,6 +152,32 @@ function App() {
   // and once fetched it stays, so toggling it off and back does not re-request.
   const [debrisLayer, setDebrisLayer] = useState(false);
   const debrisSky = useDebrisSky(observer, debrisLayer);
+
+  // Objects picked out of the full catalogue. Additive to the curated set, in
+  // the same layer and drawn by the same marker — there is no second dome, and
+  // the default view does not change because a search happened.
+  const pinned = usePinnedObjects(observer);
+
+  const domeDebrisTles = useMemo(() => {
+    if (pinned.tles.length === 0) return debrisSky.tles;
+    const seen = new Set(debrisSky.tles.map((t) => t.satnum));
+    return [...debrisSky.tles, ...pinned.tles.filter((t) => !seen.has(t.satnum))];
+  }, [debrisSky.tles, pinned.tles]);
+
+  const domeDebrisNotes = useMemo(() => {
+    if (pinned.notes.size === 0) return debrisSky.notes;
+    // Curated notes win: those are hand-written and specific, where a catalogue
+    // note is assembled from fields.
+    return new Map([...pinned.notes, ...debrisSky.notes]);
+  }, [debrisSky.notes, pinned.notes]);
+
+  // Adding something to the dome has to turn the layer on, or the object is
+  // added correctly and invisibly.
+  const pinToSky = (object: Parameters<typeof pinned.pin>[0]) => {
+    const result = pinned.pin(object);
+    if (result.ok) setDebrisLayer(true);
+    return result;
+  };
 
   // A breakup cloud handed over from the Debris tab, shaded in the dome as a
   // density field. Held here rather than in that screen because the dome needs
@@ -402,6 +430,16 @@ function App() {
           />
         )}
 
+        {screen === 'debris' && (
+          <CatalogueSearch
+            onPin={pinToSky}
+            onUnpin={pinned.unpin}
+            isPinned={pinned.isPinned}
+            pinnedCount={pinned.all.length}
+            maxPinned={MAX_PINNED}
+          />
+        )}
+
         {screen === 'sky' && (
           <>
 
@@ -427,8 +465,8 @@ function App() {
               passes={allPasses}
               loading={tlesLoading}
               onSatelliteSelected={handleSatelliteSelected}
-              debrisTles={debrisSky.tles}
-              debrisNotes={debrisSky.notes}
+              debrisTles={domeDebrisTles}
+              debrisNotes={domeDebrisNotes}
               debrisEnabled={debrisLayer}
               onDebrisLayerChange={setDebrisLayer}
               onLogSighting={logNamedSighting}

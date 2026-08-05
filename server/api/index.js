@@ -43563,6 +43563,43 @@ async function getSpaceTrackDebris(normaliseId, limit2 = 900) {
     };
   }
 }
+var SEARCH_LIMIT = 60;
+function searchCatalogue(objects, query) {
+  const text = query.q?.trim().toUpperCase() ?? "";
+  const type = query.type?.trim().toUpperCase();
+  const size = query.size?.trim().toUpperCase();
+  const limit2 = Math.min(query.limit ?? SEARCH_LIMIT, SEARCH_LIMIT);
+  const matches = [];
+  for (const obj of objects) {
+    if (type && obj.objectType.toUpperCase() !== type) continue;
+    if (size && (obj.rcsSize ?? "").toUpperCase() !== size) continue;
+    if (text) {
+      const num = String(Number(obj.satnum.replace(/^0+/, "")) || obj.satnum);
+      if (!obj.name.toUpperCase().includes(text) && !obj.satnum.includes(text) && !num.includes(text)) {
+        continue;
+      }
+    }
+    matches.push(obj);
+    if (matches.length >= limit2) break;
+  }
+  return matches;
+}
+function catalogueFacets(objects) {
+  const types = /* @__PURE__ */ new Set();
+  const sizes = /* @__PURE__ */ new Set();
+  for (const o of objects) {
+    types.add(o.objectType);
+    if (o.rcsSize) sizes.add(o.rcsSize);
+  }
+  return {
+    types: [...types].sort(),
+    // Size is ordinal, not alphabetical — LARGE before MEDIUM before SMALL.
+    sizes: ["LARGE", "MEDIUM", "SMALL"].filter((s) => sizes.has(s))
+  };
+}
+async function getFullCatalogue(normaliseId) {
+  return getSpaceTrackDebris(normaliseId, Number.MAX_SAFE_INTEGER);
+}
 
 // src/routes.ts
 var ROUTE_DESCRIPTIONS = {
@@ -43579,6 +43616,7 @@ var ROUTE_DESCRIPTIONS = {
   "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
   "GET /api/satcat/:group": "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
   "GET /api/spacetrack/debris": "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
+  "GET /api/spacetrack/search": "Search the cached non-active catalogue by name, catalogue number, declared type or size class. Served from memory, so it costs Space-Track nothing; results are capped for choosing from one at a time.",
   "GET /api/small-bodies": "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
   "GET /api/radio/:catnr": "Amateur radio services for a satellite, from the SatNOGS register. An empty list means no known active downlink.",
   "GET /api/starlink/trains": "Starlink satellites still flying in formation close enough to be seen as a train.",
@@ -43750,6 +43788,37 @@ app.get("/api/spacetrack/debris", async (req, res) => {
     requestsLastHour: result.requestsLastHour,
     error: result.error,
     objects: result.objects
+  });
+});
+app.get("/api/spacetrack/search", async (req, res) => {
+  const str = (v) => typeof v === "string" ? v : void 0;
+  const catalogue = await getFullCatalogue(toAlpha5);
+  if (catalogue.source === "unavailable") {
+    res.json({
+      results: [],
+      count: 0,
+      limit: SEARCH_LIMIT,
+      searchable: 0,
+      facets: { types: [], sizes: [] },
+      source: catalogue.source,
+      configured: credentialsConfigured(),
+      error: catalogue.error
+    });
+    return;
+  }
+  const results = searchCatalogue(catalogue.objects, {
+    q: str(req.query.q),
+    type: str(req.query.type),
+    size: str(req.query.size)
+  });
+  res.json({
+    results,
+    count: results.length,
+    limit: SEARCH_LIMIT,
+    searchable: catalogue.objects.length,
+    facets: catalogueFacets(catalogue.objects),
+    source: catalogue.source,
+    configured: true
   });
 });
 app.get("/api/satcat/:group", async (req, res) => {

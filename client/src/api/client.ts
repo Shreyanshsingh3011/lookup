@@ -11,6 +11,7 @@ import type {
   Observer,
   PassesResponse,
   SatcatResponse,
+  CatalogueSearchResponse,
   SatelliteSearchResponse,
   SpaceTrackDebrisResponse,
   SingleTleResponse,
@@ -153,6 +154,25 @@ export function fetchTransmitters(satnum: string): Promise<TransmitterResponse> 
 export function fetchSpaceTrackDebris(limit?: number): Promise<SpaceTrackDebrisResponse> {
   const q = limit ? `?limit=${encodeURIComponent(String(limit))}` : '';
   return apiFetch<SpaceTrackDebrisResponse>(`/api/spacetrack/debris${q}`);
+}
+
+/**
+ * Search the cached non-active catalogue.
+ *
+ * Served from the server's in-memory join, so a query per keystroke costs
+ * Space-Track nothing. Never rejects — an unavailable catalogue comes back with
+ * source "unavailable" and an empty result set.
+ */
+export function fetchCatalogueSearch(opts: {
+  q?: string;
+  type?: string;
+  size?: string;
+}): Promise<CatalogueSearchResponse> {
+  const params = new URLSearchParams();
+  if (opts.q) params.set('q', opts.q);
+  if (opts.type) params.set('type', opts.type);
+  if (opts.size) params.set('size', opts.size);
+  return apiFetch<CatalogueSearchResponse>(`/api/spacetrack/search?${params.toString()}`);
 }
 
 /**

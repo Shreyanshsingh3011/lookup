@@ -64,6 +64,9 @@ export const ROUTE_DESCRIPTIONS: Record<string, string> = {
   "GET /api/spacetrack/debris":
     "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
 
+  "GET /api/spacetrack/search":
+    "Search the cached non-active catalogue by name, catalogue number, declared type or size class. Served from memory, so it costs Space-Track nothing; results are capped for choosing from one at a time.",
+
   "GET /api/small-bodies":
     "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
   "GET /api/radio/:catnr":
