@@ -61,6 +61,9 @@ export const ROUTE_DESCRIPTIONS: Record<string, string> = {
   "GET /api/satcat/:group":
     "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
 
+  "GET /api/spacetrack/debris":
+    "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
+
   "GET /api/small-bodies":
     "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
   "GET /api/radio/:catnr":

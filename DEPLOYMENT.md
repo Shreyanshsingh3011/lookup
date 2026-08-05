@@ -89,6 +89,21 @@ when it is running on one.
 | `TLE_FILE` | Serves orbital elements from a local file instead of Celestrak, for offline or air-gapped operation. Overrides **every** group, and single-satellite and name-search lookups too. |
 | `WEATHER_FILE` | Serves the cloud forecast from a local file instead of Open-Meteo. |
 | `AIRCRAFT_FILE` | Serves ADS-B aircraft from a local file instead of the live providers. |
+| `SPACETRACK_USER` | Space-Track account identity. Enables `/api/spacetrack/debris`, the full public debris catalogue. Without it that route reports `unavailable` and the debris screen shows the curated four clouds and eight derelicts, saying so. |
+| `SPACETRACK_PASS` | Space-Track account password. Sent in a POST body at login only — never in a URL, since a URL ends up in logs and proxies. |
+
+### A note on Space-Track data
+
+Raw Space-Track responses must never be committed. This repository is public and
+their user agreement restricts redistribution of the catalogue, so the
+integration caches **in memory only** — see the comment at the top of
+`server/src/spacetrack.ts`, and the ignore rules in `.gitignore` that catch the
+files if anyone ever adds a disk cache anyway.
+
+Aggregate figures derived from it are fine and several are committed: the
+per-cloud population counts in `server/src/debris.ts` came from a Space-Track
+query and are dated, because those are facts about the world rather than
+redistribution of their dataset.
 
 ## Follow-up: a custom domain
 

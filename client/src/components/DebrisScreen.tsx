@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchCustomPasses, fetchDebrisCatalogue, fetchDebrisCloud, fetchTransmitters } from '../api/client';
+import {
+  fetchCustomPasses,
+  fetchDebrisCatalogue,
+  fetchDebrisCloud,
+  fetchSpaceTrackDebris,
+  fetchTransmitters,
+} from '../api/client';
 import { PassTable } from './PassTable';
 import { assessRisk, preFilter, type Freshness } from '../lib/debris';
 import type {
@@ -8,6 +14,7 @@ import type {
   Observer,
   Pass,
   ResolvedDerelict,
+  SpaceTrackDebrisResponse,
   TransmitterResponse,
 } from '../types';
 
@@ -67,11 +74,30 @@ export function DebrisScreen({
   const [loadingCloud, setLoadingCloud] = useState<string | null>(null);
   const [cloudError, setCloudError] = useState<string | null>(null);
 
+  // The full catalogue, when Space-Track is configured and reachable. Purely
+  // additive: without it this screen shows the curated clouds and derelicts
+  // exactly as before, and says that is what it is showing.
+  const [wide, setWide] = useState<SpaceTrackDebrisResponse | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     fetchDebrisCatalogue()
       .then((res) => !cancelled && setCatalogue(res))
       .catch((err) => !cancelled && setCatalogueError(err instanceof Error ? err.message : 'Could not load the catalogue'));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSpaceTrackDebris()
+      .then((res) => !cancelled && setWide(res))
+      .catch(() => {
+        // A failure here is indistinguishable from not being configured, and
+        // both mean the same thing to a reader: the curated set is what you get.
+        if (!cancelled) setWide(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -108,6 +134,32 @@ export function DebrisScreen({
           These same objects can be drawn in the sky dome on the Sky tab, in amber, alongside the
           active satellites — the “Debris” layer button turns them on.
         </p>
+
+        {/* How much of the catalogue this screen is actually seeing.
+            Without Space-Track credentials it is the curated shortlist, and
+            saying so is the difference between a small true answer and a
+            misleading one — a reader has no other way to tell. */}
+        {wide && wide.source !== 'unavailable' ? (
+          <p className="text-[11px] text-space-400">
+            <span className="text-emerald-300">
+              Full catalogue connected: {wide.totalJoined.toLocaleString()} debris objects with
+              current orbital elements
+            </span>{' '}
+            — from Space-Track, largest first, {wide.count.toLocaleString()} returned here.{' '}
+            {wide.missingElements > 0 &&
+              `${wide.missingElements.toLocaleString()} more are catalogued but have no current elements, so they cannot be placed. `}
+            {wide.source === 'cache' && 'Served from cache. '}
+            Fragments are still far too faint to see; this is coverage, not visibility.
+          </p>
+        ) : (
+          <p className="text-[11px] text-space-400">
+            Showing the curated shortlist — four breakup clouds and eight notable derelicts.{' '}
+            {wide?.configured === false
+              ? 'The full catalogue needs Space-Track credentials, which are not configured.'
+              : 'The full catalogue is unavailable right now.'}{' '}
+            Everything below is real and current; there is simply more up there than this.
+          </p>
+        )}
 
         {catalogueError && (
           <p className="glass-panel rounded-xl px-4 py-3 text-sm text-amber-glow">

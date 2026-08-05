@@ -254,3 +254,30 @@ export interface SatcatResponse {
   derelictCount: number;
   entries: SatcatEntry[];
 }
+
+/** One debris object with both halves: Space-Track context plus elements. */
+export interface SpaceTrackObject {
+  satnum: string;
+  name: string;
+  objectType: string;
+  rcsSize: string | null;
+  country: string | null;
+  launchDate: string | null;
+  perigeeKm: number | null;
+  apogeeKm: number | null;
+  inclinationDeg: number | null;
+  tle: TleRecord;
+  epoch: string | null;
+}
+
+export interface SpaceTrackDebrisResponse {
+  count: number;
+  totalJoined: number;
+  missingElements: number;
+  source: 'live' | 'cache' | 'unavailable';
+  configured: boolean;
+  fetchedAt: string | null;
+  requestsLastHour: number;
+  error?: string;
+  objects: SpaceTrackObject[];
+}

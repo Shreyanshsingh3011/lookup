@@ -1,0 +1,422 @@
+import { classify } from "./debris.js";
+import type { TleRecord } from "./celestrak.js";
+
+/**
+ * Space-Track: the full public debris catalogue, with elements.
+ *
+ * CelesTrak publishes four named breakup groups and nothing else, so the app
+ * has only ever seen a few thousand fragments out of the tens of thousands
+ * catalogued. Space-Track has the rest, but it takes two queries and a join:
+ *
+ *   satcat  names, declared types, sizes, decay dates — and NO elements
+ *   gp      the elements, and almost none of the context
+ *
+ * Neither is sufficient. satcat can tell you an object exists and how big it
+ * is; only gp can tell you where it is. So the object list comes from satcat,
+ * its catalogue numbers drive a gp query, and the two are joined on NORAD ID
+ * before anything reaches the client.
+ *
+ * NOTHING FROM HERE IS EVER WRITTEN TO DISK. This repository is public and
+ * Space-Track's user agreement restricts redistribution of their catalogue, so
+ * the cache below is deliberately in memory only. If you are about to add a
+ * disk cache to speed this up: don't. Aggregate figures derived from the data
+ * are fine to commit; the responses themselves are not. See .gitignore.
+ */
+
+const BASE = "https://www.space-track.org";
+const LOGIN_URL = `${BASE}/ajaxauth/login`;
+const QUERY = `${BASE}/basicspacedata/query`;
+
+/**
+ * Rate limits.
+ *
+ * Space-Track publishes a fair-use policy; the figures below are the ones I
+ * have on record — roughly 30 requests a minute and 300 an hour — and this
+ * sandbox cannot reach space-track.org to confirm them. They are therefore
+ * treated as upper bounds and the limiter runs well under: a full refresh costs
+ * one login plus a handful of chunked queries, a few times a day at most.
+ *
+ * If you can check the current policy, do, and raise these only to whatever it
+ * actually states. Being throttled here means the debris screen silently falls
+ * back to the curated set, which is a worse outcome than a slow refresh.
+ */
+export const RATE_LIMIT_PER_MINUTE = 18;
+export const RATE_LIMIT_PER_HOUR = 180;
+
+/** How long a joined catalogue is served before refetching. */
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * A sliding-window limiter over two horizons at once.
+ *
+ * Both windows have to be satisfied, because they fail differently: bursting
+ * through the per-minute allowance is easy when chunking a large query, while
+ * the hourly one is what a badly-set refresh interval would breach.
+ */
+export class RateLimiter {
+  private hits: number[] = [];
+
+  constructor(
+    private readonly perMinute = RATE_LIMIT_PER_MINUTE,
+    private readonly perHour = RATE_LIMIT_PER_HOUR
+  ) {}
+
+  /** Whether a request may go out now, and why not if it may not. */
+  check(now = Date.now()): { allowed: true } | { allowed: false; reason: string; retryAfterMs: number } {
+    this.hits = this.hits.filter((t) => now - t < 3_600_000);
+    const lastMinute = this.hits.filter((t) => now - t < 60_000);
+
+    if (lastMinute.length >= this.perMinute) {
+      const oldest = Math.min(...lastMinute);
+      return {
+        allowed: false,
+        reason: `${this.perMinute} requests already made this minute`,
+        retryAfterMs: 60_000 - (now - oldest),
+      };
+    }
+    if (this.hits.length >= this.perHour) {
+      const oldest = Math.min(...this.hits);
+      return {
+        allowed: false,
+        reason: `${this.perHour} requests already made this hour`,
+        retryAfterMs: 3_600_000 - (now - oldest),
+      };
+    }
+    return { allowed: true };
+  }
+
+  record(now = Date.now()): void {
+    this.hits.push(now);
+  }
+
+  /** Requests made in the last hour, for reporting. */
+  recentCount(now = Date.now()): number {
+    return this.hits.filter((t) => now - t < 3_600_000).length;
+  }
+}
+
+/**
+ * Catalogue numbers, chunked for a URL.
+ *
+ * Space-Track takes a comma-separated list, but a list of twelve thousand ids
+ * is a hundred-kilobyte URL and will be rejected long before it is answered.
+ * Chunking is not an optimisation here; without it the query simply fails.
+ */
+export const IDS_PER_QUERY = 400;
+
+export function chunkIds(ids: string[], size = IDS_PER_QUERY): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+export interface SatcatRecord {
+  NORAD_CAT_ID: string;
+  OBJECT_NAME: string;
+  OBJECT_TYPE: string;
+  DECAY: string | null;
+  RCS_SIZE: string | null;
+  COUNTRY: string | null;
+  LAUNCH: string | null;
+  PERIGEE: string | null;
+  APOGEE: string | null;
+  INCLINATION: string | null;
+}
+
+export interface GpRecord {
+  NORAD_CAT_ID: string;
+  OBJECT_NAME?: string;
+  TLE_LINE1?: string;
+  TLE_LINE2?: string;
+  EPOCH?: string;
+}
+
+/** One object with both halves: context from satcat, elements from gp. */
+export interface JoinedObject {
+  satnum: string;
+  name: string;
+  objectType: string;
+  /** LARGE / MEDIUM / SMALL, as Space-Track classes it. Often null. */
+  rcsSize: string | null;
+  country: string | null;
+  launchDate: string | null;
+  perigeeKm: number | null;
+  apogeeKm: number | null;
+  inclinationDeg: number | null;
+  /** The reason this class exists: elements, in the shape the app already uses. */
+  tle: TleRecord;
+  epoch: string | null;
+}
+
+/**
+ * Join satcat context onto gp elements.
+ *
+ * Inner join on catalogue number, deliberately. An object in satcat with no gp
+ * record cannot be propagated and so cannot be drawn — including it with a null
+ * element set would push that failure into every consumer. An object in gp with
+ * no satcat record is dropped too, since without a declared type it is exactly
+ * the guess this integration exists to remove.
+ *
+ * Catalogue numbers are normalised to the five-character form TLEs carry, so
+ * they match everything else in this app. See toAlpha5 in satcat.ts.
+ */
+export function joinSatcatWithGp(
+  satcat: SatcatRecord[],
+  gp: GpRecord[],
+  normaliseId: (id: string) => string
+): { joined: JoinedObject[]; missingElements: number; unmatchedElements: number } {
+  const byId = new Map<string, SatcatRecord>();
+  for (const rec of satcat) {
+    if (rec.NORAD_CAT_ID) byId.set(normaliseId(rec.NORAD_CAT_ID), rec);
+  }
+
+  const joined: JoinedObject[] = [];
+  const seen = new Set<string>();
+  let unmatchedElements = 0;
+
+  for (const el of gp) {
+    if (!el.NORAD_CAT_ID || !el.TLE_LINE1 || !el.TLE_LINE2) {
+      unmatchedElements++;
+      continue;
+    }
+    const satnum = normaliseId(el.NORAD_CAT_ID);
+    const ctx = byId.get(satnum);
+    if (!ctx) {
+      unmatchedElements++;
+      continue;
+    }
+    seen.add(satnum);
+
+    const num = (v: string | null | undefined) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    joined.push({
+      satnum,
+      name: (ctx.OBJECT_NAME ?? el.OBJECT_NAME ?? "").trim(),
+      objectType: classify(ctx.OBJECT_NAME ?? "", ctx.OBJECT_TYPE).type,
+      rcsSize: ctx.RCS_SIZE ?? null,
+      country: ctx.COUNTRY ?? null,
+      launchDate: ctx.LAUNCH ?? null,
+      perigeeKm: num(ctx.PERIGEE),
+      apogeeKm: num(ctx.APOGEE),
+      inclinationDeg: num(ctx.INCLINATION),
+      tle: {
+        name: (ctx.OBJECT_NAME ?? "").trim(),
+        satnum,
+        line1: el.TLE_LINE1.trim(),
+        line2: el.TLE_LINE2.trim(),
+      },
+      epoch: el.EPOCH ?? null,
+    });
+  }
+
+  return { joined, missingElements: byId.size - seen.size, unmatchedElements };
+}
+
+/**
+ * Biggest first.
+ *
+ * The browser cannot propagate twelve thousand objects per frame, so a capped
+ * response has to choose. Size is the honest basis: RCS_SIZE is a declared
+ * class rather than a derived guess, and a LARGE fragment is both the one worth
+ * drawing and the one that matters for collision risk. Objects with no declared
+ * size sort last rather than being dropped, since absent is not small.
+ */
+const SIZE_RANK: Record<string, number> = { LARGE: 0, MEDIUM: 1, SMALL: 2 };
+
+export function rankBySize(objects: JoinedObject[]): JoinedObject[] {
+  return [...objects].sort((a, b) => {
+    const ra = a.rcsSize ? (SIZE_RANK[a.rcsSize] ?? 3) : 3;
+    const rb = b.rcsSize ? (SIZE_RANK[b.rcsSize] ?? 3) : 3;
+    if (ra !== rb) return ra - rb;
+    // Stable tiebreak so a capped response does not reshuffle between refreshes.
+    return a.satnum < b.satnum ? -1 : a.satnum > b.satnum ? 1 : 0;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Session and fetching
+// ---------------------------------------------------------------------------
+
+export function credentialsConfigured(): boolean {
+  return Boolean(process.env.SPACETRACK_USER && process.env.SPACETRACK_PASS);
+}
+
+let sessionCookie: string | null = null;
+const limiter = new RateLimiter();
+
+/**
+ * Log in and keep the session cookie.
+ *
+ * Credentials go in the POST body, never in a query string — a URL ends up in
+ * logs, proxies and error messages, and this one would carry a password.
+ */
+async function login(): Promise<string> {
+  const identity = process.env.SPACETRACK_USER;
+  const password = process.env.SPACETRACK_PASS;
+  if (!identity || !password) throw new Error("SPACETRACK_USER and SPACETRACK_PASS are not set.");
+
+  const gate = limiter.check();
+  if (!gate.allowed) throw new Error(`Rate limited before login: ${gate.reason}.`);
+  limiter.record();
+
+  const res = await fetch(LOGIN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ identity, password }).toString(),
+  });
+  if (!res.ok) throw new Error(`Space-Track login returned ${res.status} ${res.statusText}.`);
+
+  const raw = res.headers.get("set-cookie");
+  if (!raw) throw new Error("Space-Track login succeeded but returned no session cookie.");
+  // Keep only the name=value pairs; attributes are for a browser, not for us.
+  sessionCookie = raw
+    .split(/,(?=[^;]+=)/)
+    .map((c) => c.split(";")[0].trim())
+    .join("; ");
+  return sessionCookie;
+}
+
+/**
+ * One authenticated GET, re-authenticating once if the session has expired.
+ *
+ * Space-Track answers an expired session with a 401 or a redirect to the login
+ * page rather than a clear error, so both are treated as "log in and retry".
+ * Exactly one retry: a second failure is a real problem, and looping on it
+ * would burn the rate limit that the fallback depends on.
+ */
+async function authedGet(url: string, allowRetry = true): Promise<unknown> {
+  if (!sessionCookie) await login();
+
+  const gate = limiter.check();
+  if (!gate.allowed) throw new Error(`Rate limited: ${gate.reason}, retry in ${Math.ceil(gate.retryAfterMs / 1000)}s.`);
+  limiter.record();
+
+  const res = await fetch(url, {
+    headers: { cookie: sessionCookie!, accept: "application/json" },
+    redirect: "manual",
+  });
+
+  const expired = res.status === 401 || res.status === 302 || res.status === 303;
+  if (expired && allowRetry) {
+    sessionCookie = null;
+    return authedGet(url, false);
+  }
+  if (!res.ok) throw new Error(`Space-Track query returned ${res.status} ${res.statusText}.`);
+
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // An HTML body here almost always means the login page, i.e. a session that
+    // expired in a way the status code did not admit to.
+    throw new Error("Space-Track returned a non-JSON body; the session is probably not valid.");
+  }
+}
+
+export interface DebrisCatalogue {
+  objects: JoinedObject[];
+  /** Everything joined, before any cap was applied. */
+  totalJoined: number;
+  /** In satcat but with no current element set, so not propagatable. */
+  missingElements: number;
+  source: "live" | "cache" | "unavailable";
+  fetchedAt: number | null;
+  requestsLastHour: number;
+  error?: string;
+}
+
+let cache: { catalogue: DebrisCatalogue; fetchedAt: number } | null = null;
+
+/**
+ * The joined debris catalogue.
+ *
+ * Never throws, and never queries Space-Track on the request path when a cached
+ * copy is usable — one refresh serves every visitor for six hours. A failure at
+ * any stage returns source "unavailable" with the reason, and the caller falls
+ * back to the curated four clouds and eight derelicts, which is a smaller true
+ * answer rather than a broken screen.
+ */
+export async function getSpaceTrackDebris(
+  normaliseId: (id: string) => string,
+  limit = 900
+): Promise<DebrisCatalogue> {
+  const now = Date.now();
+  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+    return { ...cache.catalogue, objects: cache.catalogue.objects.slice(0, limit), source: "cache" };
+  }
+
+  if (!credentialsConfigured()) {
+    return {
+      objects: [],
+      totalJoined: 0,
+      missingElements: 0,
+      source: "unavailable",
+      fetchedAt: null,
+      requestsLastHour: limiter.recentCount(),
+      error: "Space-Track credentials are not configured; using the curated set.",
+    };
+  }
+
+  try {
+    // 1. Object list. DECAY/null-val keeps the ~12,500 still in orbit rather
+    //    than the ~35,800 ever catalogued — two thirds of that file is history.
+    const satcat = (await authedGet(
+      `${QUERY}/class/satcat/OBJECT_TYPE/DEBRIS/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
+    )) as SatcatRecord[];
+    if (!Array.isArray(satcat) || satcat.length === 0) throw new Error("satcat returned no rows.");
+
+    // 2. Elements for exactly those objects, chunked so the URLs are valid.
+    const ids = satcat.map((r) => r.NORAD_CAT_ID).filter(Boolean);
+    const gp: GpRecord[] = [];
+    for (const chunk of chunkIds(ids)) {
+      const part = (await authedGet(
+        `${QUERY}/class/gp/NORAD_CAT_ID/${chunk.join(",")}/format/json`
+      )) as GpRecord[];
+      if (Array.isArray(part)) gp.push(...part);
+    }
+
+    // 3. Join, then rank so a capped response keeps the largest objects.
+    const { joined, missingElements } = joinSatcatWithGp(satcat, gp, normaliseId);
+    if (joined.length === 0) throw new Error("satcat and gp produced no joined objects.");
+
+    const catalogue: DebrisCatalogue = {
+      objects: rankBySize(joined),
+      totalJoined: joined.length,
+      missingElements,
+      source: "live",
+      fetchedAt: now,
+      requestsLastHour: limiter.recentCount(),
+    };
+    cache = { catalogue, fetchedAt: now };
+    return { ...catalogue, objects: catalogue.objects.slice(0, limit) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Stale beats absent, but only when it is labelled as stale.
+    if (cache) {
+      return {
+        ...cache.catalogue,
+        objects: cache.catalogue.objects.slice(0, limit),
+        source: "cache",
+        error: `Refresh failed, serving cached data: ${message}`,
+      };
+    }
+    return {
+      objects: [],
+      totalJoined: 0,
+      missingElements: 0,
+      source: "unavailable",
+      fetchedAt: null,
+      requestsLastHour: limiter.recentCount(),
+      error: message,
+    };
+  }
+}
+
+/** Test seam: drop the cached session and catalogue. */
+export function resetSpaceTrackState(): void {
+  sessionCookie = null;
+  cache = null;
+}

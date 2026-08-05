@@ -20904,7 +20904,7 @@ var require_application = __commonJS({
     };
     app2.del = deprecate.function(app2.delete, "app.del: Use app.delete instead");
     app2.render = function render(name, options, callback) {
-      var cache8 = this.cache;
+      var cache9 = this.cache;
       var done = callback;
       var engines = this.engines;
       var opts = options;
@@ -20923,7 +20923,7 @@ var require_application = __commonJS({
         renderOptions.cache = this.enabled("view cache");
       }
       if (renderOptions.cache) {
-        view = cache8[name];
+        view = cache9[name];
       }
       if (!view) {
         var View2 = this.get("view");
@@ -20939,7 +20939,7 @@ var require_application = __commonJS({
           return done(err);
         }
         if (renderOptions.cache) {
-          cache8[name] = view;
+          cache9[name] = view;
         }
       }
       tryRender(view, renderOptions, done);
@@ -25259,7 +25259,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client2) {
   };
 }
 function createMiddlewareContext(options, client2) {
-  const cache8 = /* @__PURE__ */ new WeakMap();
+  const cache9 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -25269,10 +25269,10 @@ function createMiddlewareContext(options, client2) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options);
       }
-      let parsed = cache8.get(response);
+      let parsed = cache9.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options);
-        cache8.set(response, parsed);
+        cache9.set(response, parsed);
       }
       return parsed;
     }
@@ -38773,14 +38773,14 @@ function GravFromState(entry) {
   const grav = new body_grav_calc_t(state.tt, r, v, a);
   return new grav_sim_t(bary, grav);
 }
-function GetSegment(cache8, tt) {
+function GetSegment(cache9, tt) {
   const t0 = PlutoStateTable[0][0];
   if (tt < t0 || tt > PlutoStateTable[PLUTO_NUM_STATES - 1][0]) {
     return null;
   }
   const seg_index = ClampIndex((tt - t0) / PLUTO_TIME_STEP, PLUTO_NUM_STATES - 1);
-  if (!cache8[seg_index]) {
-    const seg = cache8[seg_index] = [];
+  if (!cache9[seg_index]) {
+    const seg = cache9[seg_index] = [];
     seg[0] = GravFromState(PlutoStateTable[seg_index]).grav;
     seg[PLUTO_NSTEPS - 1] = GravFromState(PlutoStateTable[seg_index + 1]).grav;
     let i;
@@ -38799,7 +38799,7 @@ function GetSegment(cache8, tt) {
       seg[i].a = seg[i].a.mul(1 - ramp).add(reverse[i].a.mul(ramp));
     }
   }
-  return cache8[seg_index];
+  return cache9[seg_index];
 }
 function CalcPlutoOneWay(entry, target_tt, dt) {
   let sim = GravFromState(entry);
@@ -43350,6 +43350,220 @@ async function getSatcatForGroup(groupId) {
   };
 }
 
+// src/spacetrack.ts
+var BASE = "https://www.space-track.org";
+var LOGIN_URL = `${BASE}/ajaxauth/login`;
+var QUERY = `${BASE}/basicspacedata/query`;
+var RATE_LIMIT_PER_MINUTE = 18;
+var RATE_LIMIT_PER_HOUR = 180;
+var CACHE_TTL_MS8 = 6 * 60 * 60 * 1e3;
+var RateLimiter = class {
+  constructor(perMinute = RATE_LIMIT_PER_MINUTE, perHour = RATE_LIMIT_PER_HOUR) {
+    this.perMinute = perMinute;
+    this.perHour = perHour;
+  }
+  perMinute;
+  perHour;
+  hits = [];
+  /** Whether a request may go out now, and why not if it may not. */
+  check(now = Date.now()) {
+    this.hits = this.hits.filter((t) => now - t < 36e5);
+    const lastMinute = this.hits.filter((t) => now - t < 6e4);
+    if (lastMinute.length >= this.perMinute) {
+      const oldest = Math.min(...lastMinute);
+      return {
+        allowed: false,
+        reason: `${this.perMinute} requests already made this minute`,
+        retryAfterMs: 6e4 - (now - oldest)
+      };
+    }
+    if (this.hits.length >= this.perHour) {
+      const oldest = Math.min(...this.hits);
+      return {
+        allowed: false,
+        reason: `${this.perHour} requests already made this hour`,
+        retryAfterMs: 36e5 - (now - oldest)
+      };
+    }
+    return { allowed: true };
+  }
+  record(now = Date.now()) {
+    this.hits.push(now);
+  }
+  /** Requests made in the last hour, for reporting. */
+  recentCount(now = Date.now()) {
+    return this.hits.filter((t) => now - t < 36e5).length;
+  }
+};
+var IDS_PER_QUERY = 400;
+function chunkIds(ids, size = IDS_PER_QUERY) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+function joinSatcatWithGp(satcat, gp, normaliseId) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const rec of satcat) {
+    if (rec.NORAD_CAT_ID) byId.set(normaliseId(rec.NORAD_CAT_ID), rec);
+  }
+  const joined = [];
+  const seen = /* @__PURE__ */ new Set();
+  let unmatchedElements = 0;
+  for (const el of gp) {
+    if (!el.NORAD_CAT_ID || !el.TLE_LINE1 || !el.TLE_LINE2) {
+      unmatchedElements++;
+      continue;
+    }
+    const satnum = normaliseId(el.NORAD_CAT_ID);
+    const ctx = byId.get(satnum);
+    if (!ctx) {
+      unmatchedElements++;
+      continue;
+    }
+    seen.add(satnum);
+    const num = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    joined.push({
+      satnum,
+      name: (ctx.OBJECT_NAME ?? el.OBJECT_NAME ?? "").trim(),
+      objectType: classify(ctx.OBJECT_NAME ?? "", ctx.OBJECT_TYPE).type,
+      rcsSize: ctx.RCS_SIZE ?? null,
+      country: ctx.COUNTRY ?? null,
+      launchDate: ctx.LAUNCH ?? null,
+      perigeeKm: num(ctx.PERIGEE),
+      apogeeKm: num(ctx.APOGEE),
+      inclinationDeg: num(ctx.INCLINATION),
+      tle: {
+        name: (ctx.OBJECT_NAME ?? "").trim(),
+        satnum,
+        line1: el.TLE_LINE1.trim(),
+        line2: el.TLE_LINE2.trim()
+      },
+      epoch: el.EPOCH ?? null
+    });
+  }
+  return { joined, missingElements: byId.size - seen.size, unmatchedElements };
+}
+var SIZE_RANK = { LARGE: 0, MEDIUM: 1, SMALL: 2 };
+function rankBySize(objects) {
+  return [...objects].sort((a, b) => {
+    const ra = a.rcsSize ? SIZE_RANK[a.rcsSize] ?? 3 : 3;
+    const rb = b.rcsSize ? SIZE_RANK[b.rcsSize] ?? 3 : 3;
+    if (ra !== rb) return ra - rb;
+    return a.satnum < b.satnum ? -1 : a.satnum > b.satnum ? 1 : 0;
+  });
+}
+function credentialsConfigured() {
+  return Boolean(process.env.SPACETRACK_USER && process.env.SPACETRACK_PASS);
+}
+var sessionCookie = null;
+var limiter = new RateLimiter();
+async function login() {
+  const identity = process.env.SPACETRACK_USER;
+  const password = process.env.SPACETRACK_PASS;
+  if (!identity || !password) throw new Error("SPACETRACK_USER and SPACETRACK_PASS are not set.");
+  const gate = limiter.check();
+  if (!gate.allowed) throw new Error(`Rate limited before login: ${gate.reason}.`);
+  limiter.record();
+  const res = await fetch(LOGIN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ identity, password }).toString()
+  });
+  if (!res.ok) throw new Error(`Space-Track login returned ${res.status} ${res.statusText}.`);
+  const raw = res.headers.get("set-cookie");
+  if (!raw) throw new Error("Space-Track login succeeded but returned no session cookie.");
+  sessionCookie = raw.split(/,(?=[^;]+=)/).map((c) => c.split(";")[0].trim()).join("; ");
+  return sessionCookie;
+}
+async function authedGet(url, allowRetry = true) {
+  if (!sessionCookie) await login();
+  const gate = limiter.check();
+  if (!gate.allowed) throw new Error(`Rate limited: ${gate.reason}, retry in ${Math.ceil(gate.retryAfterMs / 1e3)}s.`);
+  limiter.record();
+  const res = await fetch(url, {
+    headers: { cookie: sessionCookie, accept: "application/json" },
+    redirect: "manual"
+  });
+  const expired = res.status === 401 || res.status === 302 || res.status === 303;
+  if (expired && allowRetry) {
+    sessionCookie = null;
+    return authedGet(url, false);
+  }
+  if (!res.ok) throw new Error(`Space-Track query returned ${res.status} ${res.statusText}.`);
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("Space-Track returned a non-JSON body; the session is probably not valid.");
+  }
+}
+var cache8 = null;
+async function getSpaceTrackDebris(normaliseId, limit2 = 900) {
+  const now = Date.now();
+  if (cache8 && now - cache8.fetchedAt < CACHE_TTL_MS8) {
+    return { ...cache8.catalogue, objects: cache8.catalogue.objects.slice(0, limit2), source: "cache" };
+  }
+  if (!credentialsConfigured()) {
+    return {
+      objects: [],
+      totalJoined: 0,
+      missingElements: 0,
+      source: "unavailable",
+      fetchedAt: null,
+      requestsLastHour: limiter.recentCount(),
+      error: "Space-Track credentials are not configured; using the curated set."
+    };
+  }
+  try {
+    const satcat = await authedGet(
+      `${QUERY}/class/satcat/OBJECT_TYPE/DEBRIS/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
+    );
+    if (!Array.isArray(satcat) || satcat.length === 0) throw new Error("satcat returned no rows.");
+    const ids = satcat.map((r) => r.NORAD_CAT_ID).filter(Boolean);
+    const gp = [];
+    for (const chunk of chunkIds(ids)) {
+      const part = await authedGet(
+        `${QUERY}/class/gp/NORAD_CAT_ID/${chunk.join(",")}/format/json`
+      );
+      if (Array.isArray(part)) gp.push(...part);
+    }
+    const { joined, missingElements } = joinSatcatWithGp(satcat, gp, normaliseId);
+    if (joined.length === 0) throw new Error("satcat and gp produced no joined objects.");
+    const catalogue = {
+      objects: rankBySize(joined),
+      totalJoined: joined.length,
+      missingElements,
+      source: "live",
+      fetchedAt: now,
+      requestsLastHour: limiter.recentCount()
+    };
+    cache8 = { catalogue, fetchedAt: now };
+    return { ...catalogue, objects: catalogue.objects.slice(0, limit2) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (cache8) {
+      return {
+        ...cache8.catalogue,
+        objects: cache8.catalogue.objects.slice(0, limit2),
+        source: "cache",
+        error: `Refresh failed, serving cached data: ${message}`
+      };
+    }
+    return {
+      objects: [],
+      totalJoined: 0,
+      missingElements: 0,
+      source: "unavailable",
+      fetchedAt: null,
+      requestsLastHour: limiter.recentCount(),
+      error: message
+    };
+  }
+}
+
 // src/routes.ts
 var ROUTE_DESCRIPTIONS = {
   "GET /api": "This index: every mounted route, with a one-line description.",
@@ -43364,6 +43578,7 @@ var ROUTE_DESCRIPTIONS = {
   "GET /api/debris/catalogue": "The debris screen's two collections: named breakup clouds, and notable derelicts resolved individually so a vanished catalogue number is reported per object.",
   "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
   "GET /api/satcat/:group": "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
+  "GET /api/spacetrack/debris": "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
   "GET /api/small-bodies": "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
   "GET /api/radio/:catnr": "Amateur radio services for a satellite, from the SatNOGS register. An empty list means no known active downlink.",
   "GET /api/starlink/trains": "Starlink satellites still flying in formation close enough to be seen as a train.",
@@ -43520,6 +43735,22 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+app.get("/api/spacetrack/debris", async (req, res) => {
+  const requested = Number(req.query.limit);
+  const limit2 = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 5e3) : 900;
+  const result = await getSpaceTrackDebris(toAlpha5, limit2);
+  res.json({
+    count: result.objects.length,
+    totalJoined: result.totalJoined,
+    missingElements: result.missingElements,
+    source: result.source,
+    configured: credentialsConfigured(),
+    fetchedAt: result.fetchedAt ? new Date(result.fetchedAt).toISOString() : null,
+    requestsLastHour: result.requestsLastHour,
+    error: result.error,
+    objects: result.objects
+  });
 });
 app.get("/api/satcat/:group", async (req, res) => {
   const { entries, source, fetchedAt, endpoint, error, attempts } = await getSatcatForGroup(

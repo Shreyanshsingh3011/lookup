@@ -12,6 +12,7 @@ import type {
   PassesResponse,
   SatcatResponse,
   SatelliteSearchResponse,
+  SpaceTrackDebrisResponse,
   SingleTleResponse,
   SmallBodyResponse,
   TleRecord,
@@ -140,6 +141,18 @@ export function searchSatellites(query: string): Promise<SatelliteSearchResponse
 /** Amateur radio services for a satellite. Never rejects on an unreachable register. */
 export function fetchTransmitters(satnum: string): Promise<TransmitterResponse> {
   return apiFetch<TransmitterResponse>(`/api/radio/${encodeURIComponent(satnum)}`);
+}
+
+/**
+ * The full public debris catalogue, joined from Space-Track satcat + gp.
+ *
+ * Never rejects on an unconfigured or unreachable Space-Track — the server
+ * reports source "unavailable" with the reason, and the screen keeps showing
+ * the curated clouds and derelicts while saying that is what it is doing.
+ */
+export function fetchSpaceTrackDebris(limit?: number): Promise<SpaceTrackDebrisResponse> {
+  const q = limit ? `?limit=${encodeURIComponent(String(limit))}` : '';
+  return apiFetch<SpaceTrackDebrisResponse>(`/api/spacetrack/debris${q}`);
 }
 
 /**

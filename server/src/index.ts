@@ -30,7 +30,8 @@ import { findTrains } from "./starlink.js";
 import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 import { getTransmitters } from "./radio.js";
 import { getSmallBodies } from "./smallBodies.js";
-import { getSatcatForGroup, isDerelictByStatus } from "./satcat.js";
+import { getSatcatForGroup, isDerelictByStatus, toAlpha5 } from "./satcat.js";
+import { credentialsConfigured, getSpaceTrackDebris } from "./spacetrack.js";
 import { buildRouteIndex } from "./routes.js";
 import {
   classify,
@@ -211,6 +212,36 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+
+/**
+ * The full public debris catalogue, joined from Space-Track.
+ *
+ * satcat says what an object is; only gp says where it is. This returns both,
+ * joined on catalogue number server-side, so the client gets element sets it
+ * can actually propagate rather than metadata it cannot place.
+ *
+ * Cached for hours and never queried on the request path, both to respect
+ * Space-Track's fair-use policy and because a debris catalogue does not change
+ * minute to minute. Without credentials, or on any failure, this reports
+ * "unavailable" and the screen falls back to the curated clouds and derelicts.
+ */
+app.get("/api/spacetrack/debris", async (req, res) => {
+  const requested = Number(req.query.limit);
+  const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 5000) : 900;
+
+  const result = await getSpaceTrackDebris(toAlpha5, limit);
+  res.json({
+    count: result.objects.length,
+    totalJoined: result.totalJoined,
+    missingElements: result.missingElements,
+    source: result.source,
+    configured: credentialsConfigured(),
+    fetchedAt: result.fetchedAt ? new Date(result.fetchedAt).toISOString() : null,
+    requestsLastHour: result.requestsLastHour,
+    error: result.error,
+    objects: result.objects,
+  });
 });
 
 /**

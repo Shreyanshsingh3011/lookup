@@ -11,3 +11,19 @@ build/
 server/elements.txt
 server/*.tle
 
+# Space-Track responses must never be committed.
+#
+# This repository is public and Space-Track's user agreement restricts
+# redistribution of their catalogue. Only aggregate figures derived from it
+# belong in git — counts, summaries, the curated object list — never the raw
+# responses. The integration caches in memory at runtime for exactly this
+# reason; if anyone ever changes it to cache on disk, the files land here and
+# stay out of version control.
+/data/spacetrack-cache/
+**/spacetrack-cache/
+**/spacetrack*.json
+**/spacetrack*.csv
+**/satcat*.json
+**/satcat*.csv
+**/gp-response*.json
+
