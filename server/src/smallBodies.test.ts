@@ -80,3 +80,45 @@ test("the built-in bodies are usable element sets", () => {
     assert.ok(body.absoluteMagnitude !== null, `${body.name} must have photometry to be worth listing`);
   }
 });
+
+/**
+ * The fallback list is perishable and nothing else notices.
+ *
+ * `tp` is the only element here that fixes where a body is now, and it ages.
+ * Before this was checked, all four entries were wrong — Ceres and Pallas by
+ * over a hundred degrees of mean anomaly — while every other element matched
+ * JPL. The shape of the orbit was right and the object was drawn on the wrong
+ * part of it.
+ *
+ * These assertions pin the values captured from JPL on 2026-08-05. They will
+ * fail if someone edits a record without taking the whole thing, which is the
+ * mistake worth catching; they cannot detect the values simply getting old, so
+ * the module doc says plainly that refreshing is a manual job.
+ */
+test("the offline fallback carries the elements captured from JPL, not remembered ones", () => {
+  const captured: Record<string, { tp: string; e: number; q: number }> = {
+    "1": { tp: "2027-07-13T08:09:35.999Z", e: 0.0797, q: 2.545 },
+    "2": { tp: "2027-10-16T12:43:11.999Z", e: 0.2307, q: 2.131 },
+    "4": { tp: "2025-08-14T02:09:35.999Z", e: 0.0902, q: 2.148 },
+    "7": { tp: "2025-04-03T22:48:00.000Z", e: 0.2303, q: 1.836 },
+  };
+
+  for (const body of BUILTIN_BODIES) {
+    const want = captured[body.id];
+    assert.ok(want, `${body.name} has no captured reference — add one or remove the body`);
+    assert.equal(body.tp, want.tp, `${body.name}: perihelion time`);
+    assert.equal(body.e, want.e, `${body.name}: eccentricity`);
+    assert.equal(body.q, want.q, `${body.name}: perihelion distance`);
+  }
+});
+
+test("a day's error in perihelion time is a real angular error, not a rounding detail", () => {
+  // Why the test above exists. Ceres's orbit is about 1680 days, so being a
+  // year out puts it a fifth of the way round — roughly 78 degrees.
+  const ceres = BUILTIN_BODIES.find((b) => b.id === "1");
+  assert.ok(ceres);
+  const a = ceres.q / (1 - ceres.e);
+  const periodDays = a ** 1.5 * 365.25;
+  assert.ok(periodDays > 1600 && periodDays < 1800, `period came out ${periodDays}`);
+  assert.ok((365 / periodDays) * 360 > 70, "a year of drift is a large angle on this orbit");
+});

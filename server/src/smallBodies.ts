@@ -59,17 +59,42 @@ export function julianToIso(jd: number): string {
  *
  * Elements are heliocentric ecliptic J2000, from JPL, epoch 2026-01-01.
  */
+/**
+ * A last-resort list for when JPL cannot be reached.
+ *
+ * PERISHABLE. Every field here is stable for decades except `tp`, the time of
+ * perihelion passage, which is the one that fixes where the body is *now*.
+ * Get it wrong and the shape of the orbit is still right while the object is
+ * drawn somewhere else entirely on it.
+ *
+ * That is not hypothetical. Checked against JPL through production on
+ * 2026-08-05, the previous values here were wrong by:
+ *
+ *   Ceres   475 days out of a 1680-day orbit  -> 102 degrees of mean anomaly
+ *   Pallas  497 days out of a 1684-day orbit  -> 106 degrees
+ *   Iris    318 days out of a 1346-day orbit  ->  85 degrees
+ *   Vesta   130 days out of a 1325-day orbit  ->  35 degrees
+ *
+ * Every other element matched JPL closely, so the numbers were not invented —
+ * they simply aged, silently, because nothing checks them. A wrong tp does not
+ * decay gracefully either: it is a fixed offset that stays wrong until someone
+ * looks.
+ *
+ * Values below captured from JPL via production on 2026-08-05. When refreshing
+ * them, take the whole record rather than only tp — and update the date in
+ * smallBodies.test.ts, which pins these against that capture.
+ */
 export const BUILTIN_BODIES: SmallBodyRecord[] = [
   {
     id: "1",
     name: "1 Ceres",
     kind: "asteroid",
-    e: 0.0785,
-    q: 2.5489,
-    tp: "2026-03-25T00:00:00.000Z",
-    i: 10.588,
-    node: 80.26,
-    peri: 73.7,
+    e: 0.0797,
+    q: 2.545,
+    tp: "2027-07-13T08:09:35.999Z",
+    i: 10.59,
+    node: 80.25,
+    peri: 73.29,
     absoluteMagnitude: 3.34,
     slope: 0.12,
   },
@@ -77,40 +102,40 @@ export const BUILTIN_BODIES: SmallBodyRecord[] = [
     id: "4",
     name: "4 Vesta",
     kind: "asteroid",
-    e: 0.0894,
-    q: 2.1517,
-    tp: "2025-12-22T00:00:00.000Z",
-    i: 7.142,
-    node: 103.71,
-    peri: 151.66,
-    absoluteMagnitude: 3.2,
+    e: 0.0902,
+    q: 2.148,
+    tp: "2025-08-14T02:09:35.999Z",
+    i: 7.14,
+    node: 103.7,
+    peri: 151.47,
+    absoluteMagnitude: 3.25,
     slope: 0.32,
   },
   {
     id: "2",
     name: "2 Pallas",
     kind: "asteroid",
-    e: 0.2299,
-    q: 2.1319,
-    tp: "2026-06-06T00:00:00.000Z",
-    i: 34.925,
-    node: 172.92,
-    peri: 310.87,
-    absoluteMagnitude: 4.11,
+    e: 0.2307,
+    q: 2.131,
+    tp: "2027-10-16T12:43:11.999Z",
+    i: 34.93,
+    node: 172.89,
+    peri: 310.97,
+    absoluteMagnitude: 4.12,
     slope: 0.11,
   },
   {
     id: "7",
     name: "7 Iris",
     kind: "asteroid",
-    e: 0.2299,
-    q: 1.8377,
-    tp: "2026-02-15T00:00:00.000Z",
-    i: 5.523,
-    node: 259.56,
-    peri: 145.29,
-    absoluteMagnitude: 5.51,
-    slope: 0.15,
+    e: 0.2303,
+    q: 1.836,
+    tp: "2025-04-03T22:48:00.000Z",
+    i: 5.52,
+    node: 259.49,
+    peri: 145.41,
+    absoluteMagnitude: 5.7,
+    slope: null,
   },
 ];
 
