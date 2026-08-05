@@ -8,7 +8,7 @@ import { decayLabel, estimateDecay } from '../../lib/decay';
 import { azElToVec3, azToCompass, type SkySample } from '../../lib/sky';
 import { useSatelliteModel } from '../../hooks/useSatelliteModel';
 import { FrontFacingHtml } from './FrontFacingHtml';
-import type { TleRecord, TransmitterResponse } from '../../types';
+import type { SatcatEntry, TleRecord, TransmitterResponse } from '../../types';
 
 const BODY_COLOR = '#c9d1e8';
 const PANEL_COLOR = '#16305c';
@@ -93,6 +93,8 @@ export interface LiveSatellite {
   nextPassTime: string | null;
   /** Defaults to active where the source does not say. */
   kind?: SkyObjectKind;
+  /** Catalogue metadata, when SATCAT could be reached. */
+  satcat?: SatcatEntry | null;
 }
 
 function SolarWing({ position, args, rotation }: { position: [number, number, number]; args: [number, number, number]; rotation?: [number, number, number] }) {
@@ -529,6 +531,39 @@ export function SatelliteMarker({ sat, tle, selected, onSelect, note, onLogSight
                   gets the further above the frame its head goes. Scrollable
                   rather than truncated: this is the detail view, and the point
                   of it is that nothing is out of reach. */}
+              {/* What the catalogue says, when it could be reached. This is the
+                  difference between an inference and an answer: nothing in
+                  "ENVISAT" says the satellite died in 2012, and the name-based
+                  rule can only ever guess. Shown for live objects too, since
+                  "operational" is worth stating about something you are
+                  looking at. */}
+              {sat.satcat && (
+                <div className="mt-1.5 pt-1.5 border-t border-space-800/70 text-[11px]">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-space-400">Catalogue</span>
+                    <span
+                      className={
+                        sat.satcat.opsStatus === 'operational'
+                          ? 'text-emerald-300'
+                          : sat.satcat.opsStatus === 'nonoperational'
+                            ? 'text-amber-glow'
+                            : 'text-space-300'
+                      }
+                    >
+                      {sat.satcat.objectType.toLowerCase()} · {sat.satcat.opsStatus.replace(/-/g, ' ')}
+                    </span>
+                  </div>
+                  {sat.satcat.rcsSquareMetres !== null && (
+                    <div className="flex items-baseline justify-between gap-2 text-space-400">
+                      <span>Radar size</span>
+                      <span className="font-mono text-space-300">
+                        {sat.satcat.rcsSquareMetres.toFixed(2)} m²
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {isDerelict && (
                 <div className="mt-1.5 pt-1.5 border-t border-space-800/70 max-h-32 overflow-y-auto pr-1">
                   <div className="text-[10px] uppercase tracking-wide text-space-500">Derelict</div>

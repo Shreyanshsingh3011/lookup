@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { isDerelictByName } from '../lib/debris';
+import { derelictByCatalogue } from './useSatcat';
 import { observerToGeodetic, parseSatrec, skySampleAt, trailPoints } from '../lib/sky';
 import type { LiveSatellite, SkyObjectKind } from '../components/sky/SatelliteMarker';
-import type { Observer, Pass, TleRecord } from '../types';
+import type { Observer, Pass, SatcatEntry, TleRecord } from '../types';
 
 /**
  * Propagate every TLE to `displayTime` and keep the ones currently above the
@@ -21,7 +22,13 @@ export function useSkyObjects(
    * is spent rocket bodies. This is only the fallback for the ones the name
    * cannot prove either way.
    */
-  defaultKind: SkyObjectKind = 'active'
+  defaultKind: SkyObjectKind = 'active',
+  /**
+   * Catalogue metadata, when it could be fetched. Takes precedence over the
+   * name, because it is an answer where the name is only ever an inference —
+   * nothing in "ENVISAT" says the satellite died in 2012.
+   */
+  satcat?: Map<string, SatcatEntry>
 ): LiveSatellite[] {
   const satrecs = useMemo(
     () =>
@@ -52,9 +59,14 @@ export function useSkyObjects(
         sample,
         trail: trailPoints(rec, observerGd, displayTime),
         nextPassTime: nextPass?.start.time ?? null,
-        kind: isDerelictByName(tle.name) ? 'derelict' : defaultKind,
+        // Catalogue first, name second, caller's default last. Each step only
+        // runs when the one before it had nothing to say.
+        kind: (derelictByCatalogue(satcat?.get(tle.satnum)) ?? isDerelictByName(tle.name))
+          ? 'derelict'
+          : defaultKind,
+        satcat: satcat?.get(tle.satnum) ?? null,
       });
     }
     return out;
-  }, [satrecs, observerGd, displayTime, passes, defaultKind]);
+  }, [satrecs, observerGd, displayTime, passes, defaultKind, satcat]);
 }

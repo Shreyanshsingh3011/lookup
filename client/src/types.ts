@@ -213,3 +213,41 @@ export interface DebrisCloudResponse {
   fetchedAt: string;
   tles: TleRecord[];
 }
+
+/**
+ * Catalogue metadata for one object, which element sets do not carry.
+ *
+ * A TLE says where something is, never whether anything aboard still works.
+ * This is what closes that gap — see server/src/satcat.ts.
+ */
+export type OpsStatus =
+  | 'operational'
+  | 'nonoperational'
+  | 'partially-operational'
+  | 'backup'
+  | 'spare'
+  | 'extended-mission'
+  | 'decayed'
+  | 'unknown';
+
+export interface SatcatEntry {
+  satnum: string;
+  name: string;
+  objectType: 'PAYLOAD' | 'ROCKET BODY' | 'DEBRIS' | 'UNKNOWN';
+  opsStatus: OpsStatus;
+  /** Radar cross-section in square metres, where measured. */
+  rcsSquareMetres: number | null;
+  launchDate: string | null;
+  decayDate: string | null;
+}
+
+export interface SatcatResponse {
+  group: string;
+  count: number;
+  source: 'live' | 'cache' | 'unavailable';
+  endpoint?: string;
+  fetchedAt: string | null;
+  error?: string;
+  derelictCount: number;
+  entries: SatcatEntry[];
+}

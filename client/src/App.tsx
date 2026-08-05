@@ -35,6 +35,7 @@ const SkyDome = lazy(() =>
 );
 import { useConnection } from './hooks/useConnection';
 import { useDebrisSky } from './hooks/useDebrisSky';
+import { useSatcat } from './hooks/useSatcat';
 import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
@@ -139,6 +140,10 @@ function App() {
     observedAt: Date;
   } | null>(null);
   const logbookRef = useRef<HTMLDivElement>(null);
+
+  // Catalogue metadata for whatever groups are being drawn. Purely additive:
+  // if SATCAT cannot be reached the dome keeps classifying by name.
+  const satcat = useSatcat(groups);
 
   // The dome's debris layer. Nothing is fetched until the layer is switched on,
   // and once fetched it stays, so toggling it off and back does not re-request.
@@ -414,6 +419,7 @@ function App() {
               debrisError={debrisSky.error}
               debrisUnreachable={debrisSky.unreachableCount}
               onGoToTime={time.goToTime}
+              satcat={satcat.byId}
             />
           </Suspense>
           <TimeScrubber control={time} />

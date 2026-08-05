@@ -10,6 +10,7 @@ import type {
   GroupCatalogueResponse,
   Observer,
   PassesResponse,
+  SatcatResponse,
   SatelliteSearchResponse,
   SingleTleResponse,
   SmallBodyResponse,
@@ -139,6 +140,17 @@ export function searchSatellites(query: string): Promise<SatelliteSearchResponse
 /** Amateur radio services for a satellite. Never rejects on an unreachable register. */
 export function fetchTransmitters(satnum: string): Promise<TransmitterResponse> {
   return apiFetch<TransmitterResponse>(`/api/radio/${encodeURIComponent(satnum)}`);
+}
+
+/**
+ * Catalogue metadata for one group: declared type and operational status.
+ *
+ * Never rejects on an unreachable SATCAT — the server reports source
+ * "unavailable" with an empty list, and the caller falls back to classifying
+ * by name exactly as before.
+ */
+export function fetchSatcat(group: string): Promise<SatcatResponse> {
+  return apiFetch<SatcatResponse>(`/api/satcat/${encodeURIComponent(group)}`);
 }
 
 /** Comets and asteroids bright enough to look for. Never rejects. */

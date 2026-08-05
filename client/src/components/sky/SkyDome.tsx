@@ -27,7 +27,7 @@ import { PlanetLayer } from './PlanetLayer';
 import { SatelliteMarker } from './SatelliteMarker';
 import { MeteorLayer } from './MeteorLayer';
 import { StarLayer } from './StarLayer';
-import type { Observer, Pass, TleRecord } from '../../types';
+import type { Observer, Pass, SatcatEntry, TleRecord } from '../../types';
 
 /** Stable empty array, so toggling the layer off doesn't churn memoisation. */
 const EMPTY_SATELLITES: ReturnType<typeof useSkyObjects> = [];
@@ -35,6 +35,7 @@ const EMPTY_SATELLITES: ReturnType<typeof useSkyObjects> = [];
 const EMPTY_PASSES: Pass[] = [];
 const EMPTY_TLES: TleRecord[] = [];
 const EMPTY_NOTES: Map<string, string> = new Map();
+const EMPTY_SATCAT: Map<string, SatcatEntry> = new Map();
 
 /**
  * The camera orbits at a tiny fixed radius around the dome's centre, so the
@@ -163,6 +164,8 @@ interface SceneProps {
   onLogSighting?: (subject: string, satnum: string | null) => void;
   /** How many derelicts are actually above the horizon, which is often none. */
   onDebrisCountChange: (count: number) => void;
+  /** Catalogue metadata, empty when SATCAT could not be reached. */
+  satcat: Map<string, SatcatEntry>;
 }
 
 function SkyScene({
@@ -183,8 +186,9 @@ function SkyScene({
   debrisNotes,
   onLogSighting,
   onDebrisCountChange,
+  satcat,
 }: SceneProps) {
-  const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
+  const allSatellites = useSkyObjects(tles, observer, displayTime, passes, 'active', satcat);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
 
   // Propagated by the same hook, tagged so the marker can draw them apart. The
@@ -201,7 +205,7 @@ function SkyScene({
     return debrisTles.filter((t) => !already.has(t.satnum));
   }, [debrisTles, tles, layers.satellites]);
 
-  const allDebris = useSkyObjects(extraDebrisTles, observer, displayTime, EMPTY_PASSES, 'derelict');
+  const allDebris = useSkyObjects(extraDebrisTles, observer, displayTime, EMPTY_PASSES, 'derelict', satcat);
   const debris = layers.debris ? allDebris : EMPTY_SATELLITES;
   const planetPositions = usePlanetPositions(
     displayTime,
@@ -445,6 +449,8 @@ interface Props {
   onLogSighting?: (subject: string, satnum: string | null) => void;
   /** Move the time scrubber, so "nothing up now" can offer a way to see it. */
   onGoToTime?: (time: Date) => void;
+  /** Catalogue metadata for the drawn groups. Empty means fall back to names. */
+  satcat?: Map<string, SatcatEntry>;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -481,6 +487,7 @@ export function SkyDome({
   onDebrisLayerChange,
   onLogSighting,
   onGoToTime,
+  satcat = EMPTY_SATCAT,
   debrisLoading = false,
   debrisError = null,
   debrisUnreachable = 0,
@@ -694,6 +701,7 @@ export function SkyDome({
               debrisNotes={debrisNotes}
               onLogSighting={onLogSighting}
               onDebrisCountChange={setDebrisCount}
+              satcat={satcat}
             />
           </Suspense>
         </Canvas>
