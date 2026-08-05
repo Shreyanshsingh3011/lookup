@@ -247,7 +247,9 @@ test("no derelict claims a catalogue number belonging to something else", () => 
  * mean the two have been confused again.
  */
 test("peak fragment counts are consistent with the live populations observed in production", () => {
-  const observed: Record<string, number> = {
+  // What CelesTrak could propagate on 2026-08-05 — smaller than Space-Track's
+  // in-orbit count, because a catalogued object need not have current elements.
+  const trackable: Record<string, number> = {
     "fengyun-1c": 1932,
     "cosmos-2251": 594,
     "iridium-33": 111,
@@ -255,12 +257,18 @@ test("peak fragment counts are consistent with the live populations observed in 
   };
 
   for (const cloud of DEBRIS_CLOUDS) {
-    const live = observed[cloud.id];
+    const live = trackable[cloud.id];
     assert.ok(live !== undefined, `${cloud.id} has no observed live count recorded`);
+
+    // The three counts must nest: trackable <= still in orbit <= ever catalogued.
+    // Any inversion means two of them have been confused for each other again.
     assert.ok(
-      cloud.peakCatalogued >= live,
-      `${cloud.label}: peak ${cloud.peakCatalogued} is below the observed live count ${live}, ` +
-        `which means the field is being used as a current population again`
+      live <= cloud.stillInOrbit,
+      `${cloud.label}: ${live} trackable exceeds ${cloud.stillInOrbit} in orbit`
+    );
+    assert.ok(
+      cloud.stillInOrbit <= cloud.peakCatalogued,
+      `${cloud.label}: ${cloud.stillInOrbit} in orbit exceeds ${cloud.peakCatalogued} ever catalogued`
     );
   }
 });
@@ -369,4 +377,37 @@ test("an explicit catalogue type still overrules the name in both directions", (
   const declared = classify("ATLAS CENTAUR 2", "PAYLOAD");
   assert.equal(declared.type, "PAYLOAD");
   assert.equal(declared.source, "field");
+});
+
+/**
+ * Space-Track's SATCAT, queried for every catalogued debris object on
+ * 2026-08-05: 35,825 records, of which 23,327 carry a decay date and 12,498 do
+ * not. The per-cloud figures below come from that same query.
+ *
+ * This pins them because they were the thing most recently gotten wrong — and
+ * because the ratios encode something real. Cosmos 1408 has lost all but four
+ * of 1,806 fragments in five years; Fengyun-1C, sitting far higher, has kept
+ * two thirds of its 3,531 after nineteen.
+ */
+test("reentry fractions match what the altitude bands predict", () => {
+  const survival = (id: string) => {
+    const c = DEBRIS_CLOUDS.find((x) => x.id === id)!;
+    return c.stillInOrbit / c.peakCatalogued;
+  };
+
+  // Cosmos 1408 is the lowest of the four and has essentially gone.
+  assert.ok(survival("cosmos-1408") < 0.01, "Cosmos 1408 should be all but cleared out");
+  // Fengyun-1C reaches 3800 km and has kept most of itself.
+  assert.ok(survival("fengyun-1c") > 0.6, "Fengyun-1C should have kept the majority");
+  // Ordering follows the top of each altitude band, which is the mechanism.
+  const byBand = [...DEBRIS_CLOUDS].sort((a, b) => a.altitudeBandKm[1] - b.altitudeBandKm[1]);
+  assert.equal(byBand[0].id, "cosmos-1408", "lowest band");
+  assert.equal(byBand[byBand.length - 1].id, "fengyun-1c", "highest band");
+  assert.ok(survival(byBand[0].id) < survival(byBand[byBand.length - 1].id));
+});
+
+test("every cloud records when its counts were taken", () => {
+  for (const cloud of DEBRIS_CLOUDS) {
+    assert.match(cloud.countsAsOf, /^\d{4}-\d{2}-\d{2}$/, `${cloud.label}: countsAsOf`);
+  }
 });

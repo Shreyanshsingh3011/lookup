@@ -114,16 +114,37 @@ export interface DebrisCloud {
    * not a current one, and the two differ by a lot.
    *
    * Drag removes fragments continuously, fastest from the lowest orbits, so a
-   * cloud shrinks from the bottom up. Measured against the live catalogue on
-   * 2026-08-05: Fengyun-1C 3400 -> 1932, Cosmos 2251 1700 -> 594, Iridium 33
-   * 630 -> 111, and Cosmos 1408 1500 -> 3, that last one being a 2021 test
-   * into orbits low enough that almost all of it is already back down.
+   * cloud shrinks from the bottom up. Taken from Space-Track's SATCAT on
+   * 2026-08-05, counting every catalogued fragment including those that have
+   * since reentered:
    *
-   * So this must never be presented as "what is up there". It is only here to
-   * warn about the size of the fetch before making it; the live count comes
-   * back with the fragments and is the number to show.
+   *   Fengyun-1C   3531 catalogued, 1214 reentered, 2317 still up
+   *   Cosmos 2251  1714 catalogued, 1096 reentered,  618 still up
+   *   Iridium 33    656 catalogued,  539 reentered,  117 still up
+   *   Cosmos 1408  1806 catalogued, 1802 reentered,    4 still up
+   *
+   * Cosmos 1408 is the case that proves the mechanism rather than merely
+   * illustrating it: a 2021 test into orbits low enough that all but four
+   * fragments carry a decay date already. Earlier versions of this file guessed
+   * 1500 for it and showed that as the present population.
+   *
+   * So this must never be presented as "what is up there" — that is
+   * `stillInOrbit`, and what CelesTrak can currently propagate is smaller again.
    */
   peakCatalogued: number;
+  /**
+   * Fragments catalogued and not yet reentered, from Space-Track's SATCAT.
+   *
+   * A third number, and genuinely distinct from the other two. Space-Track
+   * counts everything catalogued without a decay date; CelesTrak's per-event
+   * group counts only what currently has published element sets, which is
+   * consistently fewer — 1,932 against 2,317 for Fengyun-1C. Neither is wrong.
+   * One is "still up there", the other is "still trackable", and the gap is
+   * objects the catalogue knows about but cannot presently propagate.
+   */
+  stillInOrbit: number;
+  /** When the two counts above were taken, since both move. */
+  countsAsOf: string;
   /** Typical altitude band of the cloud, km. */
   altitudeBandKm: [number, number];
 }
@@ -143,7 +164,9 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event:
       "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
     eventDate: "2007-01-11",
-    peakCatalogued: 3400,
+    peakCatalogued: 3531,
+    stillInOrbit: 2317,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 3800],
   },
   {
@@ -153,7 +176,9 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event:
       "A derelict Russian communications satellite collided with the working Iridium 33 — the first accidental collision between two intact satellites.",
     eventDate: "2009-02-10",
-    peakCatalogued: 1700,
+    peakCatalogued: 1714,
+    stillInOrbit: 618,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 1700],
   },
   {
@@ -162,7 +187,9 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     label: "Iridium 33",
     event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
     eventDate: "2009-02-10",
-    peakCatalogued: 630,
+    peakCatalogued: 656,
+    stillInOrbit: 117,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 1400],
   },
   {
@@ -172,7 +199,9 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event:
       "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
     eventDate: "2021-11-15",
-    peakCatalogued: 1500,
+    peakCatalogued: 1806,
+    stillInOrbit: 4,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 1100],
   },
 ];

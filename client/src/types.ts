@@ -178,6 +178,9 @@ export interface DebrisCloud {
   eventDate: string;
   /** Historical peak, not the current population. See server/src/debris.ts. */
   peakCatalogued: number;
+  /** Catalogued and not yet reentered. Larger than what CelesTrak can propagate. */
+  stillInOrbit: number;
+  countsAsOf: string;
   altitudeBandKm: [number, number];
 }
 

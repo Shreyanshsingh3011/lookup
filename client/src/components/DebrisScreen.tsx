@@ -153,23 +153,24 @@ export function DebrisScreen({
                   </span>
                 </div>
                 <p className="text-[11px] text-space-300 leading-relaxed mt-0.5">{cloud.event}</p>
-                {/* Two different numbers, and saying which is which matters:
-                    the peak is history, the live count is what is still up
-                    there. Showing the peak alone read as the present and
-                    overstated every cloud — Cosmos 1408 by five hundred fold. */}
+                {/* Three counts, and the differences between them are the
+                    story. Ever catalogued is history. Still in orbit is what is
+                    up there, from Space-Track's decay dates. What has current
+                    element sets is smaller again, because the catalogue knows
+                    about objects it cannot presently propagate. Showing only
+                    the first read as the present and overstated every cloud —
+                    Cosmos 1408 by four hundred fold. */}
                 <p className="text-[11px] text-space-400 mt-1">
-                  {openCloud?.cloud.id === cloud.id ? (
-                    <>
-                      <span className="text-amber-glow">
-                        {openCloud.count.toLocaleString()} still catalogued
-                      </span>{' '}
-                      of about {cloud.peakCatalogued.toLocaleString()} at its peak
-                    </>
-                  ) : (
-                    <>about {cloud.peakCatalogued.toLocaleString()} fragments catalogued at its peak</>
-                  )}
-                  , spread from {cloud.altitudeBandKm[0]} to{' '}
-                  {cloud.altitudeBandKm[1].toLocaleString()} km. Drag has been removing them from the
+                  <span className="text-amber-glow">
+                    {cloud.stillInOrbit.toLocaleString()} still in orbit
+                  </span>{' '}
+                  of {cloud.peakCatalogued.toLocaleString()} ever catalogued —{' '}
+                  {(cloud.peakCatalogued - cloud.stillInOrbit).toLocaleString()} have reentered.
+                  {openCloud?.cloud.id === cloud.id && (
+                    <> {openCloud.count.toLocaleString()} of them have current element sets.</>
+                  )}{' '}
+                  Spread from {cloud.altitudeBandKm[0]} to{' '}
+                  {cloud.altitudeBandKm[1].toLocaleString()} km; drag has been removing them from the
                   bottom up ever since.
                 </p>
               </div>

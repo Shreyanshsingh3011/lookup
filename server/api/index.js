@@ -41924,7 +41924,9 @@ var DEBRIS_CLOUDS = [
     label: "Fengyun-1C",
     event: "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
     eventDate: "2007-01-11",
-    peakCatalogued: 3400,
+    peakCatalogued: 3531,
+    stillInOrbit: 2317,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 3800]
   },
   {
@@ -41933,7 +41935,9 @@ var DEBRIS_CLOUDS = [
     label: "Cosmos 2251",
     event: "A derelict Russian communications satellite collided with the working Iridium 33 \u2014 the first accidental collision between two intact satellites.",
     eventDate: "2009-02-10",
-    peakCatalogued: 1700,
+    peakCatalogued: 1714,
+    stillInOrbit: 618,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 1700]
   },
   {
@@ -41942,7 +41946,9 @@ var DEBRIS_CLOUDS = [
     label: "Iridium 33",
     event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
     eventDate: "2009-02-10",
-    peakCatalogued: 630,
+    peakCatalogued: 656,
+    stillInOrbit: 117,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 1400]
   },
   {
@@ -41951,7 +41957,9 @@ var DEBRIS_CLOUDS = [
     label: "Cosmos 1408",
     event: "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
     eventDate: "2021-11-15",
-    peakCatalogued: 1500,
+    peakCatalogued: 1806,
+    stillInOrbit: 4,
+    countsAsOf: "2026-08-05",
     altitudeBandKm: [200, 1100]
   }
 ];
