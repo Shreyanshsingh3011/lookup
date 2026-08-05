@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { nextDerelictRise } from './debris';
+import { nextDerelictRise, preFilter } from './debris';
 import { observerToGeodetic, parseSatrec, skySampleAt } from './sky';
 import type { Observer, TleRecord } from '../types';
 
@@ -134,4 +134,54 @@ test('a coarser step still lands on the same rise to within its own resolution',
   assert.equal(coarse.satnum, fine.satnum);
   const gapMinutes = Math.abs(coarse.time.getTime() - fine.time.getTime()) / 60_000;
   assert.ok(gapMinutes <= 2, `coarse step drifted ${gapMinutes} minutes from the fine one`);
+});
+
+/**
+ * The pre-filter is what makes this search affordable, not a nicety.
+ *
+ * nextDerelictRise steps each object forward a minute at a time for a day and
+ * stops early once it finds a rise. An object that can *never* rise here is
+ * therefore the expensive case: it never matches, so it never exits early, and
+ * it costs the full day's scan every single time. With the spent stages now
+ * pulled out of the satellite groups the list is around ninety objects rather
+ * than eight, and the search reruns every minute the sky is empty.
+ *
+ * Measured at 93 objects with nothing able to rise: ~395 ms unfiltered, versus
+ * ~0.1 ms once the coarse filter has removed them from two numbers in the
+ * element set. This test asserts the filter genuinely removes them, which is
+ * the property the cost depends on — rather than asserting a timing, which
+ * would be flaky on shared hardware.
+ */
+test('the coarse filter removes objects that can never rise, before any propagation', () => {
+  const stages: TleRecord[] = [];
+  for (let i = 0; i < 93; i++) {
+    const n = String(10000 + i).padStart(5, '0');
+    const l1 = `1 ${n}U 85097B   26215.38364846 -.00000145  00000+0 -48837-4 0  999`;
+    const l2 = `2 ${n}  20.0000 191.7137 0006582  15.5500 136.7162 15.00000000    1`;
+    const ck = (s: string) => {
+      let t = 0;
+      for (const c of s) {
+        if (c >= '0' && c <= '9') t += Number(c);
+        else if (c === '-') t += 1;
+      }
+      return t % 10;
+    };
+    stages.push({ name: 'SL-16 R/B', satnum: n, line1: l1 + ck(l1), line2: l2 + ck(l2) });
+  }
+
+  // Svalbard at 78.2 N, against stages inclined 20 degrees: no ground track and
+  // no footprint can reach that far, so every one of them is decidable without
+  // propagating anything.
+  const svalbard: Observer = { latitude: 78.2, longitude: 15.6, elevation: 0 };
+  const filtered = preFilter(stages, svalbard);
+
+  assert.equal(filtered.candidates.length, 0, 'nothing at 20 deg inclination can rise at 78 N');
+  assert.equal(filtered.rejected['never-rises'], 93);
+
+  // And the search over what survives is trivially cheap and still correct.
+  assert.equal(nextDerelictRise(filtered.candidates, svalbard, EPOCH, { withinHours: 24 }), null);
+
+  // The unfiltered search agrees on the answer — the filter is a cost fix, not
+  // a behaviour change.
+  assert.equal(nextDerelictRise(stages, svalbard, EPOCH, { withinHours: 24 }), null);
 });
