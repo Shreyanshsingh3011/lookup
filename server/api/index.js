@@ -43156,9 +43156,9 @@ var NOTABLE_DERELICTS = [
   },
   {
     satnum: "22195",
-    label: "Cosmos 2251",
+    label: "LAGEOS 2",
     kind: "payload",
-    note: "The parent object of the 2009 collision cloud, if its catalogue entry still resolves."
+    note: "A passive sphere of brass and aluminium studded with retroreflectors, launched 1992 to be ranged by laser. No power, no instruments, and an orbit so high and stable it will still be there in eight million years."
   }
 ];
 function statusFromError(message) {

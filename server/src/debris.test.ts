@@ -194,3 +194,35 @@ test("the reach filter accounts for everything it was given", () => {
   assert.deepEqual(result.candidates.map((t) => t.name), ["KEEP"]);
   assert.equal(MIN_USEFUL_PERIGEE_KM > 0, true);
 });
+
+test("no derelict claims a catalogue number belonging to something else", () => {
+  // Checked against what the live catalogue actually returned for each id.
+  // 22195 was originally listed as Cosmos 2251 and is in fact LAGEOS 2 —
+  // Cosmos 2251 is 22675, and it stopped being an intact object in 2009 when
+  // it was destroyed, so it could never have belonged in a list of derelicts
+  // you can go and look at. Production was the only place that error was
+  // visible, because it needs the real catalogue to resolve the number.
+  const knownNames: Record<string, RegExp> = {
+    "00694": /ATLAS CENTAUR/i,
+    "02802": /SL-8/i,
+    "16182": /SL-16/i,
+    "23705": /SL-16/i,
+    "10967": /SEASAT/i,
+    "00900": /CALSPHERE/i,
+    "20580": /HST|HUBBLE/i,
+    "22195": /LAGEOS/i,
+  };
+
+  for (const derelict of NOTABLE_DERELICTS) {
+    const expected = knownNames[derelict.satnum];
+    assert.ok(expected, `${derelict.satnum} has no verified catalogue name — check it against the live catalogue`);
+    assert.ok(
+      expected.test(derelict.label),
+      `${derelict.satnum} is labelled "${derelict.label}" but the catalogue calls it something matching ${expected}`
+    );
+  }
+
+  // The destroyed parent of the 2009 collision must not be listed as an intact
+  // object, whatever its number.
+  assert.ok(!NOTABLE_DERELICTS.some((d) => /cosmos 2251/i.test(d.label)));
+});
