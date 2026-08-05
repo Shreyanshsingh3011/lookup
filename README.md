@@ -2,6 +2,20 @@
 
 A Heavens-Above-style satellite tracker: visible pass predictions, an interactive 3D sky dome, and (coming soon) a planetarium star chart.
 
+## Live
+
+| | |
+| --- | --- |
+| App | https://lookup-client.vercel.app |
+| API | https://lookup-server-sand.vercel.app |
+| API route index | https://lookup-server-sand.vercel.app/api |
+
+⚠️ `lookup-server.vercel.app` — without the `-sand` — is **not this project**.
+Vercel's `*.vercel.app` names come from one namespace shared across the whole
+platform, and that one belongs to somebody else. It resolves and answers, so
+using it by mistake looks like our API misbehaving rather than like a wrong
+address. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Status
 
 **Milestone 1:** project scaffold, Celestrak TLE proxy/cache backend, satellite.js + astronomy-engine visible-pass prediction, and a pass-table UI for the ISS/space-stations group.

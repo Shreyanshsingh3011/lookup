@@ -42981,6 +42981,69 @@ async function getSmallBodies() {
   }
 }
 
+// src/routes.ts
+var ROUTE_DESCRIPTIONS = {
+  "GET /api": "This index: every mounted route, with a one-line description.",
+  "GET /api/routes": "Alias of GET /api.",
+  "GET /api/health": "Liveness check. Returns ok and the server's clock.",
+  "GET /api/groups": "The catalogue of satellite groups the picker is built from, and the cap on how many objects a pass search will scan.",
+  "GET /api/satellites/search": "Search the catalogue by name via Celestrak's NAME query. Requires ?q= of at least 3 characters.",
+  "GET /api/tle/:group": "Orbital elements for one named group. Optional ?limit= keeps only the brightest, for callers that only intend to draw them.",
+  "GET /api/tle/satellite/:catnr": "Orbital elements for one satellite by NORAD catalogue number. 404 means the object is not in the catalogue, which usually means it has reentered.",
+  "GET /api/passes": "Visible passes for an observer. Requires ?lat= and ?lon=; optional ?groups=, ?days=, ?minEl=, ?maxMag=, ?satnum=, ?weather=0.",
+  "POST /api/passes/custom": "Visible passes for caller-supplied element sets, for satellites outside the tracked groups.",
+  "GET /api/debris/catalogue": "The debris screen's two collections: named breakup clouds, and notable derelicts resolved individually so a vanished catalogue number is reported per object.",
+  "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
+  "GET /api/small-bodies": "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
+  "GET /api/radio/:catnr": "Amateur radio services for a satellite, from the SatNOGS register. An empty list means no known active downlink.",
+  "GET /api/starlink/trains": "Starlink satellites still flying in formation close enough to be seen as a train.",
+  "GET /api/earth-imagery": "The most recent full-disc image from whichever geostationary weather satellite best sees the observer's longitude.",
+  "GET /api/aircraft": "Live ADS-B aircraft near the observer, from whichever provider answers first.",
+  "GET /api/ai/status": "Whether the AI-backed endpoints below are configured and available.",
+  "POST /api/explain": "AI explanation of an object in the sky. Rate limited.",
+  "POST /api/orbit-advice": "AI orbit and mission-profile advice. Rate limited."
+};
+function collectRoutes(app2) {
+  const stack = app2._router?.stack;
+  if (!Array.isArray(stack)) return [];
+  const routes = [];
+  for (const layer of stack) {
+    if (!layer.route) continue;
+    const paths = Array.isArray(layer.route.path) ? layer.route.path : [layer.route.path];
+    for (const path5 of paths) {
+      for (const [method, enabled] of Object.entries(layer.route.methods)) {
+        if (!enabled || method === "head" || method === "_all") continue;
+        const key = `${method.toUpperCase()} ${path5}`;
+        const description = ROUTE_DESCRIPTIONS[key];
+        routes.push({
+          method: method.toUpperCase(),
+          path: path5,
+          description: description ?? "No description yet \u2014 see ROUTE_DESCRIPTIONS in server/src/routes.ts.",
+          documented: description !== void 0
+        });
+      }
+    }
+  }
+  return routes.sort((a, b) => {
+    const left = `${a.method} ${a.path}`;
+    const right = `${b.method} ${b.path}`;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+}
+var CANONICAL_HOST = "lookup-server-sand.vercel.app";
+function buildRouteIndex(app2) {
+  const routes = collectRoutes(app2);
+  const undocumentedCount = routes.filter((r) => !r.documented).length;
+  return {
+    service: "lookup-server",
+    canonicalHost: CANONICAL_HOST,
+    count: routes.length,
+    undocumentedCount,
+    routes,
+    note: routes.length === 0 ? "The route table could not be read from this Express version. This is a bug in the index, not an empty server." : void 0
+  };
+}
+
 // src/debris.ts
 function classify(name, objectType) {
   const declared = normaliseObjectType(objectType);
@@ -43150,6 +43213,9 @@ app.use(import_express.default.json());
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: (/* @__PURE__ */ new Date()).toISOString() });
 });
+var routeIndex = (_req, res) => {
+  res.json(buildRouteIndex(app));
+};
 app.get("/api/groups", (_req, res) => {
   res.json({ groups: SATELLITE_GROUPS, maxScannedSatellites: MAX_SCANNED_SATELLITES });
 });
@@ -43551,7 +43617,9 @@ app.post("/api/orbit-advice", aiRateLimit, async (req, res) => {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build orbit advice" });
   }
 });
-if (!process.env.VERCEL) {
+app.get("/api", routeIndex);
+app.get("/api/routes", routeIndex);
+if (!process.env.VERCEL && !process.env.LOOKUP_NO_LISTEN) {
   app.listen(PORT, () => {
     console.log(`lookup server listening on http://localhost:${PORT}`);
   });

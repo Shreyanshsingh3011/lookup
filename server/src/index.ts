@@ -30,6 +30,7 @@ import { findTrains } from "./starlink.js";
 import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 import { getTransmitters } from "./radio.js";
 import { getSmallBodies } from "./smallBodies.js";
+import { buildRouteIndex } from "./routes.js";
 import {
   classify,
   DEBRIS_CLOUDS,
@@ -48,6 +49,20 @@ app.use(express.json());
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
+
+/**
+ * What this server actually serves.
+ *
+ * Additive: /api/health is unchanged and stays the liveness check. This exists
+ * so that finding out whether an endpoint is live does not require guessing
+ * its path, where a wrong guess reads as a broken service.
+ *
+ * Registered last, after every other route, so the index it walks is complete.
+ * Both spellings answer because both are the obvious thing to try.
+ */
+const routeIndex = (_req: express.Request, res: express.Response) => {
+  res.json(buildRouteIndex(app));
+};
 
 /**
  * The catalogue the picker is built from.
@@ -606,9 +621,16 @@ app.post("/api/orbit-advice", aiRateLimit, async (req, res) => {
   }
 });
 
+// Mounted here, below every other route, because the index walks the router's
+// own table and has to be registered after everything it is meant to list.
+app.get("/api", routeIndex);
+app.get("/api/routes", routeIndex);
+
 // Vercel invokes the exported app directly per-request rather than through a
 // bound port, so a real listener is only useful (and only started) locally.
-if (!process.env.VERCEL) {
+// LOOKUP_NO_LISTEN lets the route-index test import this module for its router
+// table without leaving a listening socket that keeps the test process alive.
+if (!process.env.VERCEL && !process.env.LOOKUP_NO_LISTEN) {
   app.listen(PORT, () => {
     console.log(`lookup server listening on http://localhost:${PORT}`);
   });
