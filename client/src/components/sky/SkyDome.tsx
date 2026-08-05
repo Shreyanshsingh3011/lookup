@@ -6,7 +6,7 @@ import catalog from '../../data/skyCatalog.json';
 import { fetchExplanation } from '../../api/client';
 import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
-import { nextDerelictRise } from '../../lib/debris';
+import { isDerelictByName, nextDerelictRise } from '../../lib/debris';
 import type { BoresightCandidate } from '../../lib/boresight';
 import { findBoresightMatch } from '../../lib/boresight';
 import type { ExplainResult, ExplainSubject } from '../../lib/explain';
@@ -190,7 +190,18 @@ function SkyScene({
   // Propagated by the same hook, tagged so the marker can draw them apart. The
   // list arrives already cut down by the coarse reach filter, which matters
   // here far more than in the static pass table: this runs on every tick.
-  const allDebris = useSkyObjects(debrisTles, observer, displayTime, EMPTY_PASSES, 'derelict');
+  // Deduplicated against the satellite groups first. Six of the eight curated
+  // derelicts are also in CelesTrak's "visual" group, which is a default here
+  // — so without this they are propagated and drawn twice, one marker exactly
+  // on top of the other. They are already correctly drawn as derelicts over
+  // there, since kind is decided per object rather than per layer.
+  const extraDebrisTles = useMemo(() => {
+    if (!layers.satellites) return debrisTles;
+    const already = new Set(tles.map((t) => t.satnum));
+    return debrisTles.filter((t) => !already.has(t.satnum));
+  }, [debrisTles, tles, layers.satellites]);
+
+  const allDebris = useSkyObjects(extraDebrisTles, observer, displayTime, EMPTY_PASSES, 'derelict');
   const debris = layers.debris ? allDebris : EMPTY_SATELLITES;
   const planetPositions = usePlanetPositions(
     displayTime,
@@ -280,9 +291,18 @@ function SkyScene({
     onCountChange(satellites.length);
   }, [satellites.length, onCountChange]);
 
+  // Derelicts anywhere in the sky, not just the ones the debris layer added.
+  // Most of them arrive through the satellite groups — the brightest-objects
+  // group is 60% spent rocket bodies — so counting only the extra layer would
+  // report "none" while a dozen were on screen.
+  const derelictsUp = useMemo(
+    () => satellites.filter((s) => s.kind === 'derelict').length + debris.length,
+    [satellites, debris.length]
+  );
+
   useEffect(() => {
-    onDebrisCountChange(debris.length);
-  }, [debris.length, onDebrisCountChange]);
+    onDebrisCountChange(derelictsUp);
+  }, [derelictsUp, onDebrisCountChange]);
 
   // The highest satellite is the best thing to point a newcomer at.
   const highest = satellites.reduce<(typeof satellites)[number] | null>(
@@ -364,7 +384,7 @@ function SkyScene({
         <SatelliteMarker
           key={`debris-${sat.satnum}`}
           sat={sat}
-          tle={debrisTles.find((t) => t.satnum === sat.satnum)}
+          tle={extraDebrisTles.find((t) => t.satnum === sat.satnum)}
           selected={selected === sat.satnum}
           onSelect={handleSelect}
           note={debrisNotes.get(sat.satnum)}
@@ -511,10 +531,31 @@ export function SkyDome({
     () => new Date(Math.floor(displayTime.getTime() / 60_000) * 60_000),
     [displayTime]
   );
+  // Every derelict the dome could draw, from either source and deduplicated —
+  // the curated shortlist plus every spent stage in the chosen groups, which
+  // is where the great majority of them actually come from.
+  const allDerelictTles = useMemo(() => {
+    const seen = new Set<string>();
+    const out: TleRecord[] = [];
+    for (const t of tles) {
+      if (isDerelictByName(t.name) && !seen.has(t.satnum)) {
+        seen.add(t.satnum);
+        out.push(t);
+      }
+    }
+    for (const t of debrisTles) {
+      if (!seen.has(t.satnum)) {
+        seen.add(t.satnum);
+        out.push(t);
+      }
+    }
+    return out;
+  }, [tles, debrisTles]);
+
   const nextRise = useMemo(() => {
-    if (!debrisEnabled || debrisCount > 0 || debrisTles.length === 0) return null;
-    return nextDerelictRise(debrisTles, observer, riseSearchFrom);
-  }, [debrisEnabled, debrisCount, debrisTles, observer, riseSearchFrom]);
+    if (!debrisEnabled || debrisCount > 0 || allDerelictTles.length === 0) return null;
+    return nextDerelictRise(allDerelictTles, observer, riseSearchFrom);
+  }, [debrisEnabled, debrisCount, allDerelictTles, observer, riseSearchFrom]);
 
   // Aircraft are live-only: they are where they are now, so they are not tied
   // to the time scrubber the way propagated satellite positions are.
@@ -859,15 +900,18 @@ export function SkyDome({
             ) : debrisCount > 0 ? (
               <>
                 <span className="text-amber-glow">
-                  {debrisCount} of {debrisTles.length} derelicts above the horizon
+                  {debrisCount} of {allDerelictTles.length} tracked derelicts above the horizon
                 </span>{' '}
-                — drawn in amber. Breakup clouds are not drawn: their fragments are far too faint to see.
+                — drawn in amber. Spent rocket bodies count as derelict whichever group they arrived
+                in; most of the brightest-objects group is spent stages. Breakup clouds are not drawn:
+                their fragments are far too faint to see.
               </>
             ) : (
               <>
-                <span className="text-space-300">None of the {debrisTles.length} tracked derelicts</span>{' '}
-                are above the horizon right now — the usual state, since this is a handful of objects
-                and each is up only a small fraction of the day.{' '}
+                <span className="text-space-300">
+                  None of the {allDerelictTles.length} tracked derelicts
+                </span>{' '}
+                are above the horizon right now.{' '}
                 {nextRise ? (
                   <>
                     Next is {nextRise.name} at{' '}

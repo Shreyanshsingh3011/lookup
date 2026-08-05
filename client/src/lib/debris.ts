@@ -320,3 +320,29 @@ export function nextDerelictRise(
 
   return best;
 }
+
+/**
+ * Whether an object's name already tells you it is dead.
+ *
+ * The naming convention is reliable in one direction only. A name containing
+ * "R/B" or ending "DEB" is definitely a spent stage or a fragment — that is
+ * what those names mean, and a spent stage is derelict by definition, with no
+ * judgement call involved. A name without either is only *probably* a working
+ * payload: Envisat, ERS-1, Seasat and Hitomi are all dead, and nothing in
+ * their names says so.
+ *
+ * So this returns true only for the cases the name proves, and callers treat
+ * everything else as active. That errs towards drawing a dead payload as
+ * though it were alive, which is the wrong answer — but it is a wrong answer
+ * the data supports, where the alternative would be guessing.
+ *
+ * This matters more than it looks. CelesTrak's "visual" group — the brightest
+ * objects, and one of this app's defaults — is 157 objects of which 93 are
+ * spent rocket bodies. Drawing those as working satellites would mean most of
+ * what the dome shows is mislabelled.
+ */
+export function isDerelictByName(name: string): boolean {
+  const upper = name.toUpperCase();
+  if (/\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/.test(upper)) return true;
+  return /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b/.test(upper);
+}

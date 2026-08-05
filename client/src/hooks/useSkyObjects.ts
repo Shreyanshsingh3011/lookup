@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { isDerelictByName } from '../lib/debris';
 import { observerToGeodetic, parseSatrec, skySampleAt, trailPoints } from '../lib/sky';
 import type { LiveSatellite, SkyObjectKind } from '../components/sky/SatelliteMarker';
 import type { Observer, Pass, TleRecord } from '../types';
@@ -12,8 +13,15 @@ export function useSkyObjects(
   observer: Observer,
   displayTime: Date,
   passes: Pass[],
-  /** Tags everything from this call, so the dome can draw derelicts apart. */
-  kind: SkyObjectKind = 'active'
+  /**
+   * What to assume for objects whose name does not settle the question.
+   *
+   * Kind is decided per object, not per call: a spent rocket body is derelict
+   * whichever list it arrived in, and most of the brightest satellites group
+   * is spent rocket bodies. This is only the fallback for the ones the name
+   * cannot prove either way.
+   */
+  defaultKind: SkyObjectKind = 'active'
 ): LiveSatellite[] {
   const satrecs = useMemo(
     () =>
@@ -44,9 +52,9 @@ export function useSkyObjects(
         sample,
         trail: trailPoints(rec, observerGd, displayTime),
         nextPassTime: nextPass?.start.time ?? null,
-        kind,
+        kind: isDerelictByName(tle.name) ? 'derelict' : defaultKind,
       });
     }
     return out;
-  }, [satrecs, observerGd, displayTime, passes, kind]);
+  }, [satrecs, observerGd, displayTime, passes, defaultKind]);
 }
