@@ -43776,7 +43776,7 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
 });
 app.get("/api/spacetrack/debris", async (req, res) => {
   const requested = Number(req.query.limit);
-  const limit2 = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 5e3) : 900;
+  const limit2 = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 4e4) : 900;
   const result = await getSpaceTrackDebris(toAlpha5, limit2);
   res.json({
     count: result.objects.length,

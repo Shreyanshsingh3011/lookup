@@ -38,6 +38,7 @@ import { useConnection } from './hooks/useConnection';
 import { useDebrisSky } from './hooks/useDebrisSky';
 import { useSatcat } from './hooks/useSatcat';
 import { usePinnedObjects, MAX_PINNED } from './hooks/usePinnedObjects';
+import { useCatalogueField } from './hooks/useCatalogueField';
 import { useCloudRegion } from './hooks/useCloudRegion';
 import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
@@ -157,6 +158,10 @@ function App() {
   // the same layer and drawn by the same marker — there is no second dome, and
   // the default view does not change because a search happened.
   const pinned = usePinnedObjects(observer);
+
+  // The whole tracked non-active catalogue, for the dome's point field. Fetched
+  // only once the debris layer is on, and reach-filtered before it gets there.
+  const catalogueField = useCatalogueField(observer, debrisLayer);
 
   const domeDebrisTles = useMemo(() => {
     if (pinned.tles.length === 0) return debrisSky.tles;
@@ -476,6 +481,7 @@ function App() {
               onGoToTime={time.goToTime}
               satcat={satcat.byId}
               cloudRegion={cloudRegion}
+              fieldTles={catalogueField.tles}
             />
           </Suspense>
           <TimeScrubber control={time} />

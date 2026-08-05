@@ -28,6 +28,7 @@ import { DomeShell } from './DomeShell';
 import { PlanetLayer } from './PlanetLayer';
 import { SatelliteMarker } from './SatelliteMarker';
 import { DebrisCloudRegion } from './DebrisCloudRegion';
+import { DebrisField } from './DebrisField';
 import { MeteorLayer } from './MeteorLayer';
 import { StarLayer } from './StarLayer';
 import type { Observer, Pass, SatcatEntry, TleRecord } from '../../types';
@@ -220,6 +221,15 @@ interface SceneProps {
   /** True once the field of view is narrow enough to label what is in frame. */
   labelled: boolean;
   onLabelledChange: (labelled: boolean) => void;
+  /**
+   * The whole tracked non-active catalogue, drawn as a point field.
+   *
+   * Kept separate from `debrisTles` because they are drawn by different
+   * machinery for a reason: a handful of objects deserve models, trails and hit
+   * targets, and twelve thousand cannot have them.
+   */
+  fieldTles: TleRecord[];
+  onFieldChange: (info: { tracked: number; visible: number }) => void;
 }
 
 function SkyScene({
@@ -244,6 +254,8 @@ function SkyScene({
   cloudBins,
   labelled,
   onLabelledChange,
+  fieldTles,
+  onFieldChange,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes, 'active', satcat);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
@@ -264,6 +276,31 @@ function SkyScene({
 
   const allDebris = useSkyObjects(extraDebrisTles, observer, displayTime, EMPTY_PASSES, 'derelict', satcat);
   const debris = layers.debris ? allDebris : EMPTY_SATELLITES;
+
+  // The bulk catalogue. Propagation and boresight selection both happen inside
+  // DebrisField's own frame loop — see the note there on why none of it travels
+  // through React state.
+  const [promoted, setPromoted] = useState<string[]>([]);
+  const onPromoted = useCallback((ids: string[]) => setPromoted(ids), []);
+  const onFieldCount = useCallback(
+    (visible: number, tracked: number) => onFieldChange({ tracked, visible }),
+    [onFieldChange]
+  );
+
+  const promotedTles = useMemo(() => {
+    if (promoted.length === 0) return EMPTY_TLES;
+    const wanted = new Set(promoted);
+    return fieldTles.filter((t) => wanted.has(t.satnum));
+  }, [promoted, fieldTles]);
+
+  const promotedObjects = useSkyObjects(
+    promotedTles,
+    observer,
+    displayTime,
+    EMPTY_PASSES,
+    'derelict',
+    satcat
+  );
   const planetPositions = usePlanetPositions(
     displayTime,
     observer.latitude,
@@ -445,6 +482,33 @@ function SkyScene({
       {/* Drawn before the markers so it can never sit in front of one. */}
       {layers.debris && cloudBins.length > 0 && <DebrisCloudRegion bins={cloudBins} />}
 
+      {/* Everything, as data. Drawn before the markers so it never sits in
+          front of one. */}
+      {layers.debris && (
+        <DebrisField
+          tles={fieldTles}
+          observer={observer}
+          displayTime={displayTime}
+          labelled={labelled}
+          onCountChange={onFieldCount}
+          onPromotedChange={onPromoted}
+        />
+      )}
+
+      {/* And the few you are actually pointing at, as objects. */}
+      {promotedObjects.map((sat) => (
+        <SatelliteMarker
+          key={`promoted-${sat.satnum}`}
+          sat={sat}
+          tle={promotedTles.find((t) => t.satnum === sat.satnum)}
+          labelled={labelled}
+          selected={selected === sat.satnum}
+          onSelect={handleSelect}
+          note={debrisNotes.get(sat.satnum)}
+          onLogSighting={onLogSighting}
+        />
+      ))}
+
       {debris.map((sat) => (
         <SatelliteMarker
           key={`debris-${sat.satnum}`}
@@ -516,6 +580,13 @@ interface Props {
   satcat?: Map<string, SatcatEntry>;
   /** A loaded breakup cloud's density field, with the label to describe it. */
   cloudRegion?: { label: string; density: CloudSkyDensity } | null;
+  /**
+   * The whole tracked non-active catalogue, for the bulk point field.
+   *
+   * Everything here is drawn when the debris layer is on. Zooming in promotes
+   * whatever you point at into a full marker.
+   */
+  fieldTles?: TleRecord[];
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -554,6 +625,7 @@ export function SkyDome({
   onGoToTime,
   satcat = EMPTY_SATCAT,
   cloudRegion = null,
+  fieldTles = EMPTY_TLES,
   debrisLoading = false,
   debrisError = null,
   debrisUnreachable = 0,
@@ -575,6 +647,11 @@ export function SkyDome({
   const [debrisCount, setDebrisCount] = useState(0);
   // Zoom level, as a single boolean. See LABEL_FOV_DEG.
   const [labelled, setLabelled] = useState(false);
+  const [fieldInfo, setFieldInfo] = useState({ tracked: 0, visible: 0 });
+  const onFieldChange = useCallback(
+    (info: { tracked: number; visible: number }) => setFieldInfo(info),
+    []
+  );
   const [aimRequest, setAimRequest] = useState(0);
   const [layerState, setLayerState] = useState<SkyLayers>({
     satellites: true,
@@ -774,6 +851,8 @@ export function SkyDome({
               cloudBins={cloudRegion?.density.bins ?? EMPTY_BINS}
               labelled={labelled}
               onLabelledChange={setLabelled}
+              fieldTles={fieldTles}
+              onFieldChange={onFieldChange}
             />
           </Suspense>
         </Canvas>
@@ -998,6 +1077,28 @@ export function SkyDome({
           on a button. None of this is a heads-up display; it is explanation,
           and explanation belongs beside the picture rather than on top of it. */}
       <div className="mt-2 flex flex-col gap-1.5">
+      {/* The bulk field, stated because it is the claim most in need of
+          qualifying. Twelve thousand points on a sky dome look like a sky full
+          of things to see, and not one of them is: at roughly magnitude 12 a
+          fragment is some 250 times fainter than the naked eye reaches. These
+          are catalogued positions plotted as data, and saying so is what makes
+          drawing them defensible. */}
+      {layers.debris && fieldInfo.tracked > 0 && (
+        <p className="text-[11px] leading-snug max-w-md">
+          <span style={{ color: '#8b7fd4' }}>
+            {fieldInfo.visible.toLocaleString()} of {fieldInfo.tracked.toLocaleString()} tracked
+            objects above your horizon
+          </span>
+          <span className="text-space-400">
+            {' '}
+            — the whole catalogue, plotted as points. None of it is visible to the eye; at magnitude{' '}
+            {FRAGMENT_TYPICAL_MAGNITUDE} a fragment is about {Math.round(timesFainterThanEye())} times
+            fainter than the naked-eye limit. Positions are real and propagated exactly the way
+            everything else here is. Zoom in to name whatever you point at.
+          </span>
+        </p>
+      )}
+
       {/* A loaded breakup cloud, stated separately from the derelicts because
           it is a different kind of claim: those are objects you could go and
           look at, this is a shaded region marking where fragments are that

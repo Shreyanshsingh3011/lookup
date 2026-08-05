@@ -235,7 +235,12 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
  */
 app.get("/api/spacetrack/debris", async (req, res) => {
   const requested = Number(req.query.limit);
-  const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 5000) : 900;
+  // No practical cap. The dome draws the bulk population as a single point
+  // field — one geometry, one draw call — so it can hold the whole catalogue,
+  // which is why the earlier 5,000 ceiling existed only for a caller that had
+  // to make a marker per object.
+  const limit =
+    Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 40_000) : 900;
 
   const result = await getSpaceTrackDebris(toAlpha5, limit);
   res.json({
