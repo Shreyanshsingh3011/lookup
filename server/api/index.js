@@ -41890,6 +41890,186 @@ var GravSimEndpoint = class {
   }
 };
 
+// src/debris.ts
+var ROCKET_BODY_NAME = /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|CENTAUR|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
+var DEBRIS_NAME = /\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/;
+function classify(name, objectType) {
+  const declared = normaliseObjectType(objectType);
+  if (declared) return { type: declared, source: "field" };
+  const upper = name.toUpperCase();
+  if (DEBRIS_NAME.test(upper)) {
+    return { type: "DEBRIS", source: "name" };
+  }
+  if (ROCKET_BODY_NAME.test(upper)) {
+    return { type: "ROCKET BODY", source: "name" };
+  }
+  if (/\bUNKNOWN\b|^TBA\b|OBJECT [A-Z]$/.test(upper)) {
+    return { type: "UNKNOWN", source: "name" };
+  }
+  return { type: "PAYLOAD", source: "name" };
+}
+function normaliseObjectType(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const value = raw.trim().toUpperCase();
+  if (value === "PAY" || value === "PAYLOAD") return "PAYLOAD";
+  if (value === "R/B" || value === "ROCKET BODY") return "ROCKET BODY";
+  if (value === "DEB" || value === "DEBRIS") return "DEBRIS";
+  if (value === "UNK" || value === "UNKNOWN") return "UNKNOWN";
+  return null;
+}
+var DEBRIS_CLOUDS = [
+  {
+    id: "fengyun-1c",
+    celestrakGroup: "fengyun-1c-debris",
+    label: "Fengyun-1C",
+    event: "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
+    eventDate: "2007-01-11",
+    peakCatalogued: 3400,
+    altitudeBandKm: [200, 3800]
+  },
+  {
+    id: "cosmos-2251",
+    celestrakGroup: "cosmos-2251-debris",
+    label: "Cosmos 2251",
+    event: "A derelict Russian communications satellite collided with the working Iridium 33 \u2014 the first accidental collision between two intact satellites.",
+    eventDate: "2009-02-10",
+    peakCatalogued: 1700,
+    altitudeBandKm: [200, 1700]
+  },
+  {
+    id: "iridium-33",
+    celestrakGroup: "iridium-33-debris",
+    label: "Iridium 33",
+    event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
+    eventDate: "2009-02-10",
+    peakCatalogued: 630,
+    altitudeBandKm: [200, 1400]
+  },
+  {
+    id: "cosmos-1408",
+    celestrakGroup: "cosmos-1408-debris",
+    label: "Cosmos 1408",
+    event: "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
+    eventDate: "2021-11-15",
+    peakCatalogued: 1500,
+    altitudeBandKm: [200, 1100]
+  }
+];
+var NOTABLE_DERELICTS = [
+  {
+    satnum: "00694",
+    label: "Atlas Centaur 2",
+    kind: "rocket-body",
+    // Not "one of the oldest object in orbit": 1958 Vanguard hardware is
+    // still up there, five years older. The checkable claim is the narrower
+    // one — it has the lowest catalogue number in CelesTrak's bright-objects
+    // group, verified against the live group on 2026-08-05.
+    note: "Launched 1963 and still up there \u2014 the oldest object in the catalogue of naked-eye satellites, though older, fainter hardware from 1958 is also still in orbit."
+  },
+  {
+    satnum: "02802",
+    label: "SL-8 R/B (Cosmos 249)",
+    kind: "rocket-body",
+    note: "A 1967 Soviet upper stage, one of hundreds of SL-8 bodies that make up much of what people actually see pass over."
+  },
+  {
+    satnum: "16182",
+    label: "SL-16 R/B (Zenit-2)",
+    kind: "rocket-body",
+    note: "A Zenit second stage: nine tonnes and eleven metres long, among the brightest derelicts in the sky."
+  },
+  {
+    satnum: "23705",
+    label: "SL-16 R/B",
+    kind: "rocket-body",
+    note: "Another Zenit stage in the same crowded 850 km band, and a frequent close-approach partner."
+  },
+  {
+    satnum: "10967",
+    label: "Seasat 1",
+    kind: "payload",
+    note: "NASA's first ocean-observing radar satellite, dead after 105 days in 1978 from a power fault, still in orbit."
+  },
+  {
+    satnum: "00900",
+    label: "Calsphere 1",
+    kind: "payload",
+    note: "A calibration sphere from 1964 \u2014 no instruments, no power, just a metal ball still going round."
+  },
+  {
+    satnum: "20580",
+    label: "Hubble Space Telescope",
+    kind: "payload",
+    note: "Not derelict, but included as the reference point: a large, bright, well-known object to compare the rest against."
+  },
+  {
+    satnum: "22195",
+    label: "LAGEOS 2",
+    kind: "payload",
+    // The often-quoted "8.4 million years" is LAGEOS-1's figure, and this is
+    // LAGEOS-2 in a slightly lower orbit. Rather than transplant a number
+    // that belongs to the other satellite, state what this one's own
+    // elements support: at ~5,800 km there is effectively no atmosphere, and
+    // the app's own decay estimator returns "stable" for it.
+    note: "Not derelict, and worth being clear about why: a passive sphere of brass and aluminium studded with retroreflectors, with no power and no instruments \u2014 so nothing aboard can fail, and ground stations still range it by laser today. SATCAT lists it operational. It is here as the far end of the scale: an orbit near 5,800 km, where there is effectively no atmosphere left to slow it, and which will outlast everything else on this list by millions of years."
+  }
+];
+function statusFromError(message) {
+  return /no satellite found|404|not found/i.test(message) ? "not-in-catalogue" : "unavailable";
+}
+var EARTH_RADIUS_KM = 6378.137;
+var MU_EARTH = 398600.4418;
+function groundTrackLimitDeg(inclinationDeg) {
+  let wrapped = inclinationDeg;
+  if (wrapped < 0 || wrapped >= 360) wrapped = (wrapped % 360 + 360) % 360;
+  const folded = wrapped > 180 ? 360 - wrapped : wrapped;
+  return folded > 90 ? 180 - folded : folded;
+}
+function footprintRadiusDeg(altitudeKm) {
+  if (!(altitudeKm > 0)) return 0;
+  return Math.acos(EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitudeKm)) * 180 / Math.PI;
+}
+function geometryFromTle(tle) {
+  const inclinationDeg = Number(tle.line2.slice(8, 16));
+  const eccentricity = Number(`0.${tle.line2.slice(26, 33).trim()}`);
+  const meanMotionRevPerDay = Number(tle.line2.slice(52, 63));
+  if (!Number.isFinite(inclinationDeg) || !Number.isFinite(eccentricity) || !(meanMotionRevPerDay > 0)) {
+    return null;
+  }
+  const n = meanMotionRevPerDay * 2 * Math.PI / 86400;
+  const semiMajorAxisKm = Math.cbrt(MU_EARTH / (n * n));
+  if (!Number.isFinite(semiMajorAxisKm)) return null;
+  return {
+    inclinationDeg,
+    perigeeAltitudeKm: semiMajorAxisKm * (1 - eccentricity) - EARTH_RADIUS_KM,
+    apogeeAltitudeKm: semiMajorAxisKm * (1 + eccentricity) - EARTH_RADIUS_KM
+  };
+}
+var MIN_USEFUL_PERIGEE_KM = 130;
+function canEverRise(tle, observerLatitudeDeg) {
+  const geometry = geometryFromTle(tle);
+  if (!geometry) return false;
+  if (!(geometry.perigeeAltitudeKm >= MIN_USEFUL_PERIGEE_KM)) return false;
+  const reach = groundTrackLimitDeg(geometry.inclinationDeg) + footprintRadiusDeg(geometry.apogeeAltitudeKm);
+  return Math.abs(observerLatitudeDeg) <= reach;
+}
+function filterByReach(tles, observerLatitudeDeg) {
+  const candidates = tles.filter((tle) => canEverRise(tle, observerLatitudeDeg));
+  return { candidates, skipped: tles.length - candidates.length };
+}
+function normaliseName(value) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function findCloudParent(cloud, tles) {
+  const target = normaliseName(cloud.label);
+  for (const tle of tles) {
+    if (classify(tle.name).type !== "PAYLOAD") continue;
+    if (normaliseName(tle.name) !== target) continue;
+    return { satnum: tle.satnum, name: tle.name.trim() };
+  }
+  return null;
+}
+
 // src/passes.ts
 var DEFAULT_EXPORT = "default";
 var astronomyNamespace = astronomy_exports;
@@ -41942,8 +42122,8 @@ function standardMagnitude(name) {
   if (n.includes("TIANGONG") || /\bCSS\b/.test(n) || n.includes("TIANHE")) return 0.8;
   if (n.includes("HST") || n.includes("HUBBLE")) return 1.5;
   if (n.includes("STARLINK")) return 4.5;
-  if (/\bDEB\b|DEBRIS|\bFRAG\b/.test(n)) return 8;
-  if (/R\/B|ROCKET BODY|\bAKM\b|CENTAUR|\bBREEZE\b|\bFREGAT\b/.test(n)) return 3.5;
+  if (DEBRIS_NAME.test(n)) return 8;
+  if (ROCKET_BODY_NAME.test(n)) return 3.5;
   return 4.5;
 }
 function sub(a, b) {
@@ -42489,11 +42669,11 @@ function elementsFromLine2(line2) {
     meanMotionRevPerDay: Number(line2.slice(52, 63))
   };
 }
-var EARTH_RADIUS_KM = 6378.137;
-var MU_EARTH = 398600.4418;
+var EARTH_RADIUS_KM2 = 6378.137;
+var MU_EARTH2 = 398600.4418;
 function altitudeKmFromMeanMotion(revPerDay) {
   const n = revPerDay * 2 * Math.PI / 86400;
-  return Math.cbrt(MU_EARTH / (n * n)) - EARTH_RADIUS_KM;
+  return Math.cbrt(MU_EARTH2 / (n * n)) - EARTH_RADIUS_KM2;
 }
 function angularDelta(a, b) {
   const diff = Math.abs(a - b) % 360;
@@ -43224,184 +43404,6 @@ function buildRouteIndex(app2) {
     routes,
     note: routes.length === 0 ? "The route table could not be read from this Express version. This is a bug in the index, not an empty server." : void 0
   };
-}
-
-// src/debris.ts
-function classify(name, objectType) {
-  const declared = normaliseObjectType(objectType);
-  if (declared) return { type: declared, source: "field" };
-  const upper = name.toUpperCase();
-  if (/\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/.test(upper)) {
-    return { type: "DEBRIS", source: "name" };
-  }
-  if (/R\/B|ROCKET BODY|\bAKM\b|\bPKM\b/.test(upper)) {
-    return { type: "ROCKET BODY", source: "name" };
-  }
-  if (/\bUNKNOWN\b|^TBA\b|OBJECT [A-Z]$/.test(upper)) {
-    return { type: "UNKNOWN", source: "name" };
-  }
-  return { type: "PAYLOAD", source: "name" };
-}
-function normaliseObjectType(raw) {
-  if (!raw || typeof raw !== "string") return null;
-  const value = raw.trim().toUpperCase();
-  if (value === "PAY" || value === "PAYLOAD") return "PAYLOAD";
-  if (value === "R/B" || value === "ROCKET BODY") return "ROCKET BODY";
-  if (value === "DEB" || value === "DEBRIS") return "DEBRIS";
-  if (value === "UNK" || value === "UNKNOWN") return "UNKNOWN";
-  return null;
-}
-var DEBRIS_CLOUDS = [
-  {
-    id: "fengyun-1c",
-    celestrakGroup: "fengyun-1c-debris",
-    label: "Fengyun-1C",
-    event: "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
-    eventDate: "2007-01-11",
-    peakCatalogued: 3400,
-    altitudeBandKm: [200, 3800]
-  },
-  {
-    id: "cosmos-2251",
-    celestrakGroup: "cosmos-2251-debris",
-    label: "Cosmos 2251",
-    event: "A derelict Russian communications satellite collided with the working Iridium 33 \u2014 the first accidental collision between two intact satellites.",
-    eventDate: "2009-02-10",
-    peakCatalogued: 1700,
-    altitudeBandKm: [200, 1700]
-  },
-  {
-    id: "iridium-33",
-    celestrakGroup: "iridium-33-debris",
-    label: "Iridium 33",
-    event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
-    eventDate: "2009-02-10",
-    peakCatalogued: 630,
-    altitudeBandKm: [200, 1400]
-  },
-  {
-    id: "cosmos-1408",
-    celestrakGroup: "cosmos-1408-debris",
-    label: "Cosmos 1408",
-    event: "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
-    eventDate: "2021-11-15",
-    peakCatalogued: 1500,
-    altitudeBandKm: [200, 1100]
-  }
-];
-var NOTABLE_DERELICTS = [
-  {
-    satnum: "00694",
-    label: "Atlas Centaur 2",
-    kind: "rocket-body",
-    // Not "one of the oldest object in orbit": 1958 Vanguard hardware is
-    // still up there, five years older. The checkable claim is the narrower
-    // one — it has the lowest catalogue number in CelesTrak's bright-objects
-    // group, verified against the live group on 2026-08-05.
-    note: "Launched 1963 and still up there \u2014 the oldest object in the catalogue of naked-eye satellites, though older, fainter hardware from 1958 is also still in orbit."
-  },
-  {
-    satnum: "02802",
-    label: "SL-8 R/B (Cosmos 249)",
-    kind: "rocket-body",
-    note: "A 1967 Soviet upper stage, one of hundreds of SL-8 bodies that make up much of what people actually see pass over."
-  },
-  {
-    satnum: "16182",
-    label: "SL-16 R/B (Zenit-2)",
-    kind: "rocket-body",
-    note: "A Zenit second stage: nine tonnes and eleven metres long, among the brightest derelicts in the sky."
-  },
-  {
-    satnum: "23705",
-    label: "SL-16 R/B",
-    kind: "rocket-body",
-    note: "Another Zenit stage in the same crowded 850 km band, and a frequent close-approach partner."
-  },
-  {
-    satnum: "10967",
-    label: "Seasat 1",
-    kind: "payload",
-    note: "NASA's first ocean-observing radar satellite, dead after 105 days in 1978 from a power fault, still in orbit."
-  },
-  {
-    satnum: "00900",
-    label: "Calsphere 1",
-    kind: "payload",
-    note: "A calibration sphere from 1964 \u2014 no instruments, no power, just a metal ball still going round."
-  },
-  {
-    satnum: "20580",
-    label: "Hubble Space Telescope",
-    kind: "payload",
-    note: "Not derelict, but included as the reference point: a large, bright, well-known object to compare the rest against."
-  },
-  {
-    satnum: "22195",
-    label: "LAGEOS 2",
-    kind: "payload",
-    // The often-quoted "8.4 million years" is LAGEOS-1's figure, and this is
-    // LAGEOS-2 in a slightly lower orbit. Rather than transplant a number
-    // that belongs to the other satellite, state what this one's own
-    // elements support: at ~5,800 km there is effectively no atmosphere, and
-    // the app's own decay estimator returns "stable" for it.
-    note: "Not derelict, and worth being clear about why: a passive sphere of brass and aluminium studded with retroreflectors, with no power and no instruments \u2014 so nothing aboard can fail, and ground stations still range it by laser today. SATCAT lists it operational. It is here as the far end of the scale: an orbit near 5,800 km, where there is effectively no atmosphere left to slow it, and which will outlast everything else on this list by millions of years."
-  }
-];
-function statusFromError(message) {
-  return /no satellite found|404|not found/i.test(message) ? "not-in-catalogue" : "unavailable";
-}
-var EARTH_RADIUS_KM2 = 6378.137;
-var MU_EARTH2 = 398600.4418;
-function groundTrackLimitDeg(inclinationDeg) {
-  let wrapped = inclinationDeg;
-  if (wrapped < 0 || wrapped >= 360) wrapped = (wrapped % 360 + 360) % 360;
-  const folded = wrapped > 180 ? 360 - wrapped : wrapped;
-  return folded > 90 ? 180 - folded : folded;
-}
-function footprintRadiusDeg(altitudeKm) {
-  if (!(altitudeKm > 0)) return 0;
-  return Math.acos(EARTH_RADIUS_KM2 / (EARTH_RADIUS_KM2 + altitudeKm)) * 180 / Math.PI;
-}
-function geometryFromTle(tle) {
-  const inclinationDeg = Number(tle.line2.slice(8, 16));
-  const eccentricity = Number(`0.${tle.line2.slice(26, 33).trim()}`);
-  const meanMotionRevPerDay = Number(tle.line2.slice(52, 63));
-  if (!Number.isFinite(inclinationDeg) || !Number.isFinite(eccentricity) || !(meanMotionRevPerDay > 0)) {
-    return null;
-  }
-  const n = meanMotionRevPerDay * 2 * Math.PI / 86400;
-  const semiMajorAxisKm = Math.cbrt(MU_EARTH2 / (n * n));
-  if (!Number.isFinite(semiMajorAxisKm)) return null;
-  return {
-    inclinationDeg,
-    perigeeAltitudeKm: semiMajorAxisKm * (1 - eccentricity) - EARTH_RADIUS_KM2,
-    apogeeAltitudeKm: semiMajorAxisKm * (1 + eccentricity) - EARTH_RADIUS_KM2
-  };
-}
-var MIN_USEFUL_PERIGEE_KM = 130;
-function canEverRise(tle, observerLatitudeDeg) {
-  const geometry = geometryFromTle(tle);
-  if (!geometry) return false;
-  if (!(geometry.perigeeAltitudeKm >= MIN_USEFUL_PERIGEE_KM)) return false;
-  const reach = groundTrackLimitDeg(geometry.inclinationDeg) + footprintRadiusDeg(geometry.apogeeAltitudeKm);
-  return Math.abs(observerLatitudeDeg) <= reach;
-}
-function filterByReach(tles, observerLatitudeDeg) {
-  const candidates = tles.filter((tle) => canEverRise(tle, observerLatitudeDeg));
-  return { candidates, skipped: tles.length - candidates.length };
-}
-function normaliseName(value) {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-function findCloudParent(cloud, tles) {
-  const target = normaliseName(cloud.label);
-  for (const tle of tles) {
-    if (classify(tle.name).type !== "PAYLOAD") continue;
-    if (normaliseName(tle.name) !== target) continue;
-    return { satnum: tle.satnum, name: tle.name.trim() };
-  }
-  return null;
 }
 
 // src/index.ts

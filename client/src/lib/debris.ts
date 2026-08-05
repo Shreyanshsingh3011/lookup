@@ -341,8 +341,21 @@ export function nextDerelictRise(
  * spent rocket bodies. Drawing those as working satellites would mean most of
  * what the dome shows is mislabelled.
  */
+/**
+ * Kept byte-identical to the server's copy in server/src/debris.ts.
+ *
+ * There were three of these and they disagreed: the magnitude model knew
+ * CENTAUR, BREEZE and FREGAT were upper stages, the classifier and this file
+ * did not. Atlas Centaur 2 was therefore estimated as a bright rocket body and
+ * drawn as a working payload at the same time — it is on this app's own
+ * derelict shortlist, and rendered active in a browser.
+ */
+export const ROCKET_BODY_NAME =
+  /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|CENTAUR|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
+export const DEBRIS_NAME = /\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/;
+
 export function isDerelictByName(name: string): boolean {
   const upper = name.toUpperCase();
-  if (/\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/.test(upper)) return true;
-  return /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b/.test(upper);
+  if (DEBRIS_NAME.test(upper)) return true;
+  return ROCKET_BODY_NAME.test(upper);
 }

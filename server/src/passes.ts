@@ -1,6 +1,7 @@
 import * as satellite from "satellite.js";
 import * as AstronomyModule from "astronomy-engine";
 import type { TleRecord } from "./celestrak.js";
+import { DEBRIS_NAME, ROCKET_BODY_NAME } from "./debris.js";
 import type { Observer, Pass, PassEvent } from "./types.js";
 
 // astronomy-engine's ESM build exposes real named exports, while a loader that
@@ -132,9 +133,9 @@ export function standardMagnitude(name: string): number {
   if (n.includes("STARLINK")) return 4.5;
 
   // Debris fragments: small, tumbling, effectively invisible to the eye.
-  if (/\bDEB\b|DEBRIS|\bFRAG\b/.test(n)) return 8.0;
+  if (DEBRIS_NAME.test(n)) return 8.0;
   // Spent upper stages are large cylinders and often naked-eye objects.
-  if (/R\/B|ROCKET BODY|\bAKM\b|CENTAUR|\bBREEZE\b|\bFREGAT\b/.test(n)) return 3.5;
+  if (ROCKET_BODY_NAME.test(n)) return 3.5;
 
   // Unknown: assume a small satellite rather than a large one.
   return 4.5;

@@ -31,6 +31,23 @@ export type ObjectType = "PAYLOAD" | "ROCKET BODY" | "DEBRIS" | "UNKNOWN";
  * explicit OBJECT_TYPE from the catalogue is a fact, while a type inferred
  * from a name is a convention that mostly holds.
  */
+/**
+ * Names that prove an object is a spent stage or a fragment.
+ *
+ * One definition, because there were three and they disagreed. The magnitude
+ * model knew CENTAUR, BREEZE and FREGAT were upper stages; the classifier and
+ * the dome did not, so Atlas Centaur 2 was estimated as a bright rocket body
+ * and drawn as a working payload at the same time. It is on this app's own
+ * derelict shortlist, and rendered active in a browser.
+ *
+ * Reliable in one direction only. A match proves the object is dead; no match
+ * proves nothing, because plenty of debris predates the convention and a dead
+ * payload never announces itself. See the catalogue layer for the other half.
+ */
+export const ROCKET_BODY_NAME =
+  /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|CENTAUR|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
+export const DEBRIS_NAME = /\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/;
+
 export type ClassificationSource = "field" | "name";
 
 export interface Classification {
@@ -57,10 +74,10 @@ export function classify(name: string, objectType?: string | null): Classificati
   if (declared) return { type: declared, source: "field" };
 
   const upper = name.toUpperCase();
-  if (/\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/.test(upper)) {
+  if (DEBRIS_NAME.test(upper)) {
     return { type: "DEBRIS", source: "name" };
   }
-  if (/R\/B|ROCKET BODY|\bAKM\b|\bPKM\b/.test(upper)) {
+  if (ROCKET_BODY_NAME.test(upper)) {
     return { type: "ROCKET BODY", source: "name" };
   }
   if (/\bUNKNOWN\b|^TBA\b|OBJECT [A-Z]$/.test(upper)) {

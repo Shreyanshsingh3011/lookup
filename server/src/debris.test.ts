@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { standardMagnitude } from "./passes.js";
 import { TLE_GROUPS, type TleRecord } from "./celestrak.js";
 import {
   canEverRise,
@@ -345,4 +346,27 @@ test("entries that are not actually derelict say so in their own note", () => {
       `${entry.label} is operational, so its note must not let a reader assume otherwise`
     );
   }
+});
+
+test("the classifier and the magnitude model agree on what a rocket body is", () => {
+  // They did not. One definition now backs both; this asserts the union.
+  for (const name of [
+    "ATLAS CENTAUR 2",
+    "BREEZE-M",
+    "FREGAT",
+    "TITAN 3A TRANSTAGE",
+    "THOR AGENA D",
+    "THOR ABLESTAR",
+    "SL-16 R/B",
+  ]) {
+    assert.equal(classify(name).type, "ROCKET BODY", name);
+    assert.equal(standardMagnitude(name), 3.5, `${name} should be estimated as an upper stage`);
+  }
+});
+
+test("an explicit catalogue type still overrules the name in both directions", () => {
+  // The name says stage; SATCAT says payload. The field wins, and says so.
+  const declared = classify("ATLAS CENTAUR 2", "PAYLOAD");
+  assert.equal(declared.type, "PAYLOAD");
+  assert.equal(declared.source, "field");
 });
