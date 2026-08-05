@@ -176,7 +176,6 @@ export interface DebrisCloud {
   label: string;
   event: string;
   eventDate: string;
-  parentNorad: string | null;
   /** Historical peak, not the current population. See server/src/debris.ts. */
   peakCatalogued: number;
   altitudeBandKm: [number, number];
@@ -206,6 +205,8 @@ export interface DebrisCatalogueResponse {
 export interface DebrisCloudResponse {
   cloud: DebrisCloud;
   count: number;
+  /** The object that broke up, identified in the fetched data. Often gone. */
+  parent: { satnum: string; name: string } | null;
   typeCounts: Partial<Record<ObjectType, number>>;
   source: TleSource;
   epoch: EpochSpan | null;

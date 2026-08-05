@@ -5,6 +5,7 @@ import {
   canEverRise,
   classify,
   DEBRIS_CLOUDS,
+  findCloudParent,
   filterByReach,
   footprintRadiusDeg,
   geometryFromTle,
@@ -274,4 +275,48 @@ test("a cloud's altitude band is consistent with how much of it survives", () =>
     cosmos1408.altitudeBandKm[1] < fengyun.altitudeBandKm[1],
     "Cosmos 1408 should reach lower than Fengyun-1C, which is why so little of it is left"
   );
+});
+
+test("a cloud's parent is identified by matching the cloud, not by being any payload", () => {
+  const iridium = DEBRIS_CLOUDS.find((c) => c.id === "iridium-33")!;
+
+  // Shape of the real group: the parent payload sits among its own fragments.
+  const real = [
+    { satnum: "24946", name: "IRIDIUM 33" },
+    { satnum: "33773", name: "IRIDIUM 33 DEB" },
+    { satnum: "33775", name: "IRIDIUM 33 DEB" },
+  ];
+  assert.deepEqual(findCloudParent(iridium, real), { satnum: "24946", name: "IRIDIUM 33" });
+});
+
+test("an unrelated payload in the group is never reported as the parent", () => {
+  const iridium = DEBRIS_CLOUDS.find((c) => c.id === "iridium-33")!;
+
+  // This is not hypothetical. Served a file of station keplerians during
+  // testing, the first-payload-wins version announced the ISS as the parent of
+  // the Iridium 33 cloud — a specific, confident, entirely invented claim.
+  const wrong = [
+    { satnum: "25544", name: "ISS (ZARYA)" },
+    { satnum: "48274", name: "CSS (TIANHE)" },
+    { satnum: "33773", name: "IRIDIUM 33 DEB" },
+  ];
+  assert.equal(findCloudParent(iridium, wrong), null);
+});
+
+test("parent matching tolerates the punctuation and spacing the catalogue varies", () => {
+  const fengyun = DEBRIS_CLOUDS.find((c) => c.id === "fengyun-1c")!;
+  // Label is "Fengyun-1C"; the catalogue writes it "FENGYUN 1C".
+  assert.deepEqual(findCloudParent(fengyun, [{ satnum: "25730", name: "FENGYUN 1C " }]), {
+    satnum: "25730",
+    name: "FENGYUN 1C",
+  });
+});
+
+test("a cloud whose parent is gone reports nothing rather than guessing", () => {
+  const cosmos1408 = DEBRIS_CLOUDS.find((c) => c.id === "cosmos-1408")!;
+  const fragmentsOnly = [
+    { satnum: "50032", name: "COSMOS 1408 DEB" },
+    { satnum: "50058", name: "COSMOS 1408 DEB" },
+  ];
+  assert.equal(findCloudParent(cosmos1408, fragmentsOnly), null);
 });

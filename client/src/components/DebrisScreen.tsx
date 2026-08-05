@@ -194,9 +194,9 @@ export function DebrisScreen({
       />
 
       <p className="text-[11px] text-space-400 leading-relaxed">
-        Fragments are not loaded until you ask for them: the smallest of these clouds is six hundred
-        objects and the largest several thousand, and a pass search over all of them would take longer
-        than the request is allowed to live. Individual fragments are also, almost without exception, far
+        Fragments are not loaded until you ask for them: the largest of these clouds is still thousands
+        of objects, and a pass search over all of them would take longer than the request is allowed to
+        live. Individual fragments are also, almost without exception, far
         too faint to see — a ten-centimetre piece of a solar panel is well past the naked-eye limit even
         directly overhead. The derelicts above are the part of this screen you can actually go outside
         and look at.
@@ -345,9 +345,19 @@ function CloudDetail({
   return (
     <div className="glass-panel rounded-xl p-4 flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <h3 className="text-sm font-medium text-space-100">
-          {data.cloud.label} — {data.count.toLocaleString()} objects
-        </h3>
+        <div>
+          <h3 className="text-sm font-medium text-space-100">
+            {data.cloud.label} — {data.count.toLocaleString()} still catalogued
+          </h3>
+          {/* The parent is identified from the fetched objects, so it is only
+              claimed when it is actually there to point at. */}
+          <p className="text-[11px] text-space-400 mt-0.5">
+            {data.parent
+              ? `The object itself is still up there: ${data.parent.name} (#${data.parent.satnum}).`
+              : 'The object that broke up is no longer in this group — reentered, or never catalogued with its fragments.'}{' '}
+            About {data.cloud.peakCatalogued.toLocaleString()} were catalogued at the peak.
+          </p>
+        </div>
         <button type="button" onClick={onClose} className="text-[11px] text-space-400 hover:text-space-200">
           Close
         </button>

@@ -35,6 +35,7 @@ import {
   classify,
   DEBRIS_CLOUDS,
   filterByReach,
+  findCloudParent,
   NOTABLE_DERELICTS,
   statusFromError,
   type ResolvedDerelict,
@@ -164,8 +165,10 @@ app.get("/api/debris/catalogue", async (_req, res) => {
 /**
  * One breakup cloud's fragments.
  *
- * Explicitly requested rather than loaded with the screen: the smallest of
- * these is six hundred objects and the largest several thousand.
+ * Explicitly requested rather than loaded with the screen: the largest of
+ * these is still close to two thousand objects. The clouds have shrunk a lot
+ * since their peaks — see peakCatalogued — so no fixed figure is quoted here
+ * that would drift out of date on its own.
  */
 app.get("/api/debris/cloud/:id", async (req, res) => {
   const cloud = DEBRIS_CLOUDS.find((c) => c.id === req.params.id);
@@ -178,9 +181,20 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   try {
     const { tles, source, epoch, fetchedAt } = await getTleGroup(cloud.celestrakGroup);
     const objectTypes = tles.map((t) => classify(t.name).type);
+
+    // The object that broke up, found in the data rather than remembered.
+    //
+    // Three of the four groups still carry their parent payload alongside the
+    // fragments, so it can be identified by classification instead of being
+    // written down — which is the difference between a fact and a claim. Where
+    // the parent has reentered or was never in the group, this is null and the
+    // screen simply does not mention it.
+    const parent = findCloudParent(cloud, tles);
+
     res.json({
       cloud,
       count: tles.length,
+      parent,
       // Reported so the screen can say what it is looking at rather than
       // assuming every member of a debris group is debris — the parent body
       // and its rocket stage are often catalogued in the same group.

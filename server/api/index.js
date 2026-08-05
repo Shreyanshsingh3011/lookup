@@ -43076,7 +43076,6 @@ var DEBRIS_CLOUDS = [
     label: "Fengyun-1C",
     event: "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
     eventDate: "2007-01-11",
-    parentNorad: null,
     peakCatalogued: 3400,
     altitudeBandKm: [200, 3800]
   },
@@ -43086,7 +43085,6 @@ var DEBRIS_CLOUDS = [
     label: "Cosmos 2251",
     event: "A derelict Russian communications satellite collided with the working Iridium 33 \u2014 the first accidental collision between two intact satellites.",
     eventDate: "2009-02-10",
-    parentNorad: null,
     peakCatalogued: 1700,
     altitudeBandKm: [200, 1700]
   },
@@ -43096,7 +43094,6 @@ var DEBRIS_CLOUDS = [
     label: "Iridium 33",
     event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
     eventDate: "2009-02-10",
-    parentNorad: null,
     peakCatalogued: 630,
     altitudeBandKm: [200, 1400]
   },
@@ -43106,7 +43103,6 @@ var DEBRIS_CLOUDS = [
     label: "Cosmos 1408",
     event: "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
     eventDate: "2021-11-15",
-    parentNorad: null,
     peakCatalogued: 1500,
     altitudeBandKm: [200, 1100]
   }
@@ -43116,7 +43112,11 @@ var NOTABLE_DERELICTS = [
     satnum: "00694",
     label: "Atlas Centaur 2",
     kind: "rocket-body",
-    note: "Launched 1963 and still up there \u2014 one of the oldest objects in orbit, and bright enough to follow with the naked eye."
+    // Not "one of the oldest object in orbit": 1958 Vanguard hardware is
+    // still up there, five years older. The checkable claim is the narrower
+    // one — it has the lowest catalogue number in CelesTrak's bright-objects
+    // group, verified against the live group on 2026-08-05.
+    note: "Launched 1963 and still up there \u2014 the oldest object in the catalogue of naked-eye satellites, though older, fainter hardware from 1958 is also still in orbit."
   },
   {
     satnum: "02802",
@@ -43158,7 +43158,12 @@ var NOTABLE_DERELICTS = [
     satnum: "22195",
     label: "LAGEOS 2",
     kind: "payload",
-    note: "A passive sphere of brass and aluminium studded with retroreflectors, launched 1992 to be ranged by laser. No power, no instruments, and an orbit so high and stable it will still be there in eight million years."
+    // The often-quoted "8.4 million years" is LAGEOS-1's figure, and this is
+    // LAGEOS-2 in a slightly lower orbit. Rather than transplant a number
+    // that belongs to the other satellite, state what this one's own
+    // elements support: at ~5,800 km there is effectively no atmosphere, and
+    // the app's own decay estimator returns "stable" for it.
+    note: "A passive sphere of brass and aluminium studded with retroreflectors, launched 1992 to be ranged by laser. No power, no instruments, and an orbit near 5,800 km where there is effectively no atmosphere left to slow it \u2014 it will outlast everything else on this list by millions of years."
   }
 ];
 function statusFromError(message) {
@@ -43203,6 +43208,18 @@ function canEverRise(tle, observerLatitudeDeg) {
 function filterByReach(tles, observerLatitudeDeg) {
   const candidates = tles.filter((tle) => canEverRise(tle, observerLatitudeDeg));
   return { candidates, skipped: tles.length - candidates.length };
+}
+function normaliseName(value) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function findCloudParent(cloud, tles) {
+  const target = normaliseName(cloud.label);
+  for (const tle of tles) {
+    if (classify(tle.name).type !== "PAYLOAD") continue;
+    if (normaliseName(tle.name) !== target) continue;
+    return { satnum: tle.satnum, name: tle.name.trim() };
+  }
+  return null;
 }
 
 // src/index.ts
@@ -43291,9 +43308,11 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   try {
     const { tles, source, epoch, fetchedAt } = await getTleGroup(cloud.celestrakGroup);
     const objectTypes = tles.map((t) => classify(t.name).type);
+    const parent = findCloudParent(cloud, tles);
     res.json({
       cloud,
       count: tles.length,
+      parent,
       // Reported so the screen can say what it is looking at rather than
       // assuming every member of a debris group is debris — the parent body
       // and its rocket stage are often catalogued in the same group.

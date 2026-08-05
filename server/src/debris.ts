@@ -92,8 +92,6 @@ export interface DebrisCloud {
   event: string;
   /** When it happened, ISO date. */
   eventDate: string;
-  /** Catalogue number of the object that broke up, where it still exists. */
-  parentNorad: string | null;
   /**
    * Fragments catalogued in the years after the event — a historical figure,
    * not a current one, and the two differ by a lot.
@@ -128,7 +126,6 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event:
       "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
     eventDate: "2007-01-11",
-    parentNorad: null,
     peakCatalogued: 3400,
     altitudeBandKm: [200, 3800],
   },
@@ -139,7 +136,6 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event:
       "A derelict Russian communications satellite collided with the working Iridium 33 — the first accidental collision between two intact satellites.",
     eventDate: "2009-02-10",
-    parentNorad: null,
     peakCatalogued: 1700,
     altitudeBandKm: [200, 1700],
   },
@@ -149,7 +145,6 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     label: "Iridium 33",
     event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
     eventDate: "2009-02-10",
-    parentNorad: null,
     peakCatalogued: 630,
     altitudeBandKm: [200, 1400],
   },
@@ -160,7 +155,6 @@ export const DEBRIS_CLOUDS: DebrisCloud[] = [
     event:
       "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
     eventDate: "2021-11-15",
-    parentNorad: null,
     peakCatalogued: 1500,
     altitudeBandKm: [200, 1100],
   },
@@ -192,7 +186,11 @@ export const NOTABLE_DERELICTS: NotableDerelict[] = [
     satnum: "00694",
     label: "Atlas Centaur 2",
     kind: "rocket-body",
-    note: "Launched 1963 and still up there — one of the oldest objects in orbit, and bright enough to follow with the naked eye.",
+    // Not "one of the oldest object in orbit": 1958 Vanguard hardware is
+    // still up there, five years older. The checkable claim is the narrower
+    // one — it has the lowest catalogue number in CelesTrak's bright-objects
+    // group, verified against the live group on 2026-08-05.
+    note: "Launched 1963 and still up there — the oldest object in the catalogue of naked-eye satellites, though older, fainter hardware from 1958 is also still in orbit.",
   },
   {
     satnum: "02802",
@@ -234,7 +232,12 @@ export const NOTABLE_DERELICTS: NotableDerelict[] = [
     satnum: "22195",
     label: "LAGEOS 2",
     kind: "payload",
-    note: "A passive sphere of brass and aluminium studded with retroreflectors, launched 1992 to be ranged by laser. No power, no instruments, and an orbit so high and stable it will still be there in eight million years.",
+    // The often-quoted "8.4 million years" is LAGEOS-1's figure, and this is
+    // LAGEOS-2 in a slightly lower orbit. Rather than transplant a number
+    // that belongs to the other satellite, state what this one's own
+    // elements support: at ~5,800 km there is effectively no atmosphere, and
+    // the app's own decay estimator returns "stable" for it.
+    note: "A passive sphere of brass and aluminium studded with retroreflectors, launched 1992 to be ranged by laser. No power, no instruments, and an orbit near 5,800 km where there is effectively no atmosphere left to slow it — it will outlast everything else on this list by millions of years.",
   },
 ];
 
@@ -383,4 +386,39 @@ export interface ReachFilterResult {
 export function filterByReach(tles: TleRecord[], observerLatitudeDeg: number): ReachFilterResult {
   const candidates = tles.filter((tle) => canEverRise(tle, observerLatitudeDeg));
   return { candidates, skipped: tles.length - candidates.length };
+}
+
+/**
+ * The object that broke up, found among its own fragments.
+ *
+ * Three of the four groups still carry their parent payload alongside the
+ * debris, so it can be identified from the data rather than written down —
+ * the difference between a fact and a claim that quietly goes stale.
+ *
+ * It must be matched by name, not merely by being the group's only payload.
+ * Taking the first PAYLOAD in the list is right for every real debris group
+ * and catastrophically wrong the moment the group is anything else: pointed at
+ * a file of station keplerians during testing, that version announced the ISS
+ * as the parent of the Iridium 33 cloud, with complete confidence. A claim
+ * this specific has to be checked against the thing it names.
+ *
+ * Returns null when the parent has reentered or was never catalogued with its
+ * fragments, which is an ordinary outcome — Cosmos 1408 and Fengyun-1C were
+ * both destroyed, and what is left of them may not include the bus.
+ */
+function normaliseName(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+export function findCloudParent(
+  cloud: Pick<DebrisCloud, "label">,
+  tles: Array<{ satnum: string; name: string }>
+): { satnum: string; name: string } | null {
+  const target = normaliseName(cloud.label);
+  for (const tle of tles) {
+    if (classify(tle.name).type !== "PAYLOAD") continue;
+    if (normaliseName(tle.name) !== target) continue;
+    return { satnum: tle.satnum, name: tle.name.trim() };
+  }
+  return null;
 }
