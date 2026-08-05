@@ -34,6 +34,7 @@ const SkyDome = lazy(() =>
   import('./components/sky/SkyDome').then((m) => ({ default: m.SkyDome }))
 );
 import { useConnection } from './hooks/useConnection';
+import { useDebrisSky } from './hooks/useDebrisSky';
 import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
@@ -139,6 +140,11 @@ function App() {
   } | null>(null);
   const logbookRef = useRef<HTMLDivElement>(null);
 
+  // The dome's debris layer. Nothing is fetched until the layer is switched on,
+  // and once fetched it stays, so toggling it off and back does not re-request.
+  const [debrisLayer, setDebrisLayer] = useState(false);
+  const debrisSky = useDebrisSky(observer, debrisLayer);
+
   const logNamedSighting = (subject: string, satnum: string | null) => {
     setLogPrefill({
       subject,
@@ -172,6 +178,16 @@ function App() {
     if (name && isIssName(name)) {
       issSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+  };
+
+  const showDebrisInSky = () => {
+    setDebrisLayer(true);
+    setScreen('sky');
+    // The section is only mounted once the Sky tab renders, so the scroll has
+    // to wait a frame for it to exist.
+    requestAnimationFrame(() => {
+      skySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   const showPassInSky = (pass: Pass) => {
@@ -360,6 +376,7 @@ function App() {
             onLogSighting={logNamedSighting}
             selectedPass={selectedPass}
             onSelectPass={setSelectedPass}
+            onShowInSky={showDebrisInSky}
           />
         )}
 
@@ -388,6 +405,14 @@ function App() {
               passes={allPasses}
               loading={tlesLoading}
               onSatelliteSelected={handleSatelliteSelected}
+              debrisTles={debrisSky.tles}
+              debrisNotes={debrisSky.notes}
+              debrisEnabled={debrisLayer}
+              onDebrisLayerChange={setDebrisLayer}
+              onLogSighting={logNamedSighting}
+              debrisLoading={debrisSky.loading}
+              debrisError={debrisSky.error}
+              debrisUnreachable={debrisSky.unreachableCount}
             />
           </Suspense>
           <TimeScrubber control={time} />

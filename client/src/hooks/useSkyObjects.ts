@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { observerToGeodetic, parseSatrec, skySampleAt, trailPoints } from '../lib/sky';
-import type { LiveSatellite } from '../components/sky/SatelliteMarker';
+import type { LiveSatellite, SkyObjectKind } from '../components/sky/SatelliteMarker';
 import type { Observer, Pass, TleRecord } from '../types';
 
 /**
@@ -11,7 +11,9 @@ export function useSkyObjects(
   tles: TleRecord[],
   observer: Observer,
   displayTime: Date,
-  passes: Pass[]
+  passes: Pass[],
+  /** Tags everything from this call, so the dome can draw derelicts apart. */
+  kind: SkyObjectKind = 'active'
 ): LiveSatellite[] {
   const satrecs = useMemo(
     () =>
@@ -42,8 +44,9 @@ export function useSkyObjects(
         sample,
         trail: trailPoints(rec, observerGd, displayTime),
         nextPassTime: nextPass?.start.time ?? null,
+        kind,
       });
     }
     return out;
-  }, [satrecs, observerGd, displayTime, passes]);
+  }, [satrecs, observerGd, displayTime, passes, kind]);
 }

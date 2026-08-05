@@ -48,12 +48,15 @@ export function DebrisScreen({
   onLogSighting,
   selectedPass,
   onSelectPass,
+  onShowInSky,
 }: {
   observer: Observer;
   displayTime: Date;
   onLogSighting: (subject: string, satnum: string | null) => void;
   selectedPass: Pass | null;
   onSelectPass: (pass: Pass | null) => void;
+  /** Switch to the Sky tab with the debris layer turned on. */
+  onShowInSky: () => void;
 }) {
   const [catalogue, setCatalogue] = useState<DebrisCatalogueResponse | null>(null);
   const [catalogueError, setCatalogueError] = useState<string | null>(null);
@@ -83,12 +86,25 @@ export function DebrisScreen({
   return (
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-2">
-        <div>
-          <h2 className="text-lg font-medium text-space-100">Derelicts worth finding</h2>
-          <p className="text-xs text-space-300">
-            Dead satellites and spent rocket stages, looked up one at a time
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-medium text-space-100">Derelicts worth finding</h2>
+            <p className="text-xs text-space-300">
+              Dead satellites and spent rocket stages, looked up one at a time
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onShowInSky}
+            className="text-xs px-3 py-1.5 rounded-lg bg-glow-600/20 text-glow-400 border border-glow-600/40 hover:bg-glow-600/30 transition shrink-0"
+          >
+            Show these in the live sky
+          </button>
         </div>
+        <p className="text-[11px] text-space-400">
+          These same objects can be drawn in the sky dome on the Sky tab, in amber, alongside the
+          active satellites — the “Debris” layer button turns them on.
+        </p>
 
         {catalogueError && (
           <p className="glass-panel rounded-xl px-4 py-3 text-sm text-amber-glow">

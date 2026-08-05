@@ -1,18 +1,43 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Billboard, Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { fetchTransmitters } from '../../api/client';
+import { assessRisk, type Freshness } from '../../lib/debris';
 import { decayLabel, estimateDecay } from '../../lib/decay';
 import { azElToVec3, azToCompass, type SkySample } from '../../lib/sky';
 import { useSatelliteModel } from '../../hooks/useSatelliteModel';
 import { FrontFacingHtml } from './FrontFacingHtml';
-import type { TleRecord } from '../../types';
+import type { TleRecord, TransmitterResponse } from '../../types';
 
 const BODY_COLOR = '#c9d1e8';
 const PANEL_COLOR = '#16305c';
 const RADIATOR_COLOR = '#eef2f8';
 const LIT_COLOR = '#5eead4';
 const ECLIPSED_COLOR = '#64748b';
+
+/**
+ * Derelicts are drawn in rust rather than the teal of a working satellite.
+ *
+ * Colour alone would not be enough — the dome already spends colour on whether
+ * an object is sunlit or in shadow, so a viewer reading colour is reading two
+ * things at once. The distinction is carried on three independent channels
+ * instead: this hue, a hollow wireframe body against the solid panelled ones,
+ * and an uncontrolled tumble on three axes rather than the clean single-axis
+ * spin of something still holding attitude. Any one of them surviving a
+ * colour-blind viewer, a small screen or a dim display is enough to tell a
+ * dead object from a live one — and the tumble is what these things actually
+ * do, so the cue is not decoration.
+ */
+const DERELICT_LIT_COLOR = '#f0a868';
+const DERELICT_ECLIPSED_COLOR = '#8a6a52';
+
+const FRESHNESS_TONE: Record<Freshness['level'], string> = {
+  fresh: 'text-emerald-300',
+  ageing: 'text-space-100',
+  stale: 'text-amber-glow',
+  unusable: 'text-red-300',
+};
 
 /**
  * Solar-cell grid drawn once onto a canvas and reused across every satellite
@@ -50,12 +75,24 @@ function getSolarPanelTexture(): THREE.CanvasTexture {
   return solarPanelTexture;
 }
 
+/**
+ * What kind of thing this is.
+ *
+ * Not cosmetic. An active payload and a dead one are the same shape of data
+ * and completely different objects to look at: one is being flown, the other
+ * is falling. The dome draws them differently because a viewer who cannot tell
+ * them apart is being shown something misleading, not something simplified.
+ */
+export type SkyObjectKind = "active" | "derelict";
+
 export interface LiveSatellite {
   satnum: string;
   name: string;
   sample: SkySample;
   trail: Array<[number, number, number]>;
   nextPassTime: string | null;
+  /** Defaults to active where the source does not say. */
+  kind?: SkyObjectKind;
 }
 
 function SolarWing({ position, args, rotation }: { position: [number, number, number]; args: [number, number, number]; rotation?: [number, number, number] }) {
@@ -204,6 +241,26 @@ const glowFragmentShader = /* glsl */ `
  * Soft halo that keeps a satellite findable against the sky. A flat disc reads
  * as an opaque grey blob once zoomed in, so the alpha falls off radially.
  */
+/**
+ * A dead object: an angular tumbling hulk, drawn as a wireframe so it reads as
+ * hollow and inert next to the solid, panelled bodies of working satellites.
+ */
+function DerelictBody({ color }: { color: string }) {
+  return (
+    <group>
+      <mesh>
+        <octahedronGeometry args={[1.15, 0]} />
+        <meshBasicMaterial color={color} wireframe transparent opacity={0.95} />
+      </mesh>
+      {/* A faint solid core, so it is still visible against a bright sky. */}
+      <mesh scale={0.55}>
+        <octahedronGeometry args={[1.15, 0]} />
+        <meshBasicMaterial color={color} transparent opacity={0.35} />
+      </mesh>
+    </group>
+  );
+}
+
 function Glow({ color, intensity, radius }: { color: string; intensity: number; radius: number }) {
   const uniforms = useMemo(
     () => ({ glowColor: { value: new THREE.Color(color) }, intensity: { value: intensity } }),
@@ -227,15 +284,34 @@ function Glow({ color, intensity, radius }: { color: string; intensity: number; 
   );
 }
 
-function Trail({ points, illuminated }: { points: Array<[number, number, number]>; illuminated: boolean }) {
+function Trail({
+  points,
+  illuminated,
+  derelict,
+}: {
+  points: Array<[number, number, number]>;
+  illuminated: boolean;
+  derelict: boolean;
+}) {
   const colors = useMemo(() => {
-    const base = new THREE.Color(illuminated ? LIT_COLOR : ECLIPSED_COLOR);
+    // The trail has to carry the derelict hue too. A rust marker dragging a
+    // teal trail would read as two objects, and would undo the one cue that
+    // survives being glanced at rather than looked at.
+    const base = new THREE.Color(
+      derelict
+        ? illuminated
+          ? DERELICT_LIT_COLOR
+          : DERELICT_ECLIPSED_COLOR
+        : illuminated
+          ? LIT_COLOR
+          : ECLIPSED_COLOR
+    );
     return points.map((_, i) => {
       // Oldest sample fades to black, which reads as opacity against the dark sky.
       const t = points.length > 1 ? i / (points.length - 1) : 1;
       return base.clone().multiplyScalar(Math.pow(t, 1.6));
     });
-  }, [points, illuminated]);
+  }, [points, illuminated, derelict]);
 
   if (points.length < 2) return null;
 
@@ -247,9 +323,13 @@ interface Props {
   tle?: TleRecord;
   selected: boolean;
   onSelect: (satnum: string | null) => void;
+  /** Why this derelict is worth a look, shown when one is tapped. */
+  note?: string;
+  /** Record a sighting, the same hand-off the debris list and pass table use. */
+  onLogSighting?: (subject: string, satnum: string | null) => void;
 }
 
-export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
+export function SatelliteMarker({ sat, tle, selected, onSelect, note, onLogSighting }: Props) {
   const spinRef = useRef<THREE.Group>(null);
   const [hovered, setHovered] = useState(false);
   // An external model when one is configured for this satellite; otherwise the
@@ -264,14 +344,56 @@ export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
     [showPanel, tle]
   );
 
+  // Elements age and orbits decay, and for a derelict both are usually the
+  // most interesting thing about it — so the same assessment the debris list
+  // shows is reachable here, rather than being a property of one screen.
+  const risk = useMemo(
+    () => (showPanel && sat.kind === 'derelict' && tle ? assessRisk(tle, new Date()) : null),
+    [showPanel, sat.kind, tle]
+  );
+
+  // The downlink register, asked the same question the debris list asks — a
+  // derelict is *usually* silent but not always, so the honest answer comes
+  // from SatNOGS rather than from the fact that the object is old. Fired on
+  // selection, not hover: hovering is how you skim the sky, and a request per
+  // skimmed object would be an unreasonable way to answer a question nobody
+  // asked yet.
+  const [radio, setRadio] = useState<TransmitterResponse | null>(null);
+  useEffect(() => {
+    if (!selected || sat.kind !== 'derelict') return;
+    let cancelled = false;
+    fetchTransmitters(sat.satnum)
+      .then((res) => !cancelled && setRadio(res))
+      .catch(
+        () =>
+          !cancelled &&
+          setRadio({ satnum: sat.satnum, transmitters: [], source: 'unavailable' })
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, sat.kind, sat.satnum]);
+
   const position = useMemo(
     () => azElToVec3(sat.sample.azimuthDeg, sat.sample.elevationDeg),
     [sat.sample.azimuthDeg, sat.sample.elevationDeg]
   );
 
-  // A slow tumble so the objects read as alive rather than as static pins.
+  const isDerelict = sat.kind === 'derelict';
+
+  // A slow rotation so the objects read as alive rather than as static pins —
+  // and for derelicts, a three-axis tumble instead, which is both the visual
+  // cue and what an object with no working attitude control actually does.
   useFrame((_, delta) => {
-    if (spinRef.current) spinRef.current.rotation.y += delta * 0.35;
+    const g = spinRef.current;
+    if (!g) return;
+    if (isDerelict) {
+      g.rotation.y += delta * 0.52;
+      g.rotation.x += delta * 0.31;
+      g.rotation.z += delta * 0.17;
+    } else {
+      g.rotation.y += delta * 0.35;
+    }
   });
 
   const isIss = /ISS|ZARYA/i.test(sat.name);
@@ -280,12 +402,18 @@ export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
   // alone catching Wentian/Mengtian too, since both carry a "CSS (...)" name).
   const isTiangong = /TIANGONG|\bCSS\b|TIANHE|WENTIAN|MENGTIAN/i.test(sat.name);
   const scale = (isIss || isTiangong ? 2.6 : 3.2) * (hovered || selected ? 1.35 : 1);
-  const glowColor = sat.sample.illuminated ? LIT_COLOR : ECLIPSED_COLOR;
+  const glowColor = isDerelict
+    ? sat.sample.illuminated
+      ? DERELICT_LIT_COLOR
+      : DERELICT_ECLIPSED_COLOR
+    : sat.sample.illuminated
+      ? LIT_COLOR
+      : ECLIPSED_COLOR;
   const displayName = sat.name.replace(/\s*\(.*?\)\s*/g, '').trim();
 
   return (
     <group>
-      <Trail points={sat.trail} illuminated={sat.sample.illuminated} />
+      <Trail points={sat.trail} illuminated={sat.sample.illuminated} derelict={isDerelict} />
 
       <group position={position}>
         {/* Generous invisible hit target — the models are only ~20px on screen */}
@@ -315,7 +443,9 @@ export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
         />
 
         <group ref={spinRef} scale={scale}>
-          {model ? (
+          {isDerelict ? (
+            <DerelictBody color={glowColor} />
+          ) : model ? (
             <primitive object={model} />
           ) : isIss ? (
             <IssBody />
@@ -326,10 +456,25 @@ export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
           )}
         </group>
 
+        {/* Interactive only when the panel actually holds a control. The
+            logbook button is the only one, and it is only rendered for a
+            selected derelict — so everywhere else the panel stays
+            click-through and dragging the sky still works over it. */}
         {(selected || hovered) && (
-          <FrontFacingHtml position={[0, 0, 0]} zIndexRange={[20, 0]} offsetYPx={-78}>
+          <FrontFacingHtml
+            position={[0, 0, 0]}
+            zIndexRange={[20, 0]}
+            offsetYPx={-78}
+            interactive={isDerelict && selected && Boolean(onLogSighting)}
+          >
             <div className="glass-panel rounded-lg px-3 py-2 min-w-[190px] shadow-[var(--shadow-glow-sm)]">
-              <div className="text-glow-400 font-semibold text-xs tracking-wide">{displayName}</div>
+              <div
+                className={`font-semibold text-xs tracking-wide ${
+                  isDerelict ? 'text-amber-glow' : 'text-glow-400'
+                }`}
+              >
+                {displayName}
+              </div>
               <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
                 <dt className="text-space-300">Altitude</dt>
                 <dd className="font-mono text-space-100">{sat.sample.altitudeKm.toFixed(0)} km</dd>
@@ -341,24 +486,84 @@ export function SatelliteMarker({ sat, tle, selected, onSelect }: Props) {
                 </dd>
                 <dt className="text-space-300">Sunlit</dt>
                 <dd className="font-mono text-space-100">{sat.sample.illuminated ? 'yes' : 'in shadow'}</dd>
-                <dt className="text-space-300">Next pass</dt>
-                <dd className="font-mono text-space-100">
-                  {sat.nextPassTime
-                    ? new Date(sat.nextPassTime).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-                    : '—'}
-                </dd>
+                {/* Omitted for derelicts rather than shown as "—": no pass
+                    search is run for this layer, and a dash here would read as
+                    "nothing coming up" rather than "not computed". The Debris
+                    tab does run one. */}
+                {!isDerelict && (
+                  <>
+                    <dt className="text-space-300">Next pass</dt>
+                    <dd className="font-mono text-space-100">
+                      {sat.nextPassTime
+                        ? new Date(sat.nextPassTime).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : '—'}
+                    </dd>
+                  </>
+                )}
                 {decay && (
                   <>
                     <dt className="text-space-300">Decay</dt>
                     <dd className="font-mono text-space-100">{decayLabel(decay)}</dd>
                   </>
                 )}
+                {risk && (
+                  <>
+                    <dt className="text-space-300">Elements</dt>
+                    <dd className={`font-mono ${FRESHNESS_TONE[risk.freshness.level]}`}>
+                      {risk.freshness.ageDays === null
+                        ? 'unknown age'
+                        : `${risk.freshness.ageDays.toFixed(1)} d old`}
+                    </dd>
+                  </>
+                )}
               </dl>
+
+              {/* Capped and scrollable. The notes are a paragraph each, and an
+                  uncapped panel grows tall enough to run off the top of the
+                  dome — the anchor is centred on the object, so the taller it
+                  gets the further above the frame its head goes. Scrollable
+                  rather than truncated: this is the detail view, and the point
+                  of it is that nothing is out of reach. */}
+              {isDerelict && (
+                <div className="mt-1.5 pt-1.5 border-t border-space-800/70 max-h-32 overflow-y-auto pr-1">
+                  <div className="text-[10px] uppercase tracking-wide text-space-500">Derelict</div>
+                  {note && <p className="text-[11px] text-space-300 leading-snug mt-0.5">{note}</p>}
+                  {risk?.summary && <p className="text-[11px] text-amber-glow mt-1">{risk.summary}</p>}
+                  <p className="text-[11px] text-space-400 mt-1">
+                    {!selected
+                      ? 'Click to check the downlink register.'
+                      : radio === null
+                        ? 'Checking for a downlink…'
+                        : radio.source === 'unavailable'
+                          ? 'Downlink register unreachable — whether it still transmits is unknown.'
+                          : radio.transmitters.some((t) => t.alive)
+                            ? `${radio.transmitters.filter((t) => t.alive).length} known active downlink${
+                                radio.transmitters.filter((t) => t.alive).length === 1 ? '' : 's'
+                              } — see the Radio section.`
+                            : 'No known active downlink.'}
+                  </p>
+                  {/* Selected only, not merely hovered: the panel is
+                      click-through unless selected, so a button offered on
+                      hover would be a button that cannot be pressed. */}
+                  {onLogSighting && selected && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onLogSighting(displayName, sat.satnum);
+                      }}
+                      className="mt-1.5 text-[11px] px-2 py-0.5 rounded border border-space-600 text-space-200 hover:border-glow-500 hover:text-glow-400 transition"
+                    >
+                      I saw this
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </FrontFacingHtml>
         )}

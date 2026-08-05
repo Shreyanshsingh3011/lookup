@@ -30,6 +30,10 @@ import type { Observer, Pass, TleRecord } from '../../types';
 
 /** Stable empty array, so toggling the layer off doesn't churn memoisation. */
 const EMPTY_SATELLITES: ReturnType<typeof useSkyObjects> = [];
+/** Derelicts have no upcoming-pass list to match against. */
+const EMPTY_PASSES: Pass[] = [];
+const EMPTY_TLES: TleRecord[] = [];
+const EMPTY_NOTES: Map<string, string> = new Map();
 
 /**
  * The camera orbits at a tiny fixed radius around the dome's centre, so the
@@ -126,6 +130,7 @@ function DevProbe({
 
 export interface SkyLayers {
   satellites: boolean;
+  debris: boolean;
   stars: boolean;
   constellations: boolean;
   milkyWay: boolean;
@@ -150,6 +155,11 @@ interface SceneProps {
   onIdentifyMatch: (subject: ExplainSubject | null, requestId: number) => void;
   aircraft: LiveAircraft[];
   orientationLook: LookDirection | null;
+  /** Derelict element sets, already pre-filtered for this observer. */
+  debrisTles: TleRecord[];
+  /** Catalogue notes, keyed by NORAD id, for the tapped detail panel. */
+  debrisNotes: Map<string, string>;
+  onLogSighting?: (subject: string, satnum: string | null) => void;
 }
 
 function SkyScene({
@@ -166,9 +176,18 @@ function SkyScene({
   onIdentifyMatch,
   aircraft,
   orientationLook,
+  debrisTles,
+  debrisNotes,
+  onLogSighting,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
+
+  // Propagated by the same hook, tagged so the marker can draw them apart. The
+  // list arrives already cut down by the coarse reach filter, which matters
+  // here far more than in the static pass table: this runs on every tick.
+  const allDebris = useSkyObjects(debrisTles, observer, displayTime, EMPTY_PASSES, 'derelict');
+  const debris = layers.debris ? allDebris : EMPTY_SATELLITES;
   const planetPositions = usePlanetPositions(
     displayTime,
     observer.latitude,
@@ -193,6 +212,16 @@ function SkyScene({
 
     const candidates: Array<BoresightCandidate<IdentifyCandidate>> = [];
     for (const sat of satellites) {
+      candidates.push({
+        azimuthDeg: sat.sample.azimuthDeg,
+        elevationDeg: sat.sample.elevationDeg,
+        data: { kind: 'satellite', sat },
+      });
+    }
+    // Derelicts are candidates on the same footing. Pointing the phone at
+    // something and being told "nothing there" because the thing overhead
+    // happens to be dead would be the wrong answer to the question asked.
+    for (const sat of debris) {
       candidates.push({
         azimuthDeg: sat.sample.azimuthDeg,
         elevationDeg: sat.sample.elevationDeg,
@@ -231,6 +260,7 @@ function SkyScene({
   }, [
     identifyRequest,
     satellites,
+    debris,
     planetPositions,
     layers.planets,
     layers.stars,
@@ -322,6 +352,18 @@ function SkyScene({
         />
       ))}
 
+      {debris.map((sat) => (
+        <SatelliteMarker
+          key={`debris-${sat.satnum}`}
+          sat={sat}
+          tle={debrisTles.find((t) => t.satnum === sat.satnum)}
+          selected={selected === sat.satnum}
+          onSelect={handleSelect}
+          note={debrisNotes.get(sat.satnum)}
+          onLogSighting={onLogSighting}
+        />
+      ))}
+
       <OrbitControls
         makeDefault
         target={[0, 0, 0]}
@@ -354,10 +396,30 @@ interface Props {
    * — the ISS in particular, which has a live feed to offer.
    */
   onSatelliteSelected?: (name: string | null) => void;
+  /**
+   * Derelict element sets for the debris layer, already pre-filtered for this
+   * observer by `useDebrisSky`. Empty until the layer is switched on.
+   */
+  debrisTles?: TleRecord[];
+  /** Catalogue notes keyed by NORAD id, shown when a derelict is tapped. */
+  debrisNotes?: Map<string, string>;
+  /**
+   * The debris layer is the one controlled layer: the Debris tab can send you
+   * here with it already on, so the page owns the flag and the dome asks for
+   * changes rather than keeping its own copy.
+   */
+  debrisEnabled?: boolean;
+  onDebrisLayerChange?: (enabled: boolean) => void;
+  debrisLoading?: boolean;
+  debrisError?: string | null;
+  /** Rejected by the coarse reach filter — they can never rise here. */
+  debrisUnreachable?: number;
+  onLogSighting?: (subject: string, satnum: string | null) => void;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
   { key: 'satellites', label: 'Satellites' },
+  { key: 'debris', label: 'Debris' },
   { key: 'stars', label: 'Stars' },
   { key: 'constellations', label: 'Constellations' },
   { key: 'milkyWay', label: 'Milky Way' },
@@ -369,20 +431,44 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
 
 type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
 
-export function SkyDome({ tles, observer, displayTime, passes, loading, onSatelliteSelected }: Props) {
+export function SkyDome({
+  tles,
+  observer,
+  displayTime,
+  passes,
+  loading,
+  onSatelliteSelected,
+  debrisTles = EMPTY_TLES,
+  debrisNotes = EMPTY_NOTES,
+  debrisEnabled = false,
+  onDebrisLayerChange,
+  onLogSighting,
+  debrisLoading = false,
+  debrisError = null,
+  debrisUnreachable = 0,
+}: Props) {
   const [selected, setSelected] = useState<string | null>(null);
 
   const selectSatellite = useCallback(
     (satnum: string | null) => {
       setSelected(satnum);
-      onSatelliteSelected?.(satnum === null ? null : tles.find((t) => t.satnum === satnum)?.name ?? null);
+      // Derelicts are searched too: a tap in the dome should name the object
+      // whichever layer it came from.
+      const found =
+        tles.find((t) => t.satnum === satnum) ?? debrisTles.find((t) => t.satnum === satnum);
+      onSatelliteSelected?.(satnum === null ? null : found?.name ?? null);
     },
-    [onSatelliteSelected, tles]
+    [onSatelliteSelected, tles, debrisTles]
   );
   const [visibleCount, setVisibleCount] = useState(0);
   const [aimRequest, setAimRequest] = useState(0);
-  const [layers, setLayers] = useState<SkyLayers>({
+  const [layerState, setLayerState] = useState<SkyLayers>({
     satellites: true,
+    // Placeholder only — the live value comes from the `debrisEnabled` prop
+    // just below. Off by default there: not because it is expensive, the
+    // shortlist is a couple of dozen objects, but because it costs a catalogue
+    // fetch the first paint does not otherwise need.
+    debris: false,
     stars: true,
     constellations: true,
     milkyWay: true,
@@ -393,6 +479,11 @@ export function SkyDome({ tles, observer, displayTime, passes, loading, onSatell
     // correct but leaves nothing to look at until you zoom in.
     trueScale: false,
   });
+
+  const layers = useMemo<SkyLayers>(
+    () => ({ ...layerState, debris: debrisEnabled }),
+    [layerState, debrisEnabled]
+  );
 
   // Aircraft are live-only: they are where they are now, so they are not tied
   // to the time scrubber the way propagated satellite positions are.
@@ -414,8 +505,15 @@ export function SkyDome({ tles, observer, displayTime, passes, loading, onSatell
     }
   };
 
-  const toggleLayer = (key: keyof SkyLayers) =>
-    setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggleLayer = (key: keyof SkyLayers) => {
+    // Debris is owned by the page: the catalogue is fetched there, and the
+    // Debris tab can arrive with the layer already on.
+    if (key === 'debris') {
+      onDebrisLayerChange?.(!debrisEnabled);
+      return;
+    }
+    setLayerState((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const [identifyRequest, setIdentifyRequest] = useState(0);
   const [identifyStatus, setIdentifyStatus] = useState<IdentifyStatus>('idle');
@@ -509,6 +607,9 @@ export function SkyDome({ tles, observer, displayTime, passes, loading, onSatell
               onIdentifyMatch={handleIdentifyMatch}
               aircraft={aircraftFeed.aircraft}
               orientationLook={orientationActive ? orientation.look : null}
+              debrisTles={debrisTles}
+              debrisNotes={debrisNotes}
+              onLogSighting={onLogSighting}
             />
           </Suspense>
         </Canvas>
@@ -713,6 +814,26 @@ export function SkyDome({ tles, observer, displayTime, passes, loading, onSatell
             </button>
           ))}
         </div>
+
+        {/* What the debris layer is actually showing, and what it is not. The
+            layer is a curated shortlist rather than the whole catalogue, and
+            silently drawing a dozen points would misrepresent that. */}
+        {layers.debris && (
+          <p className="text-[11px] text-space-400 leading-snug max-w-md">
+            {debrisError ? (
+              <span className="text-amber-glow">Debris catalogue unavailable — {debrisError}</span>
+            ) : debrisLoading ? (
+              'Loading derelicts…'
+            ) : (
+              <>
+                {debrisTles.length} notable derelict{debrisTles.length === 1 ? '' : 's'} tracked
+                {debrisUnreachable > 0 && `, ${debrisUnreachable} skipped as never rising here`}. Breakup
+                clouds are not drawn: their fragments are far too faint to see, so plotting them would
+                show a sky that isn't there. The Debris tab has the counts.
+              </>
+            )}
+          </p>
+        )}
       </div>
     </div>
   );

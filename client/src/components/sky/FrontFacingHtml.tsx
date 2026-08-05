@@ -26,6 +26,7 @@ export function FrontFacingHtml({
   margin = 1.15,
   zIndexRange,
   offsetYPx = 0,
+  interactive = false,
 }: {
   position?: [number, number, number];
   children: ReactNode;
@@ -38,6 +39,17 @@ export function FrontFacingHtml({
    * zenith a world-space "up" offset points almost at the camera.
    */
   offsetYPx?: number;
+  /**
+   * Let clicks land on the content instead of passing through to the sky.
+   *
+   * Off by default, and that default matters: these overlays sit on top of the
+   * dome, and a label that swallowed pointer events would put dead patches all
+   * over a view whose main interaction is dragging to look around. Only panels
+   * that actually contain a control should turn it on — otherwise the control
+   * renders, looks enabled, and silently does nothing when clicked, because
+   * the click never reaches it.
+   */
+  interactive?: boolean;
 }) {
   const [onScreen, setOnScreen] = useState(false);
   const anchorRef = useRef<THREE.Group>(null);
@@ -69,7 +81,17 @@ export function FrontFacingHtml({
     <group ref={anchorRef} position={position}>
       {onScreen && (
         <Html center style={{ pointerEvents: 'none', userSelect: 'none' }} zIndexRange={zIndexRange}>
-          <div style={offsetYPx ? { transform: `translateY(${offsetYPx}px)` } : undefined}>{children}</div>
+          <div
+            style={{
+              ...(offsetYPx ? { transform: `translateY(${offsetYPx}px)` } : null),
+              // Re-enabled on the content itself rather than on the Html
+              // wrapper, so the dead area is the panel's own box and not the
+              // wrapper's full extent.
+              ...(interactive ? { pointerEvents: 'auto' as const, userSelect: 'auto' as const } : null),
+            }}
+          >
+            {children}
+          </div>
         </Html>
       )}
     </group>
