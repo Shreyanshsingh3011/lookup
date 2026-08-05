@@ -4,7 +4,14 @@ import { preFilter } from '../lib/debris';
 import type { Observer, TleRecord } from '../types';
 
 /**
- * The whole tracked non-active catalogue, for the dome's point field.
+ * Every catalogued debris fragment still in orbit, for the dome's point field.
+ *
+ * Fragments, not the whole catalogue: the endpoint behind this queries
+ * OBJECT_TYPE=DEBRIS, and Space-Track files spent stages as ROCKET BODY and dead
+ * satellites as PAYLOAD, so neither is in here. Those are the dome's amber
+ * derelicts, drawn as individual markers, and the two sets do not overlap. Worth
+ * being exact about, because the alternative is a status line claiming to plot
+ * everything while silently omitting the only category anyone can actually see.
  *
  * Fetched once when the debris layer is switched on and kept afterwards, so
  * toggling does not re-request. Requests the full set rather than a capped slice

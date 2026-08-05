@@ -359,3 +359,30 @@ export function isDerelictByName(name: string): boolean {
   if (DEBRIS_NAME.test(upper)) return true;
   return ROCKET_BODY_NAME.test(upper);
 }
+
+/**
+ * The point field, minus anything already drawn as its own marker.
+ *
+ * Two populations share the dome and they must not overlap: fragments as a
+ * violet point field, spent stages and dead payloads as amber markers. Today
+ * they are disjoint because the field comes from Space-Track's
+ * OBJECT_TYPE=DEBRIS while the markers are exactly the ROCKET BODY and PAYLOAD
+ * rows that query excludes.
+ *
+ * That is a property of one URL, though, not of the design, and it fails in two
+ * directions. A user pinning a fragment from catalogue search puts the same
+ * object in both lists today. Widening the satcat query to include stages —
+ * an obvious future improvement — would put thousands in both. Either way the
+ * object is drawn twice, once as a point and once as a marker on top of it, and
+ * counted in both status lines. So the overlap is removed here rather than
+ * assumed away upstream.
+ */
+export function excludeDrawnAsMarkers(
+  fieldTles: TleRecord[],
+  markerTles: readonly TleRecord[][]
+): TleRecord[] {
+  const drawn = new Set<string>();
+  for (const list of markerTles) for (const t of list) drawn.add(t.satnum);
+  if (drawn.size === 0) return fieldTles;
+  return fieldTles.filter((t) => !drawn.has(t.satnum));
+}

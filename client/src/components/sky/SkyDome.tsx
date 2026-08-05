@@ -6,7 +6,12 @@ import catalog from '../../data/skyCatalog.json';
 import { fetchExplanation } from '../../api/client';
 import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
-import { isDerelictByName, nextDerelictRise, preFilter } from '../../lib/debris';
+import {
+  excludeDrawnAsMarkers,
+  isDerelictByName,
+  nextDerelictRise,
+  preFilter,
+} from '../../lib/debris';
 import type { CloudSkyDensity, DensityBin } from '../../lib/debrisCloudSky';
 import { FRAGMENT_TYPICAL_MAGNITUDE, timesFainterThanEye } from '../../lib/debrisCloudSky';
 import type { BoresightCandidate } from '../../lib/boresight';
@@ -222,11 +227,12 @@ interface SceneProps {
   labelled: boolean;
   onLabelledChange: (labelled: boolean) => void;
   /**
-   * The whole tracked non-active catalogue, drawn as a point field.
+   * Every catalogued debris fragment still in orbit, drawn as a point field.
    *
    * Kept separate from `debrisTles` because they are drawn by different
    * machinery for a reason: a handful of objects deserve models, trails and hit
-   * targets, and twelve thousand cannot have them.
+   * targets, and twelve thousand cannot have them. Disjoint from it too —
+   * fragments here, spent stages and dead payloads there.
    */
   fieldTles: TleRecord[];
   onFieldChange: (info: { tracked: number; visible: number }) => void;
@@ -287,11 +293,21 @@ function SkyScene({
     [onFieldChange]
   );
 
+  // Nothing in the field that is already drawn as a marker. See the note on
+  // excludeDrawnAsMarkers for why this is not left to the upstream query.
+  const fieldOnlyTles = useMemo(
+    () =>
+      fieldTles.length === 0
+        ? EMPTY_TLES
+        : excludeDrawnAsMarkers(fieldTles, layers.satellites ? [debrisTles, tles] : [debrisTles]),
+    [fieldTles, debrisTles, tles, layers.satellites]
+  );
+
   const promotedTles = useMemo(() => {
     if (promoted.length === 0) return EMPTY_TLES;
     const wanted = new Set(promoted);
-    return fieldTles.filter((t) => wanted.has(t.satnum));
-  }, [promoted, fieldTles]);
+    return fieldOnlyTles.filter((t) => wanted.has(t.satnum));
+  }, [promoted, fieldOnlyTles]);
 
   const promotedObjects = useSkyObjects(
     promotedTles,
@@ -486,7 +502,7 @@ function SkyScene({
           front of one. */}
       {layers.debris && (
         <DebrisField
-          tles={fieldTles}
+          tles={fieldOnlyTles}
           observer={observer}
           displayTime={displayTime}
           labelled={labelled}
@@ -1087,14 +1103,16 @@ export function SkyDome({
         <p className="text-[11px] leading-snug max-w-md">
           <span style={{ color: '#8b7fd4' }}>
             {fieldInfo.visible.toLocaleString()} of {fieldInfo.tracked.toLocaleString()} tracked
-            objects above your horizon
+            debris fragments above your horizon
           </span>
           <span className="text-space-400">
             {' '}
-            — the whole catalogue, plotted as points. None of it is visible to the eye; at magnitude{' '}
-            {FRAGMENT_TYPICAL_MAGNITUDE} a fragment is about {Math.round(timesFainterThanEye())} times
-            fainter than the naked-eye limit. Positions are real and propagated exactly the way
-            everything else here is. Zoom in to name whatever you point at.
+            — every catalogued fragment still in orbit, plotted as points. Fragments only: spent
+            stages and dead payloads are the amber count below, and no object is in both. None of
+            this is visible to the eye; at magnitude {FRAGMENT_TYPICAL_MAGNITUDE} a fragment is about{' '}
+            {Math.round(timesFainterThanEye())} times fainter than the naked-eye limit. Positions
+            are real and propagated exactly the way everything else here is. Zoom in to name
+            whatever you point at.
           </span>
         </p>
       )}
