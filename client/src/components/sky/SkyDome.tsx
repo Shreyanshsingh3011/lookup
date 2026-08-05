@@ -7,6 +7,8 @@ import { fetchExplanation } from '../../api/client';
 import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
 import { isDerelictByName, nextDerelictRise, preFilter } from '../../lib/debris';
+import type { CloudSkyDensity, DensityBin } from '../../lib/debrisCloudSky';
+import { FRAGMENT_TYPICAL_MAGNITUDE, timesFainterThanEye } from '../../lib/debrisCloudSky';
 import type { BoresightCandidate } from '../../lib/boresight';
 import { findBoresightMatch } from '../../lib/boresight';
 import type { ExplainResult, ExplainSubject } from '../../lib/explain';
@@ -25,6 +27,7 @@ import { OrientationCamera } from './OrientationCamera';
 import { DomeShell } from './DomeShell';
 import { PlanetLayer } from './PlanetLayer';
 import { SatelliteMarker } from './SatelliteMarker';
+import { DebrisCloudRegion } from './DebrisCloudRegion';
 import { MeteorLayer } from './MeteorLayer';
 import { StarLayer } from './StarLayer';
 import type { Observer, Pass, SatcatEntry, TleRecord } from '../../types';
@@ -36,6 +39,7 @@ const EMPTY_PASSES: Pass[] = [];
 const EMPTY_TLES: TleRecord[] = [];
 const EMPTY_NOTES: Map<string, string> = new Map();
 const EMPTY_SATCAT: Map<string, SatcatEntry> = new Map();
+const EMPTY_BINS: DensityBin[] = [];
 
 /**
  * The camera orbits at a tiny fixed radius around the dome's centre, so the
@@ -166,6 +170,8 @@ interface SceneProps {
   onDebrisCountChange: (count: number) => void;
   /** Catalogue metadata, empty when SATCAT could not be reached. */
   satcat: Map<string, SatcatEntry>;
+  /** Binned fragment density for a loaded breakup cloud, drawn as a region. */
+  cloudBins: DensityBin[];
 }
 
 function SkyScene({
@@ -187,6 +193,7 @@ function SkyScene({
   onLogSighting,
   onDebrisCountChange,
   satcat,
+  cloudBins,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes, 'active', satcat);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
@@ -384,6 +391,9 @@ function SkyScene({
         />
       ))}
 
+      {/* Drawn before the markers so it can never sit in front of one. */}
+      {layers.debris && cloudBins.length > 0 && <DebrisCloudRegion bins={cloudBins} />}
+
       {debris.map((sat) => (
         <SatelliteMarker
           key={`debris-${sat.satnum}`}
@@ -451,6 +461,8 @@ interface Props {
   onGoToTime?: (time: Date) => void;
   /** Catalogue metadata for the drawn groups. Empty means fall back to names. */
   satcat?: Map<string, SatcatEntry>;
+  /** A loaded breakup cloud's density field, with the label to describe it. */
+  cloudRegion?: { label: string; density: CloudSkyDensity } | null;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -488,6 +500,7 @@ export function SkyDome({
   onLogSighting,
   onGoToTime,
   satcat = EMPTY_SATCAT,
+  cloudRegion = null,
   debrisLoading = false,
   debrisError = null,
   debrisUnreachable = 0,
@@ -654,6 +667,7 @@ export function SkyDome({
   }, []);
 
   return (
+    <>
     <div className="relative w-full h-[clamp(360px,58vh,620px)] rounded-xl overflow-hidden glass-panel">
       {/* Live camera passthrough, behind everything. Muted + playsInline so
           mobile browsers will autoplay it without a further gesture. */}
@@ -702,6 +716,7 @@ export function SkyDome({
               onLogSighting={onLogSighting}
               onDebrisCountChange={setDebrisCount}
               satcat={satcat}
+              cloudBins={cloudRegion?.density.bins ?? EMPTY_BINS}
             />
           </Suspense>
         </Canvas>
@@ -907,55 +922,92 @@ export function SkyDome({
           ))}
         </div>
 
-        {/* What the debris layer is actually showing, and what it is not. The
-            layer is a curated shortlist rather than the whole catalogue, and
-            silently drawing a dozen points would misrepresent that. */}
-        {layers.debris && (
-          <p className="text-[11px] text-space-400 leading-snug max-w-md">
-            {debrisError ? (
-              <span className="text-amber-glow">Debris catalogue unavailable — {debrisError}</span>
-            ) : debrisLoading ? (
-              'Loading derelicts…'
-            ) : debrisCount > 0 ? (
-              <>
-                <span className="text-amber-glow">
-                  {debrisCount} of {allDerelictTles.length} tracked derelicts above the horizon
-                </span>{' '}
-                — drawn in amber. Spent rocket bodies count as derelict whichever group they arrived
-                in; most of the brightest-objects group is spent stages. Breakup clouds are not drawn:
-                their fragments are far too faint to see.
-              </>
-            ) : (
-              <>
-                <span className="text-space-300">
-                  None of the {allDerelictTles.length} tracked derelicts
-                </span>{' '}
-                are above the horizon right now.{' '}
-                {nextRise ? (
-                  <>
-                    Next is {nextRise.name} at{' '}
-                    {nextRise.time.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })},{' '}
-                    {describeWait(nextRise.minutesAway)}.
-                    {onGoToTime && (
-                      <button
-                        type="button"
-                        onClick={() => onGoToTime(nextRise.time)}
-                        className="pointer-events-auto ml-1.5 underline underline-offset-2 text-glow-400 hover:text-glow-300"
-                      >
-                        Jump to it
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  'None rises in the next 24 hours from here.'
-                )}
-                {debrisUnreachable > 0 &&
-                  ` ${debrisUnreachable} more can never rise at this latitude at all.`}
-              </>
-            )}
-          </p>
-        )}
       </div>
     </div>
+
+      {/* Below the dome, not over it.
+
+          These lines are prose and they grow: the cloud sentence alone runs to
+          four lines. Inside the overlay they covered the bottom third of the
+          sky and pushed the layer buttons into the middle of it, where they
+          also swallowed drags meant for the view — a sweep written to find a
+          shaded patch never moved the camera once, because every drag started
+          on a button. None of this is a heads-up display; it is explanation,
+          and explanation belongs beside the picture rather than on top of it. */}
+      <div className="mt-2 flex flex-col gap-1.5">
+      {/* A loaded breakup cloud, stated separately from the derelicts because
+          it is a different kind of claim: those are objects you could go and
+          look at, this is a shaded region marking where fragments are that
+          nobody can see. Conflating the two would undo the distinction the
+          whole layer exists to draw. */}
+      {layers.debris && cloudRegion && (
+        <p className="text-[11px] leading-snug max-w-md">
+          <span style={{ color: '#a78bfa' }}>
+            {cloudRegion.label}: {cloudRegion.density.aboveHorizon.toLocaleString()} of{' '}
+            {cloudRegion.density.total.toLocaleString()} fragments above your horizon
+          </span>
+          <span className="text-space-400">
+            {' '}
+            — shaded where they are, not drawn as objects. At roughly magnitude{' '}
+            {FRAGMENT_TYPICAL_MAGNITUDE} a fragment is about{' '}
+            {Math.round(timesFainterThanEye())} times fainter than the naked eye can reach, so
+            none of this is visible. Positions are real; only the presentation is aggregate.
+            {cloudRegion.density.unreadable > 0 &&
+              ` ${cloudRegion.density.unreadable} element set${
+                cloudRegion.density.unreadable === 1 ? '' : 's'
+              } would not propagate.`}
+          </span>
+        </p>
+      )}
+
+      {/* What the debris layer is actually showing, and what it is not. The
+          layer is a curated shortlist rather than the whole catalogue, and
+          silently drawing a dozen points would misrepresent that. */}
+      {layers.debris && (
+        <p className="text-[11px] text-space-400 leading-snug max-w-md">
+          {debrisError ? (
+            <span className="text-amber-glow">Debris catalogue unavailable — {debrisError}</span>
+          ) : debrisLoading ? (
+            'Loading derelicts…'
+          ) : debrisCount > 0 ? (
+            <>
+              <span className="text-amber-glow">
+                {debrisCount} of {allDerelictTles.length} tracked derelicts above the horizon
+              </span>{' '}
+              — drawn in amber. Spent rocket bodies count as derelict whichever group they arrived
+              in; most of the brightest-objects group is spent stages.
+            </>
+          ) : (
+            <>
+              <span className="text-space-300">
+                None of the {allDerelictTles.length} tracked derelicts
+              </span>{' '}
+              are above the horizon right now.{' '}
+              {nextRise ? (
+                <>
+                  Next is {nextRise.name} at{' '}
+                  {nextRise.time.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })},{' '}
+                  {describeWait(nextRise.minutesAway)}.
+                  {onGoToTime && (
+                    <button
+                      type="button"
+                      onClick={() => onGoToTime(nextRise.time)}
+                      className="pointer-events-auto ml-1.5 underline underline-offset-2 text-glow-400 hover:text-glow-300"
+                    >
+                      Jump to it
+                    </button>
+                  )}
+                </>
+              ) : (
+                'None rises in the next 24 hours from here.'
+              )}
+              {debrisUnreachable > 0 &&
+                ` ${debrisUnreachable} more can never rise at this latitude at all.`}
+            </>
+          )}
+        </p>
+      )}
+      </div>
+    </>
   );
 }

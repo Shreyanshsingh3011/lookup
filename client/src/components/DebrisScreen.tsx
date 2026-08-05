@@ -49,6 +49,7 @@ export function DebrisScreen({
   selectedPass,
   onSelectPass,
   onShowInSky,
+  onShowCloudInSky,
 }: {
   observer: Observer;
   displayTime: Date;
@@ -57,6 +58,8 @@ export function DebrisScreen({
   onSelectPass: (pass: Pass | null) => void;
   /** Switch to the Sky tab with the debris layer turned on. */
   onShowInSky: () => void;
+  /** Hand a loaded cloud to the dome, to be shaded as a region. */
+  onShowCloudInSky: (cloud: DebrisCloudResponse) => void;
 }) {
   const [catalogue, setCatalogue] = useState<DebrisCatalogueResponse | null>(null);
   const [catalogueError, setCatalogueError] = useState<string | null>(null);
@@ -183,7 +186,14 @@ export function DebrisScreen({
         </div>
 
         {cloudError && <p className="text-xs text-amber-glow">{cloudError}</p>}
-        {openCloud && <CloudDetail data={openCloud} observer={observer} onClose={() => setOpenCloud(null)} />}
+        {openCloud && (
+          <CloudDetail
+            data={openCloud}
+            observer={observer}
+            onClose={() => setOpenCloud(null)}
+            onShowInSky={() => onShowCloudInSky(openCloud)}
+          />
+        )}
       </section>
 
       <DerelictPasses
@@ -326,10 +336,12 @@ function CloudDetail({
   data,
   observer,
   onClose,
+  onShowInSky,
 }: {
   data: DebrisCloudResponse;
   observer: Observer;
   onClose: () => void;
+  onShowInSky: () => void;
 }) {
   const filtered = useMemo(() => preFilter(data.tles, observer), [data.tles, observer]);
   const ages = useMemo(() => {
@@ -358,9 +370,23 @@ function CloudDetail({
             About {data.cloud.peakCatalogued.toLocaleString()} were catalogued at the peak.
           </p>
         </div>
-        <button type="button" onClick={onClose} className="text-[11px] text-space-400 hover:text-space-200">
-          Close
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          {/* Shaded, never plotted. The button says region rather than "show
+              fragments" because what appears is a density field, and a label
+              promising objects would set the wrong expectation before the
+              caveat is even read. */}
+          <button
+            type="button"
+            onClick={onShowInSky}
+            className="text-xs px-3 py-1.5 rounded-lg border transition"
+            style={{ color: '#a78bfa', borderColor: 'rgba(167,139,250,0.4)', background: 'rgba(167,139,250,0.12)' }}
+          >
+            Shade this cloud in the sky
+          </button>
+          <button type="button" onClick={onClose} className="text-[11px] text-space-400 hover:text-space-200">
+            Close
+          </button>
+        </div>
       </div>
 
       <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-sm">

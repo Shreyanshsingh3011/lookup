@@ -36,6 +36,7 @@ const SkyDome = lazy(() =>
 import { useConnection } from './hooks/useConnection';
 import { useDebrisSky } from './hooks/useDebrisSky';
 import { useSatcat } from './hooks/useSatcat';
+import { useCloudRegion } from './hooks/useCloudRegion';
 import { useGroupCatalogue } from './hooks/useGroupCatalogue';
 import { useLocation } from './hooks/useLocation';
 import { useTimeControl } from './hooks/useTimeControl';
@@ -43,7 +44,7 @@ import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
 import { isIssName } from './lib/issStream';
 import { DEFAULT_GROUP_IDS, describeGroups, normaliseGroups } from './lib/satelliteGroups';
 import { SCREENS, decodeShareState, encodeShareState, type ScreenId } from './lib/shareUrl';
-import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
+import type { DebrisCloudResponse, EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 const MAX_CUSTOM_SATELLITES = 20;
 
@@ -149,6 +150,21 @@ function App() {
   // and once fetched it stays, so toggling it off and back does not re-request.
   const [debrisLayer, setDebrisLayer] = useState(false);
   const debrisSky = useDebrisSky(observer, debrisLayer);
+
+  // A breakup cloud handed over from the Debris tab, shaded in the dome as a
+  // density field. Held here rather than in that screen because the dome needs
+  // it, and it survives switching tabs — which is the point of the hand-off.
+  const [skyCloud, setSkyCloud] = useState<DebrisCloudResponse | null>(null);
+  const cloudDensity = useCloudRegion(skyCloud?.tles ?? null, observer, time.displayTime, debrisLayer);
+  const cloudRegion = useMemo(
+    () => (skyCloud ? { label: skyCloud.cloud.label, density: cloudDensity } : null),
+    [skyCloud, cloudDensity]
+  );
+
+  const showCloudInSky = (cloud: DebrisCloudResponse) => {
+    setSkyCloud(cloud);
+    showDebrisInSky();
+  };
 
   const logNamedSighting = (subject: string, satnum: string | null) => {
     setLogPrefill({
@@ -382,6 +398,7 @@ function App() {
             selectedPass={selectedPass}
             onSelectPass={setSelectedPass}
             onShowInSky={showDebrisInSky}
+            onShowCloudInSky={showCloudInSky}
           />
         )}
 
@@ -420,6 +437,7 @@ function App() {
               debrisUnreachable={debrisSky.unreachableCount}
               onGoToTime={time.goToTime}
               satcat={satcat.byId}
+              cloudRegion={cloudRegion}
             />
           </Suspense>
           <TimeScrubber control={time} />
