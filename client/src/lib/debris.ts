@@ -1,6 +1,7 @@
 import { estimateDecay, orbitalElementsFromTle, type DecayEstimate } from './decay';
 import { footprintRadiusDeg } from './groundTrack';
 import { maxGroundTrackLatitudeDeg } from './orbitalMechanics';
+import { observerToGeodetic, parseSatrec, skySampleAt } from './sky';
 import type { Observer, TleRecord } from '../types';
 
 /**
@@ -252,4 +253,70 @@ export function assessRisk(tle: TleRecord, now: Date = new Date()): DebrisRisk {
   }
 
   return { freshness, decay, unreliable, summary };
+}
+
+/**
+ * When the next tracked derelict comes over the horizon.
+ *
+ * The shortlist is eight objects, and eight objects in low orbit are almost
+ * never all up at once — measured against live elements, at least one is above
+ * the horizon only about 45% of the time, from anywhere on Earth. So an empty
+ * debris layer is the ordinary case, not a failure, and a live view that draws
+ * nothing and says nothing is indistinguishable from one that is broken.
+ *
+ * This is what turns "nothing right now" into an answer: the object, and when
+ * to look. A coarse forward scan is enough — the caller wants a time to come
+ * back at, not an ephemeris — and eight objects at a minute's step over a day
+ * is a few thousand propagations, which is milliseconds.
+ */
+export interface NextRise {
+  satnum: string;
+  name: string;
+  time: Date;
+  /** Minutes from the search start, so a caller can phrase it either way. */
+  minutesAway: number;
+}
+
+export function nextDerelictRise(
+  tles: TleRecord[],
+  observer: Observer,
+  from: Date,
+  { withinHours = 24, stepSeconds = 60 }: { withinHours?: number; stepSeconds?: number } = {}
+): NextRise | null {
+  const observerGd = observerToGeodetic(observer);
+  const startMs = from.getTime();
+  const stepMs = stepSeconds * 1000;
+  const steps = Math.ceil((withinHours * 3600) / stepSeconds);
+
+  let best: NextRise | null = null;
+
+  for (const tle of tles) {
+    const rec = parseSatrec(tle);
+    if (!rec) continue;
+
+    // Only a rise counts, not "already up". An object above the horizon at the
+    // search start is the caller's business — they can see it — and reporting
+    // it as the next thing to look for would be nonsense.
+    let wasUp: boolean | null = null;
+    const limit = best ? Math.min(steps, Math.ceil((best.time.getTime() - startMs) / stepMs)) : steps;
+
+    for (let i = 0; i <= limit; i++) {
+      const when = new Date(startMs + i * stepMs);
+      const sample = skySampleAt(rec, observerGd, when);
+      if (!sample) break;
+      const up = sample.elevationDeg >= 0;
+      if (wasUp === false && up) {
+        best = {
+          satnum: tle.satnum,
+          name: tle.name.trim(),
+          time: when,
+          minutesAway: Math.round((when.getTime() - startMs) / 60_000),
+        };
+        break;
+      }
+      wasUp = up;
+    }
+  }
+
+  return best;
 }

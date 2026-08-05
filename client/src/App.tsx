@@ -413,6 +413,7 @@ function App() {
               debrisLoading={debrisSky.loading}
               debrisError={debrisSky.error}
               debrisUnreachable={debrisSky.unreachableCount}
+              onGoToTime={time.goToTime}
             />
           </Suspense>
           <TimeScrubber control={time} />

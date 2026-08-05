@@ -6,6 +6,7 @@ import catalog from '../../data/skyCatalog.json';
 import { fetchExplanation } from '../../api/client';
 import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
+import { nextDerelictRise } from '../../lib/debris';
 import type { BoresightCandidate } from '../../lib/boresight';
 import { findBoresightMatch } from '../../lib/boresight';
 import type { ExplainResult, ExplainSubject } from '../../lib/explain';
@@ -160,6 +161,8 @@ interface SceneProps {
   /** Catalogue notes, keyed by NORAD id, for the tapped detail panel. */
   debrisNotes: Map<string, string>;
   onLogSighting?: (subject: string, satnum: string | null) => void;
+  /** How many derelicts are actually above the horizon, which is often none. */
+  onDebrisCountChange: (count: number) => void;
 }
 
 function SkyScene({
@@ -179,6 +182,7 @@ function SkyScene({
   debrisTles,
   debrisNotes,
   onLogSighting,
+  onDebrisCountChange,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
@@ -275,6 +279,10 @@ function SkyScene({
   useEffect(() => {
     onCountChange(satellites.length);
   }, [satellites.length, onCountChange]);
+
+  useEffect(() => {
+    onDebrisCountChange(debris.length);
+  }, [debris.length, onDebrisCountChange]);
 
   // The highest satellite is the best thing to point a newcomer at.
   const highest = satellites.reduce<(typeof satellites)[number] | null>(
@@ -415,6 +423,8 @@ interface Props {
   /** Rejected by the coarse reach filter — they can never rise here. */
   debrisUnreachable?: number;
   onLogSighting?: (subject: string, satnum: string | null) => void;
+  /** Move the time scrubber, so "nothing up now" can offer a way to see it. */
+  onGoToTime?: (time: Date) => void;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -431,6 +441,13 @@ const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
 
 type IdentifyStatus = 'idle' | 'searching' | 'no-match' | 'loading' | 'result' | 'error';
 
+function describeWait(minutes: number): string {
+  if (minutes < 1) return 'about to rise';
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = minutes / 60;
+  return `in ${hours < 10 ? hours.toFixed(1) : Math.round(hours)} h`;
+}
+
 export function SkyDome({
   tles,
   observer,
@@ -443,6 +460,7 @@ export function SkyDome({
   debrisEnabled = false,
   onDebrisLayerChange,
   onLogSighting,
+  onGoToTime,
   debrisLoading = false,
   debrisError = null,
   debrisUnreachable = 0,
@@ -461,6 +479,7 @@ export function SkyDome({
     [onSatelliteSelected, tles, debrisTles]
   );
   const [visibleCount, setVisibleCount] = useState(0);
+  const [debrisCount, setDebrisCount] = useState(0);
   const [aimRequest, setAimRequest] = useState(0);
   const [layerState, setLayerState] = useState<SkyLayers>({
     satellites: true,
@@ -484,6 +503,18 @@ export function SkyDome({
     () => ({ ...layerState, debris: debrisEnabled }),
     [layerState, debrisEnabled]
   );
+
+  // Only searched when there is nothing to see, and bucketed to the minute so
+  // it does not re-run on every tick of the clock. A few thousand SGP4 steps
+  // is milliseconds, but it is pointless work while something is already up.
+  const riseSearchFrom = useMemo(
+    () => new Date(Math.floor(displayTime.getTime() / 60_000) * 60_000),
+    [displayTime]
+  );
+  const nextRise = useMemo(() => {
+    if (!debrisEnabled || debrisCount > 0 || debrisTles.length === 0) return null;
+    return nextDerelictRise(debrisTles, observer, riseSearchFrom);
+  }, [debrisEnabled, debrisCount, debrisTles, observer, riseSearchFrom]);
 
   // Aircraft are live-only: they are where they are now, so they are not tied
   // to the time scrubber the way propagated satellite positions are.
@@ -610,6 +641,7 @@ export function SkyDome({
               debrisTles={debrisTles}
               debrisNotes={debrisNotes}
               onLogSighting={onLogSighting}
+              onDebrisCountChange={setDebrisCount}
             />
           </Suspense>
         </Canvas>
@@ -824,12 +856,38 @@ export function SkyDome({
               <span className="text-amber-glow">Debris catalogue unavailable — {debrisError}</span>
             ) : debrisLoading ? (
               'Loading derelicts…'
+            ) : debrisCount > 0 ? (
+              <>
+                <span className="text-amber-glow">
+                  {debrisCount} of {debrisTles.length} derelicts above the horizon
+                </span>{' '}
+                — drawn in amber. Breakup clouds are not drawn: their fragments are far too faint to see.
+              </>
             ) : (
               <>
-                {debrisTles.length} notable derelict{debrisTles.length === 1 ? '' : 's'} tracked
-                {debrisUnreachable > 0 && `, ${debrisUnreachable} skipped as never rising here`}. Breakup
-                clouds are not drawn: their fragments are far too faint to see, so plotting them would
-                show a sky that isn't there. The Debris tab has the counts.
+                <span className="text-space-300">None of the {debrisTles.length} tracked derelicts</span>{' '}
+                are above the horizon right now — the usual state, since this is a handful of objects
+                and each is up only a small fraction of the day.{' '}
+                {nextRise ? (
+                  <>
+                    Next is {nextRise.name} at{' '}
+                    {nextRise.time.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })},{' '}
+                    {describeWait(nextRise.minutesAway)}.
+                    {onGoToTime && (
+                      <button
+                        type="button"
+                        onClick={() => onGoToTime(nextRise.time)}
+                        className="pointer-events-auto ml-1.5 underline underline-offset-2 text-glow-400 hover:text-glow-300"
+                      >
+                        Jump to it
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  'None rises in the next 24 hours from here.'
+                )}
+                {debrisUnreachable > 0 &&
+                  ` ${debrisUnreachable} more can never rise at this latitude at all.`}
               </>
             )}
           </p>
