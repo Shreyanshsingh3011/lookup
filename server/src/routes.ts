@@ -58,6 +58,9 @@ export const ROUTE_DESCRIPTIONS: Record<string, string> = {
   "GET /api/debris/cloud/:id":
     "Every catalogued fragment of one breakup cloud. Thousands of objects — requested explicitly, never loaded by default.",
 
+  "GET /api/satcat/:group":
+    "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
+
   "GET /api/small-bodies":
     "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
   "GET /api/radio/:catnr":

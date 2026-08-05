@@ -20904,7 +20904,7 @@ var require_application = __commonJS({
     };
     app2.del = deprecate.function(app2.delete, "app.del: Use app.delete instead");
     app2.render = function render(name, options, callback) {
-      var cache7 = this.cache;
+      var cache8 = this.cache;
       var done = callback;
       var engines = this.engines;
       var opts = options;
@@ -20923,7 +20923,7 @@ var require_application = __commonJS({
         renderOptions.cache = this.enabled("view cache");
       }
       if (renderOptions.cache) {
-        view = cache7[name];
+        view = cache8[name];
       }
       if (!view) {
         var View2 = this.get("view");
@@ -20939,7 +20939,7 @@ var require_application = __commonJS({
           return done(err);
         }
         if (renderOptions.cache) {
-          cache7[name] = view;
+          cache8[name] = view;
         }
       }
       tryRender(view, renderOptions, done);
@@ -25259,7 +25259,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client2) {
   };
 }
 function createMiddlewareContext(options, client2) {
-  const cache7 = /* @__PURE__ */ new WeakMap();
+  const cache8 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -25269,10 +25269,10 @@ function createMiddlewareContext(options, client2) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options);
       }
-      let parsed = cache7.get(response);
+      let parsed = cache8.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options);
-        cache7.set(response, parsed);
+        cache8.set(response, parsed);
       }
       return parsed;
     }
@@ -38773,14 +38773,14 @@ function GravFromState(entry) {
   const grav = new body_grav_calc_t(state.tt, r, v, a);
   return new grav_sim_t(bary, grav);
 }
-function GetSegment(cache7, tt) {
+function GetSegment(cache8, tt) {
   const t0 = PlutoStateTable[0][0];
   if (tt < t0 || tt > PlutoStateTable[PLUTO_NUM_STATES - 1][0]) {
     return null;
   }
   const seg_index = ClampIndex((tt - t0) / PLUTO_TIME_STEP, PLUTO_NUM_STATES - 1);
-  if (!cache7[seg_index]) {
-    const seg = cache7[seg_index] = [];
+  if (!cache8[seg_index]) {
+    const seg = cache8[seg_index] = [];
     seg[0] = GravFromState(PlutoStateTable[seg_index]).grav;
     seg[PLUTO_NSTEPS - 1] = GravFromState(PlutoStateTable[seg_index + 1]).grav;
     let i;
@@ -38799,7 +38799,7 @@ function GetSegment(cache7, tt) {
       seg[i].a = seg[i].a.mul(1 - ramp).add(reverse[i].a.mul(ramp));
     }
   }
-  return cache7[seg_index];
+  return cache8[seg_index];
 }
 function CalcPlutoOneWay(entry, target_tt, dt) {
   let sim = GravFromState(entry);
@@ -42981,6 +42981,158 @@ async function getSmallBodies() {
   }
 }
 
+// src/satcat.ts
+var SATCAT_BASE = "https://celestrak.org/pub/satcat.php";
+var CACHE_TTL_MS7 = 24 * 60 * 60 * 1e3;
+function parseOpsStatus(raw) {
+  switch (raw.trim().toUpperCase()) {
+    case "+":
+      return "operational";
+    case "-":
+      return "nonoperational";
+    case "P":
+      return "partially-operational";
+    case "B":
+      return "backup";
+    case "S":
+      return "spare";
+    case "X":
+      return "extended-mission";
+    case "D":
+      return "decayed";
+    default:
+      return "unknown";
+  }
+}
+function parseObjectType(raw) {
+  const value = raw.trim().toUpperCase();
+  if (value === "PAY" || value === "PAYLOAD") return "PAYLOAD";
+  if (value === "R/B" || value === "ROCKET BODY") return "ROCKET BODY";
+  if (value === "DEB" || value === "DEBRIS") return "DEBRIS";
+  return "UNKNOWN";
+}
+function splitCsvLine(line) {
+  const out = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      out.push(field);
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+  out.push(field);
+  return out;
+}
+function parseSatcatCsv(csv) {
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toUpperCase());
+  const col = (name) => {
+    const i = header.indexOf(name);
+    if (i < 0) {
+      throw new Error(
+        `SATCAT is missing the ${name} column. Columns present: ${header.join(", ")}. The format has changed upstream and this parser needs updating.`
+      );
+    }
+    return i;
+  };
+  const iId = col("NORAD_CAT_ID");
+  const iName = col("OBJECT_NAME");
+  const iType = col("OBJECT_TYPE");
+  const iStatus = col("OPS_STATUS_CODE");
+  const iRcs = header.indexOf("RCS");
+  const iLaunch = header.indexOf("LAUNCH_DATE");
+  const iDecay = header.indexOf("DECAY_DATE");
+  const entries = [];
+  for (const line of lines.slice(1)) {
+    const cells = splitCsvLine(line);
+    if (cells.length <= iStatus) continue;
+    const rawId = cells[iId]?.trim();
+    if (!rawId) continue;
+    const rcsRaw = iRcs >= 0 ? Number(cells[iRcs]) : NaN;
+    entries.push({
+      // Catalogue numbers are compared as strings elsewhere in this app, and
+      // SATCAT writes them unpadded while TLEs pad to five. Normalise here so
+      // the two can be matched at all.
+      satnum: rawId.padStart(5, "0"),
+      name: cells[iName]?.trim() ?? "",
+      objectType: parseObjectType(cells[iType] ?? ""),
+      opsStatus: parseOpsStatus(cells[iStatus] ?? ""),
+      rcsSquareMetres: Number.isFinite(rcsRaw) && rcsRaw > 0 ? rcsRaw : null,
+      launchDate: iLaunch >= 0 ? cells[iLaunch]?.trim() || null : null,
+      decayDate: iDecay >= 0 ? cells[iDecay]?.trim() || null : null
+    });
+  }
+  return entries;
+}
+function isDerelictByStatus(entry) {
+  if (entry.objectType === "ROCKET BODY" || entry.objectType === "DEBRIS") return true;
+  return entry.opsStatus === "nonoperational";
+}
+var cache7 = /* @__PURE__ */ new Map();
+async function getSatcatForGroup(groupId) {
+  const celestrakGroup = TLE_GROUPS[groupId];
+  if (!celestrakGroup) {
+    return {
+      entries: [],
+      source: "unavailable",
+      fetchedAt: null,
+      error: `Unknown group '${groupId}'.`
+    };
+  }
+  const cached = cache7.get(celestrakGroup);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS7) {
+    return { entries: cached.entries, source: "cache", fetchedAt: cached.fetchedAt };
+  }
+  const url = `${SATCAT_BASE}?GROUP=${encodeURIComponent(celestrakGroup)}&FORMAT=csv`;
+  try {
+    const res = await fetch(url, { headers: { accept: "text/csv" } });
+    if (!res.ok) {
+      throw new Error(`SATCAT returned ${res.status} ${res.statusText}`);
+    }
+    const csv = await res.text();
+    const entries = parseSatcatCsv(csv);
+    if (entries.length === 0) {
+      throw new Error("SATCAT returned no usable rows for this group.");
+    }
+    const fetchedAt = Date.now();
+    cache7.set(celestrakGroup, { entries, fetchedAt });
+    return { entries, source: "live", fetchedAt };
+  } catch (err) {
+    if (cached) {
+      return {
+        entries: cached.entries,
+        source: "cache",
+        fetchedAt: cached.fetchedAt,
+        error: err instanceof Error ? err.message : String(err)
+      };
+    }
+    return {
+      entries: [],
+      source: "unavailable",
+      fetchedAt: null,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+
 // src/routes.ts
 var ROUTE_DESCRIPTIONS = {
   "GET /api": "This index: every mounted route, with a one-line description.",
@@ -42994,6 +43146,7 @@ var ROUTE_DESCRIPTIONS = {
   "POST /api/passes/custom": "Visible passes for caller-supplied element sets, for satellites outside the tracked groups.",
   "GET /api/debris/catalogue": "The debris screen's two collections: named breakup clouds, and notable derelicts resolved individually so a vanished catalogue number is reported per object.",
   "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
+  "GET /api/satcat/:group": "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
   "GET /api/small-bodies": "Orbital elements for comets and asteroids bright enough to look for, from JPL's Small-Body Database.",
   "GET /api/radio/:catnr": "Amateur radio services for a satellite, from the SatNOGS register. An empty list means no known active downlink.",
   "GET /api/starlink/trains": "Starlink satellites still flying in formation close enough to be seen as a train.",
@@ -43328,6 +43481,19 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+app.get("/api/satcat/:group", async (req, res) => {
+  const { entries, source, fetchedAt, error } = await getSatcatForGroup(req.params.group);
+  res.json({
+    group: req.params.group,
+    count: entries.length,
+    source,
+    fetchedAt: fetchedAt ? new Date(fetchedAt).toISOString() : null,
+    error,
+    // Precomputed so the client does not have to re-encode the status rules.
+    derelictCount: entries.filter(isDerelictByStatus).length,
+    entries
+  });
 });
 app.get("/api/small-bodies", async (_req, res) => {
   res.json(await getSmallBodies());

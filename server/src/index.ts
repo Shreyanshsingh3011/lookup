@@ -30,6 +30,7 @@ import { findTrains } from "./starlink.js";
 import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 import { getTransmitters } from "./radio.js";
 import { getSmallBodies } from "./smallBodies.js";
+import { getSatcatForGroup, isDerelictByStatus } from "./satcat.js";
 import { buildRouteIndex } from "./routes.js";
 import {
   classify,
@@ -210,6 +211,32 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+
+/**
+ * Catalogue metadata for one group: object type and operational status.
+ *
+ * Element sets say where something is, never whether it still works. Without
+ * this the sky dome can only classify by name, which proves a spent stage but
+ * can never prove a dead payload — Envisat and ERS-1 are derelict and nothing
+ * in their names says so.
+ *
+ * Additive and non-fatal. An unreachable SATCAT returns an empty list with
+ * source "unavailable", and the caller keeps classifying by name exactly as
+ * before rather than losing the distinction or failing the request.
+ */
+app.get("/api/satcat/:group", async (req, res) => {
+  const { entries, source, fetchedAt, error } = await getSatcatForGroup(req.params.group);
+  res.json({
+    group: req.params.group,
+    count: entries.length,
+    source,
+    fetchedAt: fetchedAt ? new Date(fetchedAt).toISOString() : null,
+    error,
+    // Precomputed so the client does not have to re-encode the status rules.
+    derelictCount: entries.filter(isDerelictByStatus).length,
+    entries,
+  });
 });
 
 /**
