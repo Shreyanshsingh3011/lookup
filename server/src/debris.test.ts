@@ -320,3 +320,29 @@ test("a cloud whose parent is gone reports nothing rather than guessing", () => 
   ];
   assert.equal(findCloudParent(cosmos1408, fragmentsOnly), null);
 });
+
+/**
+ * Two entries on this list are not derelict, and both say so.
+ *
+ * Hubble is obvious. LAGEOS 2 is not, and I had it wrong: it is a passive
+ * sphere with no power and no instruments, so nothing aboard can fail, and
+ * ground stations still range it by laser. SATCAT lists it operational —
+ * checked against the live catalogue on 2026-08-05, along with Starlette,
+ * Stella, LARES and Ajisai, every one of them the same kind of object and
+ * every one of them operational.
+ *
+ * "No moving parts" is not the same as "dead", and a screen about dead things
+ * has to be able to tell the difference out loud.
+ */
+test("entries that are not actually derelict say so in their own note", () => {
+  const notDerelict = ["20580", "22195"]; // Hubble, LAGEOS 2
+  for (const satnum of notDerelict) {
+    const entry = NOTABLE_DERELICTS.find((d) => d.satnum === satnum);
+    assert.ok(entry, `${satnum} should be in the list`);
+    assert.match(
+      entry.note,
+      /not derelict/i,
+      `${entry.label} is operational, so its note must not let a reader assume otherwise`
+    );
+  }
+});

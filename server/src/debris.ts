@@ -237,7 +237,7 @@ export const NOTABLE_DERELICTS: NotableDerelict[] = [
     // that belongs to the other satellite, state what this one's own
     // elements support: at ~5,800 km there is effectively no atmosphere, and
     // the app's own decay estimator returns "stable" for it.
-    note: "A passive sphere of brass and aluminium studded with retroreflectors, launched 1992 to be ranged by laser. No power, no instruments, and an orbit near 5,800 km where there is effectively no atmosphere left to slow it — it will outlast everything else on this list by millions of years.",
+    note: "Not derelict, and worth being clear about why: a passive sphere of brass and aluminium studded with retroreflectors, with no power and no instruments — so nothing aboard can fail, and ground stations still range it by laser today. SATCAT lists it operational. It is here as the far end of the scale: an orbit near 5,800 km, where there is effectively no atmosphere left to slow it, and which will outlast everything else on this list by millions of years.",
   },
 ];
 
