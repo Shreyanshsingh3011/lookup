@@ -116,6 +116,38 @@ function parseOpsStatus(raw: string): OpsStatus {
   }
 }
 
+/**
+ * Alpha-5, the encoding that lets a five-character TLE field hold a six-digit
+ * catalogue number.
+ *
+ * The catalogue passed 99999 and the field never grew, so numbers from 100000
+ * are written with a letter standing in for the leading two digits: 100057
+ * becomes "A0057". I and O are skipped, because they are indistinguishable
+ * from 1 and 0 in the fixed-width text this all travels as.
+ *
+ * SATCAT writes the plain decimal number; TLEs are read with line1.slice(2, 7)
+ * and therefore yield the encoded form. Left alone, the two never match, and
+ * every object past 99999 would silently have no catalogue metadata — silently
+ * being the problem, since the failure looks exactly like an object SATCAT
+ * happens not to describe. This is not hypothetical: the live stations group
+ * already contains 100057, Soyuz MS-29.
+ */
+const ALPHA5_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+export function toAlpha5(catalogueNumber: string): string {
+  const value = Number(catalogueNumber);
+  if (!Number.isFinite(value) || value < 100000) {
+    return catalogueNumber.padStart(5, "0");
+  }
+  const leading = Math.floor(value / 10000);
+  const letter = ALPHA5_LETTERS[leading - 10];
+  // Beyond Z0000-Z9999 the scheme has no more room. Return the plain number
+  // rather than a wrong encoding — it will fail to match, which is visible,
+  // instead of matching the wrong object, which is not.
+  if (!letter) return catalogueNumber;
+  return letter + String(value % 10000).padStart(4, "0");
+}
+
 function parseObjectType(raw: string): SatcatEntry["objectType"] {
   const value = raw.trim().toUpperCase();
   if (value === "PAY" || value === "PAYLOAD") return "PAYLOAD";
@@ -209,10 +241,10 @@ export function parseSatcatCsv(csv: string): SatcatEntry[] {
     const rcsRaw = iRcs >= 0 ? Number(cells[iRcs]) : NaN;
 
     entries.push({
-      // Catalogue numbers are compared as strings elsewhere in this app, and
-      // SATCAT writes them unpadded while TLEs pad to five. Normalise here so
-      // the two can be matched at all.
-      satnum: rawId.padStart(5, "0"),
+      // Matched against TLE-derived satnums elsewhere, so it has to be in the
+      // form a TLE would carry: zero-padded to five, and Alpha-5 encoded past
+      // 99999. See toAlpha5.
+      satnum: toAlpha5(rawId),
       name: cells[iName]?.trim() ?? "",
       objectType: parseObjectType(cells[iType] ?? ""),
       opsStatus: parseOpsStatus(cells[iStatus] ?? ""),

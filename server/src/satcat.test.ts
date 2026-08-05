@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { isDerelictByStatus, parseSatcatCsv, splitCsvLine } from "./satcat.js";
+import { isDerelictByStatus, parseSatcatCsv, splitCsvLine, toAlpha5 } from "./satcat.js";
 
 const HEADER =
   "OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,OBJECT_TYPE,OPS_STATUS_CODE,OWNER,LAUNCH_DATE,LAUNCH_SITE,DECAY_DATE,PERIOD,INCLINATION,APOGEE,PERIGEE,RCS,DATA_STATUS_CODE,ORBIT_CENTER,ORBIT_TYPE";
@@ -103,4 +103,43 @@ test("RCS is kept only when it is a real measurement", () => {
 test("an empty or header-only file yields nothing rather than a bad row", () => {
   assert.deepEqual(parseSatcatCsv(""), []);
   assert.deepEqual(parseSatcatCsv(HEADER), []);
+});
+
+test("catalogue numbers past 99999 are encoded the way a TLE carries them", () => {
+  // Not hypothetical: the live stations group contains 100057, Soyuz MS-29,
+  // and a TLE writes that as "A0057". Unencoded, it would never match the
+  // element set, and the miss would look exactly like an object SATCAT simply
+  // does not describe.
+  assert.equal(toAlpha5("100057"), "A0057");
+  assert.equal(toAlpha5("100000"), "A0000");
+  assert.equal(toAlpha5("109999"), "A9999");
+  assert.equal(toAlpha5("110000"), "B0000");
+});
+
+test("Alpha-5 skips I and O, which are unreadable in fixed-width text", () => {
+  // 'H' is 17, so 179999 is H9999 and 180000 must skip I to reach J.
+  assert.equal(toAlpha5("179999"), "H9999");
+  assert.equal(toAlpha5("180000"), "J0000");
+  // 'N' is 22; 230000 must skip O to reach P.
+  assert.equal(toAlpha5("229999"), "N9999");
+  assert.equal(toAlpha5("230000"), "P0000");
+  assert.equal(toAlpha5("339999"), "Z9999");
+});
+
+test("numbers below 100000 keep the plain five-digit form", () => {
+  assert.equal(toAlpha5("25544"), "25544");
+  assert.equal(toAlpha5("694"), "00694");
+  assert.equal(toAlpha5("99999"), "99999");
+});
+
+test("beyond the scheme's range it fails to match rather than matching wrongly", () => {
+  // Past Z9999 there is no encoding left. Returning the plain number means a
+  // visible miss; inventing a character would mean silently labelling some
+  // other object.
+  assert.equal(toAlpha5("340000"), "340000");
+});
+
+test("a six-digit row parses to the encoded form end to end", () => {
+  const csv = `${HEADER}\n${row("SOYUZ-MS 29", "100057", "PAYLOAD", "+")}`;
+  assert.equal(parseSatcatCsv(csv)[0].satnum, "A0057");
 });

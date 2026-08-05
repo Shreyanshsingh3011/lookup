@@ -43020,6 +43020,17 @@ function parseOpsStatus(raw) {
       return "unknown";
   }
 }
+var ALPHA5_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+function toAlpha5(catalogueNumber) {
+  const value = Number(catalogueNumber);
+  if (!Number.isFinite(value) || value < 1e5) {
+    return catalogueNumber.padStart(5, "0");
+  }
+  const leading = Math.floor(value / 1e4);
+  const letter = ALPHA5_LETTERS[leading - 10];
+  if (!letter) return catalogueNumber;
+  return letter + String(value % 1e4).padStart(4, "0");
+}
 function parseObjectType(raw) {
   const value = raw.trim().toUpperCase();
   if (value === "PAY" || value === "PAYLOAD") return "PAYLOAD";
@@ -43084,10 +43095,10 @@ function parseSatcatCsv(csv) {
     if (!rawId) continue;
     const rcsRaw = iRcs >= 0 ? Number(cells[iRcs]) : NaN;
     entries.push({
-      // Catalogue numbers are compared as strings elsewhere in this app, and
-      // SATCAT writes them unpadded while TLEs pad to five. Normalise here so
-      // the two can be matched at all.
-      satnum: rawId.padStart(5, "0"),
+      // Matched against TLE-derived satnums elsewhere, so it has to be in the
+      // form a TLE would carry: zero-padded to five, and Alpha-5 encoded past
+      // 99999. See toAlpha5.
+      satnum: toAlpha5(rawId),
       name: cells[iName]?.trim() ?? "",
       objectType: parseObjectType(cells[iType] ?? ""),
       opsStatus: parseOpsStatus(cells[iStatus] ?? ""),
