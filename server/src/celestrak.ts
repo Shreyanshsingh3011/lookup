@@ -220,6 +220,13 @@ export const SATELLITE_GROUPS: CatalogueGroup[] = [
 export const TLE_GROUPS: Record<string, string> = {
   ...Object.fromEntries(SATELLITE_GROUPS.map((g) => [g.id, g.celestrak])),
   brightest: "visual",
+  // The named breakup clouds. Fetchable, and deliberately absent from
+  // SATELLITE_GROUPS: they belong to the debris screen, not to the picker that
+  // chooses what the sky dome draws. Kept in step with DEBRIS_CLOUDS by a test.
+  "fengyun-1c-debris": "fengyun-1c-debris",
+  "cosmos-2251-debris": "cosmos-2251-debris",
+  "iridium-33-debris": "iridium-33-debris",
+  "cosmos-1408-debris": "cosmos-1408-debris",
 };
 
 const cache = new Map<string, CacheEntry>();
@@ -400,6 +407,21 @@ async function fetchByCatnr(catnr: string): Promise<TleRecord[]> {
  * with its own cache keyed by catalog number.
  */
 export async function fetchSatelliteByCatnr(catnr: string): Promise<SingleTleResult> {
+  // An operator-supplied element file wins here for the same reason it wins for
+  // groups and for search: whoever set TLE_FILE meant it. Without this an
+  // air-gapped deployment can draw the sky but cannot look up a single object,
+  // which is most of what the debris screen does.
+  //
+  // A catalogue number absent from that file is reported the same way the
+  // upstream reports one it has never heard of, because to the caller it is the
+  // same fact: this object is not in the catalogue we are using.
+  const overridePath = elementFilePath();
+  if (overridePath) {
+    const match = parseTle(readElementFile(overridePath)).find((t) => Number(t.satnum) === Number(catnr));
+    if (!match) throw new Error(`No satellite found for NORAD ID ${catnr}`);
+    return { tle: match, fetchedAt: Date.now(), source: "cache", epoch: epochSpan([match.line1]) };
+  }
+
   const cached = satelliteCache.get(catnr);
   const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
   if (isFresh) {

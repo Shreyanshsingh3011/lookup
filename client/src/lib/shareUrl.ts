@@ -15,7 +15,17 @@ import type { Observer } from '../types';
  * instead of an error page.
  */
 
+/** Which top-level screen the link opens. */
+export type ScreenId = 'sky' | 'debris';
+
+export const SCREENS: Array<{ id: ScreenId; label: string }> = [
+  { id: 'sky', label: 'Sky' },
+  { id: 'debris', label: 'Debris' },
+];
+
 export interface ShareState {
+  /** Null means the default screen, so a plain link stays plain. */
+  screen: ScreenId | null;
   observer: Observer | null;
   /** Absolute instant the view was pinned to, or null for live. */
   time: Date | null;
@@ -25,6 +35,7 @@ export interface ShareState {
 }
 
 export const EMPTY_SHARE_STATE: ShareState = {
+  screen: null,
   observer: null,
   time: null,
   groups: null,
@@ -45,6 +56,10 @@ function roundCoord(value: number): number {
 export function encodeShareState(state: ShareState): string {
   const params = new URLSearchParams();
 
+  // The default screen is left out, so an ordinary link is not cluttered by
+  // naming the thing it would have shown anyway.
+  if (state.screen && state.screen !== 'sky') params.set('screen', state.screen);
+
   if (state.observer) {
     params.set('lat', String(roundCoord(state.observer.latitude)));
     params.set('lon', String(roundCoord(state.observer.longitude)));
@@ -64,11 +79,19 @@ export function decodeShareState(search: string): ShareState {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
 
   return {
+    screen: parseScreen(params.get('screen')),
     observer: parseObserver(params),
     time: parseTime(params.get('t')),
     groups: parseGroups(params.get('groups')),
     satnum: parseSatnum(params.get('sat')),
   };
+}
+
+function parseScreen(raw: string | null): ScreenId | null {
+  // An unknown screen falls back to the default rather than rendering nothing:
+  // a link from a later version naming a screen this build does not have
+  // should still show somebody a sky.
+  return SCREENS.some((s) => s.id === raw) ? (raw as ScreenId) : null;
 }
 
 function parseObserver(params: URLSearchParams): Observer | null {

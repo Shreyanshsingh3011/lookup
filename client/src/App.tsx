@@ -3,6 +3,7 @@ import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
 import { ConnectionNotice } from './components/ConnectionNotice';
+import { DebrisScreen } from './components/DebrisScreen';
 import { GroupPicker } from './components/GroupPicker';
 import { EarthView } from './components/EarthView';
 import { IssLiveView } from './components/IssLiveView';
@@ -39,7 +40,7 @@ import { useTimeControl } from './hooks/useTimeControl';
 import { downloadTextFile, passesToCsv, tlesToText } from './lib/exportData';
 import { isIssName } from './lib/issStream';
 import { DEFAULT_GROUP_IDS, describeGroups, normaliseGroups } from './lib/satelliteGroups';
-import { decodeShareState, encodeShareState } from './lib/shareUrl';
+import { SCREENS, decodeShareState, encodeShareState, type ScreenId } from './lib/shareUrl';
 import type { EpochSpan, Pass, TleRecord, TleSource } from './types';
 
 const MAX_CUSTOM_SATELLITES = 20;
@@ -63,6 +64,12 @@ function App() {
   // Which slice of the catalogue to track. Was a hardcoded ['stations'],
   // which is about twenty objects and routinely yields no passes at all.
   const [groupIds, setGroupIds] = useState<string[]>(INITIAL_SHARE.groups ?? DEFAULT_GROUP_IDS);
+
+  // Which top-level screen is showing. Debris asks different questions from the
+  // sky view — what is still up there, whether anyone is still talking to it,
+  // whether the elements can be believed — so it is a screen rather than
+  // another band in the group picker.
+  const [screen, setScreen] = useState<ScreenId>(INITIAL_SHARE.screen ?? 'sky');
   const groups = useMemo(() => normaliseGroups(groupIds, catalogue.groups), [groupIds, catalogue.groups]);
 
   const [passes, setPasses] = useState<Pass[]>([]);
@@ -131,6 +138,18 @@ function App() {
     observedAt: Date;
   } | null>(null);
   const logbookRef = useRef<HTMLDivElement>(null);
+
+  const logNamedSighting = (subject: string, satnum: string | null) => {
+    setLogPrefill({
+      subject,
+      satnum,
+      magnitude: null,
+      maxElevationDeg: null,
+      observedAt: new Date(),
+    });
+    setScreen('sky');
+    logbookRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const logSighting = (pass: Pass) => {
     setLogPrefill({
@@ -277,12 +296,13 @@ function App() {
   // and turn the back button into an undo log nobody asked for.
   const shareState = useMemo(
     () => ({
+      screen,
       observer,
       time: time.anchoredToNow && time.live ? null : time.displayTime,
       groups,
       satnum: selectedPass?.satnum ?? null,
     }),
-    [observer, time.anchoredToNow, time.live, time.displayTime, groups, selectedPass]
+    [screen, observer, time.anchoredToNow, time.live, time.displayTime, groups, selectedPass]
   );
 
   useEffect(() => {
@@ -301,6 +321,23 @@ function App() {
             <h1 className="text-xl font-semibold tracking-tight text-glow">Lookup</h1>
             <p className="text-xs text-space-300">Satellite tracking &amp; astronomy</p>
           </div>
+          <nav className="flex gap-1.5" aria-label="Screens">
+            {SCREENS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setScreen(s.id)}
+                aria-current={screen === s.id ? 'page' : undefined}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition ${
+                  screen === s.id
+                    ? 'bg-glow-600/20 text-glow-400 border-glow-600/40 font-semibold'
+                    : 'bg-space-900/60 text-space-300 border-space-700 hover:text-space-200 hover:border-space-600'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </nav>
           <LocationPicker
             observer={observer}
             source={locationSource}
@@ -315,6 +352,19 @@ function App() {
       <main className="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-6">
         <SourceBanner source={dataSource} epoch={dataEpoch} />
         <ConnectionNotice {...connection} />
+
+        {screen === 'debris' && (
+          <DebrisScreen
+            observer={observer}
+            displayTime={time.displayTime}
+            onLogSighting={logNamedSighting}
+            selectedPass={selectedPass}
+            onSelectPass={setSelectedPass}
+          />
+        )}
+
+        {screen === 'sky' && (
+          <>
 
         <Tonight observer={observer} passes={allPasses} displayTime={time.displayTime} />
 
@@ -419,6 +469,9 @@ function App() {
           </div>
           <AddSatellite customTles={customTles} onAdd={addCustomSatellite} onRemove={removeCustomSatellite} />
         </section>
+
+          </>
+        )}
 
         <div ref={logbookRef} className="scroll-mt-24">
           <Logbook

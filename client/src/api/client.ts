@@ -5,6 +5,8 @@ import type { ExplainResult, ExplainSubject } from '../lib/explain';
 import type { OrbitAdviceRequest, OrbitAdviceResult } from '../lib/orbitAdvice';
 import type {
   CustomPassesResponse,
+  DebrisCatalogueResponse,
+  DebrisCloudResponse,
   GroupCatalogueResponse,
   Observer,
   PassesResponse,
@@ -142,4 +144,14 @@ export function fetchTransmitters(satnum: string): Promise<TransmitterResponse> 
 /** Comets and asteroids bright enough to look for. Never rejects. */
 export function fetchSmallBodies(): Promise<SmallBodyResponse> {
   return apiFetch<SmallBodyResponse>('/api/small-bodies');
+}
+
+/** The debris catalogue: named clouds, and notable derelicts resolved one by one. */
+export function fetchDebrisCatalogue(): Promise<DebrisCatalogueResponse> {
+  return apiFetch<DebrisCatalogueResponse>('/api/debris/catalogue');
+}
+
+/** One breakup cloud's fragments. Explicitly requested — these are thousands of objects. */
+export function fetchDebrisCloud(id: string): Promise<DebrisCloudResponse> {
+  return apiFetch<DebrisCloudResponse>(`/api/debris/cloud/${encodeURIComponent(id)}`);
 }

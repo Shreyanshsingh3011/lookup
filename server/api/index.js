@@ -35749,7 +35749,14 @@ var SATELLITE_GROUPS = [
 ];
 var TLE_GROUPS = {
   ...Object.fromEntries(SATELLITE_GROUPS.map((g) => [g.id, g.celestrak])),
-  brightest: "visual"
+  brightest: "visual",
+  // The named breakup clouds. Fetchable, and deliberately absent from
+  // SATELLITE_GROUPS: they belong to the debris screen, not to the picker that
+  // chooses what the sky dome draws. Kept in step with DEBRIS_CLOUDS by a test.
+  "fengyun-1c-debris": "fengyun-1c-debris",
+  "cosmos-2251-debris": "cosmos-2251-debris",
+  "iridium-33-debris": "iridium-33-debris",
+  "cosmos-1408-debris": "cosmos-1408-debris"
 };
 var cache = /* @__PURE__ */ new Map();
 var inFlight = /* @__PURE__ */ new Map();
@@ -35845,6 +35852,12 @@ async function fetchByCatnr(catnr) {
   return records;
 }
 async function fetchSatelliteByCatnr(catnr) {
+  const overridePath = elementFilePath();
+  if (overridePath) {
+    const match = parseTle(readElementFile(overridePath)).find((t) => Number(t.satnum) === Number(catnr));
+    if (!match) throw new Error(`No satellite found for NORAD ID ${catnr}`);
+    return { tle: match, fetchedAt: Date.now(), source: "cache", epoch: epochSpan([match.line1]) };
+  }
   const cached = satelliteCache.get(catnr);
   const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
   if (isFresh) {
@@ -42968,6 +42981,167 @@ async function getSmallBodies() {
   }
 }
 
+// src/debris.ts
+function classify(name, objectType) {
+  const declared = normaliseObjectType(objectType);
+  if (declared) return { type: declared, source: "field" };
+  const upper = name.toUpperCase();
+  if (/\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/.test(upper)) {
+    return { type: "DEBRIS", source: "name" };
+  }
+  if (/R\/B|ROCKET BODY|\bAKM\b|\bPKM\b/.test(upper)) {
+    return { type: "ROCKET BODY", source: "name" };
+  }
+  if (/\bUNKNOWN\b|^TBA\b|OBJECT [A-Z]$/.test(upper)) {
+    return { type: "UNKNOWN", source: "name" };
+  }
+  return { type: "PAYLOAD", source: "name" };
+}
+function normaliseObjectType(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const value = raw.trim().toUpperCase();
+  if (value === "PAY" || value === "PAYLOAD") return "PAYLOAD";
+  if (value === "R/B" || value === "ROCKET BODY") return "ROCKET BODY";
+  if (value === "DEB" || value === "DEBRIS") return "DEBRIS";
+  if (value === "UNK" || value === "UNKNOWN") return "UNKNOWN";
+  return null;
+}
+var DEBRIS_CLOUDS = [
+  {
+    id: "fengyun-1c",
+    celestrakGroup: "fengyun-1c-debris",
+    label: "Fengyun-1C",
+    event: "China destroyed its own weather satellite in an anti-satellite test, the single worst debris-generating event on record.",
+    eventDate: "2007-01-11",
+    parentNorad: null,
+    approximateCount: 3400,
+    altitudeBandKm: [200, 3800]
+  },
+  {
+    id: "cosmos-2251",
+    celestrakGroup: "cosmos-2251-debris",
+    label: "Cosmos 2251",
+    event: "A derelict Russian communications satellite collided with the working Iridium 33 \u2014 the first accidental collision between two intact satellites.",
+    eventDate: "2009-02-10",
+    parentNorad: null,
+    approximateCount: 1700,
+    altitudeBandKm: [200, 1700]
+  },
+  {
+    id: "iridium-33",
+    celestrakGroup: "iridium-33-debris",
+    label: "Iridium 33",
+    event: "The other half of the 2009 collision: an operational satellite, destroyed while working.",
+    eventDate: "2009-02-10",
+    parentNorad: null,
+    approximateCount: 630,
+    altitudeBandKm: [200, 1400]
+  },
+  {
+    id: "cosmos-1408",
+    celestrakGroup: "cosmos-1408-debris",
+    label: "Cosmos 1408",
+    event: "A Russian anti-satellite test that forced the ISS crew into their escape vehicles as the cloud passed.",
+    eventDate: "2021-11-15",
+    parentNorad: null,
+    approximateCount: 1500,
+    altitudeBandKm: [200, 1100]
+  }
+];
+var NOTABLE_DERELICTS = [
+  {
+    satnum: "00694",
+    label: "Atlas Centaur 2",
+    kind: "rocket-body",
+    note: "Launched 1963 and still up there \u2014 one of the oldest objects in orbit, and bright enough to follow with the naked eye."
+  },
+  {
+    satnum: "02802",
+    label: "SL-8 R/B (Cosmos 249)",
+    kind: "rocket-body",
+    note: "A 1967 Soviet upper stage, one of hundreds of SL-8 bodies that make up much of what people actually see pass over."
+  },
+  {
+    satnum: "16182",
+    label: "SL-16 R/B (Zenit-2)",
+    kind: "rocket-body",
+    note: "A Zenit second stage: nine tonnes and eleven metres long, among the brightest derelicts in the sky."
+  },
+  {
+    satnum: "23705",
+    label: "SL-16 R/B",
+    kind: "rocket-body",
+    note: "Another Zenit stage in the same crowded 850 km band, and a frequent close-approach partner."
+  },
+  {
+    satnum: "10967",
+    label: "Seasat 1",
+    kind: "payload",
+    note: "NASA's first ocean-observing radar satellite, dead after 105 days in 1978 from a power fault, still in orbit."
+  },
+  {
+    satnum: "00900",
+    label: "Calsphere 1",
+    kind: "payload",
+    note: "A calibration sphere from 1964 \u2014 no instruments, no power, just a metal ball still going round."
+  },
+  {
+    satnum: "20580",
+    label: "Hubble Space Telescope",
+    kind: "payload",
+    note: "Not derelict, but included as the reference point: a large, bright, well-known object to compare the rest against."
+  },
+  {
+    satnum: "22195",
+    label: "Cosmos 2251",
+    kind: "payload",
+    note: "The parent object of the 2009 collision cloud, if its catalogue entry still resolves."
+  }
+];
+function statusFromError(message) {
+  return /no satellite found|404|not found/i.test(message) ? "not-in-catalogue" : "unavailable";
+}
+var EARTH_RADIUS_KM2 = 6378.137;
+var MU_EARTH2 = 398600.4418;
+function groundTrackLimitDeg(inclinationDeg) {
+  let wrapped = inclinationDeg;
+  if (wrapped < 0 || wrapped >= 360) wrapped = (wrapped % 360 + 360) % 360;
+  const folded = wrapped > 180 ? 360 - wrapped : wrapped;
+  return folded > 90 ? 180 - folded : folded;
+}
+function footprintRadiusDeg(altitudeKm) {
+  if (!(altitudeKm > 0)) return 0;
+  return Math.acos(EARTH_RADIUS_KM2 / (EARTH_RADIUS_KM2 + altitudeKm)) * 180 / Math.PI;
+}
+function geometryFromTle(tle) {
+  const inclinationDeg = Number(tle.line2.slice(8, 16));
+  const eccentricity = Number(`0.${tle.line2.slice(26, 33).trim()}`);
+  const meanMotionRevPerDay = Number(tle.line2.slice(52, 63));
+  if (!Number.isFinite(inclinationDeg) || !Number.isFinite(eccentricity) || !(meanMotionRevPerDay > 0)) {
+    return null;
+  }
+  const n = meanMotionRevPerDay * 2 * Math.PI / 86400;
+  const semiMajorAxisKm = Math.cbrt(MU_EARTH2 / (n * n));
+  if (!Number.isFinite(semiMajorAxisKm)) return null;
+  return {
+    inclinationDeg,
+    perigeeAltitudeKm: semiMajorAxisKm * (1 - eccentricity) - EARTH_RADIUS_KM2,
+    apogeeAltitudeKm: semiMajorAxisKm * (1 + eccentricity) - EARTH_RADIUS_KM2
+  };
+}
+var MIN_USEFUL_PERIGEE_KM = 130;
+function canEverRise(tle, observerLatitudeDeg) {
+  const geometry = geometryFromTle(tle);
+  if (!geometry) return false;
+  if (!(geometry.perigeeAltitudeKm >= MIN_USEFUL_PERIGEE_KM)) return false;
+  const reach = groundTrackLimitDeg(geometry.inclinationDeg) + footprintRadiusDeg(geometry.apogeeAltitudeKm);
+  return Math.abs(observerLatitudeDeg) <= reach;
+}
+function filterByReach(tles, observerLatitudeDeg) {
+  const candidates = tles.filter((tle) => canEverRise(tle, observerLatitudeDeg));
+  return { candidates, skipped: tles.length - candidates.length };
+}
+
 // src/index.ts
 var PORT = Number(process.env.PORT) || 3001;
 var app = (0, import_express.default)();
@@ -43022,6 +43196,54 @@ app.get("/api/tle/:group", async (req, res) => {
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to fetch TLE data" });
   }
 });
+app.get("/api/debris/catalogue", async (_req, res) => {
+  const results = await Promise.all(
+    NOTABLE_DERELICTS.map(async (entry) => {
+      try {
+        const { tle } = await fetchSatelliteByCatnr(entry.satnum);
+        return { entry, status: "resolved", tle };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { entry, status: statusFromError(message), tle: null, error: message };
+      }
+    })
+  );
+  res.json({
+    clouds: DEBRIS_CLOUDS,
+    derelicts: results,
+    resolvedCount: results.filter((r) => r.status === "resolved").length
+  });
+});
+app.get("/api/debris/cloud/:id", async (req, res) => {
+  const cloud = DEBRIS_CLOUDS.find((c) => c.id === req.params.id);
+  if (!cloud) {
+    res.status(404).json({
+      error: `Unknown debris cloud '${req.params.id}'. Known clouds: ${DEBRIS_CLOUDS.map((c) => c.id).join(", ")}.`
+    });
+    return;
+  }
+  try {
+    const { tles, source, epoch, fetchedAt } = await getTleGroup(cloud.celestrakGroup);
+    const objectTypes = tles.map((t) => classify(t.name).type);
+    res.json({
+      cloud,
+      count: tles.length,
+      // Reported so the screen can say what it is looking at rather than
+      // assuming every member of a debris group is debris — the parent body
+      // and its rocket stage are often catalogued in the same group.
+      typeCounts: objectTypes.reduce((acc, type) => {
+        acc[type] = (acc[type] ?? 0) + 1;
+        return acc;
+      }, {}),
+      source,
+      epoch,
+      fetchedAt: new Date(fetchedAt).toISOString(),
+      tles
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
+  }
+});
 app.get("/api/small-bodies", async (_req, res) => {
   res.json(await getSmallBodies());
 });
@@ -43043,7 +43265,16 @@ app.get("/api/tle/satellite/:catnr", async (req, res) => {
     const { tle, source, fetchedAt, epoch } = await fetchSatelliteByCatnr(catnr);
     res.json({ tle, source, fetchedAt: new Date(fetchedAt).toISOString(), epoch });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : `Failed to fetch NORAD ID ${catnr}` });
+    const message = err instanceof Error ? err.message : `Failed to fetch NORAD ID ${catnr}`;
+    if (statusFromError(message) === "not-in-catalogue") {
+      res.status(404).json({
+        error: `NORAD ID ${catnr} is not in the catalogue. It may have reentered \u2014 objects are removed when they do.`,
+        catnr,
+        reason: "not-in-catalogue"
+      });
+      return;
+    }
+    res.status(502).json({ error: message, catnr, reason: "unavailable" });
   }
 });
 function parseObserver(req) {
@@ -43092,7 +43323,8 @@ app.get("/api/passes", async (req, res) => {
       }
     }
     const maxMagnitude = req.query.maxMag !== void 0 ? Number(req.query.maxMag) : DEFAULT_PASS_OPTIONS.maxMagnitude;
-    const { scanned, skipped } = rankForVisibility(tles);
+    const reach = filterByReach(tles, observer.latitude);
+    const { scanned, skipped } = rankForVisibility(reach.candidates);
     const { passes, tooFaintCount, brightestRejectedMagnitude: brightestRejected } = computePassesForMany(scanned, observer, { days, minElevationDeg, maxMagnitude });
     let weatherStatus = "unavailable";
     let weatherError;
@@ -43114,7 +43346,9 @@ app.get("/api/passes", async (req, res) => {
       satelliteCount: scanned.length,
       /** Everything the chosen groups contain, before the scan cap. */
       catalogueCount: tles.length,
-      /** Objects dropped by the cap, ranked out as the faintest candidates. */
+      /** Objects that can never rise at this latitude, rejected before propagating. */
+      unreachableCount: reach.skipped,
+      /** Objects dropped by the brightness cap, ranked out as the faintest candidates. */
       notScannedCount: skipped,
       maxScannedSatellites: MAX_SCANNED_SATELLITES,
       passCount: passes.length,

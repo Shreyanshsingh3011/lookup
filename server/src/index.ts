@@ -30,6 +30,14 @@ import { findTrains } from "./starlink.js";
 import { getEarthImagery, probeCandidates } from "./earthImagery.js";
 import { getTransmitters } from "./radio.js";
 import { getSmallBodies } from "./smallBodies.js";
+import {
+  classify,
+  DEBRIS_CLOUDS,
+  filterByReach,
+  NOTABLE_DERELICTS,
+  statusFromError,
+  type ResolvedDerelict,
+} from "./debris.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -108,12 +116,73 @@ app.get("/api/tle/:group", async (req, res) => {
 });
 
 /**
- * Amateur radio services for a satellite.
+ * The two debris collections, which are deliberately separate.
  *
- * Never fails the request: an unreachable register reports itself so the
- * Doppler figures, which are computed from the orbit and do not depend on it,
- * can still be shown against a frequency the operator types in themselves.
+ * Clouds are named breakup events fetched wholesale as groups; derelicts are
+ * individually notable objects fetched one at a time. Only the catalogue of
+ * clouds is returned here — their several thousand fragments each are fetched
+ * on demand, since loading them by default is exactly what this screen is
+ * built to avoid.
  */
+app.get("/api/debris/catalogue", async (_req, res) => {
+  const results = await Promise.all(
+    NOTABLE_DERELICTS.map(async (entry): Promise<ResolvedDerelict> => {
+      try {
+        const { tle } = await fetchSatelliteByCatnr(entry.satnum);
+        return { entry, status: "resolved", tle };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // A catalogue number that no longer resolves is a normal outcome for
+        // this screen, not an error: things reenter.
+        return { entry, status: statusFromError(message), tle: null, error: message };
+      }
+    })
+  );
+
+  res.json({
+    clouds: DEBRIS_CLOUDS,
+    derelicts: results,
+    resolvedCount: results.filter((r) => r.status === "resolved").length,
+  });
+});
+
+/**
+ * One breakup cloud's fragments.
+ *
+ * Explicitly requested rather than loaded with the screen: the smallest of
+ * these is six hundred objects and the largest several thousand.
+ */
+app.get("/api/debris/cloud/:id", async (req, res) => {
+  const cloud = DEBRIS_CLOUDS.find((c) => c.id === req.params.id);
+  if (!cloud) {
+    res.status(404).json({
+      error: `Unknown debris cloud '${req.params.id}'. Known clouds: ${DEBRIS_CLOUDS.map((c) => c.id).join(", ")}.`,
+    });
+    return;
+  }
+  try {
+    const { tles, source, epoch, fetchedAt } = await getTleGroup(cloud.celestrakGroup);
+    const objectTypes = tles.map((t) => classify(t.name).type);
+    res.json({
+      cloud,
+      count: tles.length,
+      // Reported so the screen can say what it is looking at rather than
+      // assuming every member of a debris group is debris — the parent body
+      // and its rocket stage are often catalogued in the same group.
+      typeCounts: objectTypes.reduce<Record<string, number>>((acc, type) => {
+        acc[type] = (acc[type] ?? 0) + 1;
+        return acc;
+      }, {}),
+      source,
+      epoch,
+      fetchedAt: new Date(fetchedAt).toISOString(),
+      tles,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
+  }
+});
+
 /**
  * Comets and asteroids bright enough to look for.
  *
@@ -124,6 +193,13 @@ app.get("/api/small-bodies", async (_req, res) => {
   res.json(await getSmallBodies());
 });
 
+/**
+ * Amateur radio services for a satellite.
+ *
+ * Never fails the request: an unreachable register reports itself so the
+ * Doppler figures, which are computed from the orbit and do not depend on it,
+ * can still be shown against a frequency the operator types in themselves.
+ */
 app.get("/api/radio/:catnr", async (req, res) => {
   const { catnr } = req.params;
   if (!/^\d{1,9}$/.test(catnr)) {
@@ -143,7 +219,20 @@ app.get("/api/tle/satellite/:catnr", async (req, res) => {
     const { tle, source, fetchedAt, epoch } = await fetchSatelliteByCatnr(catnr);
     res.json({ tle, source, fetchedAt: new Date(fetchedAt).toISOString(), epoch });
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : `Failed to fetch NORAD ID ${catnr}` });
+    const message = err instanceof Error ? err.message : `Failed to fetch NORAD ID ${catnr}`;
+    // A catalogue number that does not exist is a fact about the object, not a
+    // failure of the gateway. Objects are struck from the catalogue constantly
+    // as they reenter, so a stale bookmark or an old logbook entry pointing at
+    // one is an ordinary thing to happen and gets an ordinary 404.
+    if (statusFromError(message) === "not-in-catalogue") {
+      res.status(404).json({
+        error: `NORAD ID ${catnr} is not in the catalogue. It may have reentered — objects are removed when they do.`,
+        catnr,
+        reason: "not-in-catalogue",
+      });
+      return;
+    }
+    res.status(502).json({ error: message, catnr, reason: "unavailable" });
   }
 });
 
@@ -203,10 +292,13 @@ app.get("/api/passes", async (req, res) => {
     const maxMagnitude =
       req.query.maxMag !== undefined ? Number(req.query.maxMag) : DEFAULT_PASS_OPTIONS.maxMagnitude;
 
-    // A group like Starlink is thousands of objects, which is minutes of
-    // compute inside a thirty-second function. Scan the brightest that fit and
-    // report the rest rather than truncating quietly or timing out.
-    const { scanned, skipped } = rankForVisibility(tles);
+    // Two stages, in this order because they cut different things. First the
+    // geometry: an orbit whose ground track never reaches this latitude can
+    // never rise here, which two fields decide with no propagation at all.
+    // Then brightness, which is what actually bounds the cost once a debris
+    // group's several thousand objects all turn out to pass overhead.
+    const reach = filterByReach(tles, observer.latitude);
+    const { scanned, skipped } = rankForVisibility(reach.candidates);
 
     // Shares one observer-context build (darkness windows, sun-altitude table)
     // across every satellite instead of recomputing it per object.
@@ -236,7 +328,9 @@ app.get("/api/passes", async (req, res) => {
       satelliteCount: scanned.length,
       /** Everything the chosen groups contain, before the scan cap. */
       catalogueCount: tles.length,
-      /** Objects dropped by the cap, ranked out as the faintest candidates. */
+      /** Objects that can never rise at this latitude, rejected before propagating. */
+      unreachableCount: reach.skipped,
+      /** Objects dropped by the brightness cap, ranked out as the faintest candidates. */
       notScannedCount: skipped,
       maxScannedSatellites: MAX_SCANNED_SATELLITES,
       passCount: passes.length,

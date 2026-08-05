@@ -166,3 +166,48 @@ export interface SmallBodyResponse {
   source: 'live' | 'cache' | 'builtin';
   error?: string;
 }
+
+export type ObjectType = 'PAYLOAD' | 'ROCKET BODY' | 'DEBRIS' | 'UNKNOWN';
+
+/** A breakup event whose fragments are still catalogued together. */
+export interface DebrisCloud {
+  id: string;
+  celestrakGroup: string;
+  label: string;
+  event: string;
+  eventDate: string;
+  parentNorad: string | null;
+  approximateCount: number;
+  altitudeBandKm: [number, number];
+}
+
+export interface NotableDerelict {
+  satnum: string;
+  label: string;
+  kind: 'rocket-body' | 'payload';
+  note: string;
+}
+
+/** A derelict lookup, which may legitimately have found nothing. */
+export interface ResolvedDerelict {
+  entry: NotableDerelict;
+  status: 'resolved' | 'not-in-catalogue' | 'unavailable';
+  tle: TleRecord | null;
+  error?: string;
+}
+
+export interface DebrisCatalogueResponse {
+  clouds: DebrisCloud[];
+  derelicts: ResolvedDerelict[];
+  resolvedCount: number;
+}
+
+export interface DebrisCloudResponse {
+  cloud: DebrisCloud;
+  count: number;
+  typeCounts: Partial<Record<ObjectType, number>>;
+  source: TleSource;
+  epoch: EpochSpan | null;
+  fetchedAt: string;
+  tles: TleRecord[];
+}

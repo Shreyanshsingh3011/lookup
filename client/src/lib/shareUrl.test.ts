@@ -1,11 +1,12 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
-import { decodeShareState, encodeShareState, shareUrl, type ShareState } from './shareUrl';
+import { EMPTY_SHARE_STATE, decodeShareState, encodeShareState, shareUrl, type ShareState } from './shareUrl';
 
 const GREENWICH = { latitude: 51.4769, longitude: -0.0005, elevation: 45 };
 
 test('a full state survives the round trip', () => {
   const state: ShareState = {
+    screen: null,
     observer: GREENWICH,
     time: new Date('2026-08-04T21:30:00.000Z'),
     groups: ['stations', 'visual'],
@@ -20,7 +21,7 @@ test('a full state survives the round trip', () => {
 });
 
 test('an empty state produces an empty query, not a query of empties', () => {
-  const empty: ShareState = { observer: null, time: null, groups: null, satnum: null };
+  const empty: ShareState = { screen: null, observer: null, time: null, groups: null, satnum: null };
   assert.equal(encodeShareState(empty), '');
   assert.deepEqual(decodeShareState(''), empty);
   // A bare URL must decode to "use my own defaults" rather than to nulls that
@@ -32,6 +33,7 @@ test('a live view carries no timestamp', () => {
   // Pinning "now" into a link would make it a link to the moment it was
   // copied, which is not what sharing your current sky means.
   const encoded = encodeShareState({
+    screen: null,
     observer: GREENWICH,
     time: null,
     groups: null,
@@ -44,7 +46,7 @@ test('a live view carries no timestamp', () => {
 
 test('coordinates are rounded so a link is not somebody’s doorstep', () => {
   const precise = { latitude: 51.476912345678, longitude: -0.000512345678, elevation: 45 };
-  const encoded = encodeShareState({ observer: precise, time: null, groups: null, satnum: null });
+  const encoded = encodeShareState({ screen: null, observer: precise, time: null, groups: null, satnum: null });
   const back = decodeShareState(encoded).observer!;
   // Four decimals is about eleven metres: fine enough for any of this, coarse
   // enough not to publish an exact address.
@@ -106,7 +108,7 @@ test('a satellite id must look like a catalogue number', () => {
 
 test('the share URL replaces the query and drops any fragment', () => {
   const url = shareUrl(
-    { observer: GREENWICH, time: null, groups: ['visual'], satnum: null },
+    { screen: null, observer: GREENWICH, time: null, groups: ['visual'], satnum: null },
     'https://lookup.example/app?stale=1#somewhere'
   );
   assert.ok(url.startsWith('https://lookup.example/app?'));
@@ -118,4 +120,19 @@ test('the share URL replaces the query and drops any fragment', () => {
   const back = decodeShareState(new URL(url).search);
   assert.deepEqual(back.groups, ['visual']);
   assert.deepEqual(back.observer, GREENWICH);
+});
+
+test('a screen travels in the link, and an unknown one does not break it', () => {
+  const state: ShareState = { ...EMPTY_SHARE_STATE, screen: 'debris', observer: GREENWICH };
+  assert.equal(decodeShareState(encodeShareState(state)).screen, 'debris');
+
+  // The default screen is omitted, so an ordinary link stays plain.
+  assert.ok(!new URLSearchParams(encodeShareState({ ...EMPTY_SHARE_STATE, screen: 'sky' })).has('screen'));
+  assert.equal(decodeShareState('').screen, null);
+
+  // A link from a later version naming a screen this build lacks must still
+  // show somebody a sky rather than a blank page.
+  assert.equal(decodeShareState('screen=telescopes').screen, null);
+  assert.equal(decodeShareState('screen=').screen, null);
+  assert.equal(decodeShareState('screen=<script>').screen, null);
 });
