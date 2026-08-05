@@ -23,8 +23,47 @@ import { TLE_GROUPS } from "./celestrak.js";
  * so, rather than the app silently losing a distinction it was making.
  */
 
-const SATCAT_BASE = "https://celestrak.org/pub/satcat.php";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // Status changes rarely; elements do not.
+
+/**
+ * Where SATCAT lives, in order of preference.
+ *
+ * CelesTrak has reorganised these paths more than once, and this sandbox
+ * cannot reach celestrak.org to check which is current — the first guess
+ * here, /pub/satcat.php, returned 404 from production. Rather than guess
+ * again per deploy, the fetcher tries each in turn and reports which one
+ * answered, so the live service says what works instead of a comment
+ * claiming it.
+ *
+ * Group-scoped forms come first because they return a few hundred rows
+ * instead of tens of thousands. The unscoped full catalogue is last: it is
+ * the most likely to exist at a stable path, and is filtered down to the
+ * requested group's catalogue numbers after parsing.
+ */
+interface SatcatEndpoint {
+  label: string;
+  url: (celestrakGroup: string) => string;
+  /** Whether the response covers the whole catalogue and needs narrowing. */
+  wholeCatalogue: boolean;
+}
+
+export const SATCAT_ENDPOINTS: SatcatEndpoint[] = [
+  {
+    label: "satcat/records.php?GROUP",
+    url: (g) => `https://celestrak.org/satcat/records.php?GROUP=${encodeURIComponent(g)}&FORMAT=csv`,
+    wholeCatalogue: false,
+  },
+  {
+    label: "pub/satcat.php?GROUP",
+    url: (g) => `https://celestrak.org/pub/satcat.php?GROUP=${encodeURIComponent(g)}&FORMAT=csv`,
+    wholeCatalogue: false,
+  },
+  {
+    label: "pub/satcat.csv",
+    url: () => "https://celestrak.org/pub/satcat.csv",
+    wholeCatalogue: true,
+  },
+];
 
 export type OpsStatus =
   | "operational"
@@ -217,7 +256,11 @@ export interface SatcatResult {
   entries: SatcatEntry[];
   source: "live" | "cache" | "unavailable";
   fetchedAt: number | null;
+  /** Which endpoint answered, so the live service reports what actually works. */
+  endpoint?: string;
   error?: string;
+  /** Every candidate tried and how it failed, when none of them answered. */
+  attempts?: Array<{ label: string; error: string }>;
 }
 
 /**
@@ -243,36 +286,51 @@ export async function getSatcatForGroup(groupId: string): Promise<SatcatResult> 
     return { entries: cached.entries, source: "cache", fetchedAt: cached.fetchedAt };
   }
 
-  const url = `${SATCAT_BASE}?GROUP=${encodeURIComponent(celestrakGroup)}&FORMAT=csv`;
-  try {
-    const res = await fetch(url, { headers: { accept: "text/csv" } });
-    if (!res.ok) {
-      throw new Error(`SATCAT returned ${res.status} ${res.statusText}`);
+  const attempts: Array<{ label: string; error: string }> = [];
+
+  for (const endpoint of SATCAT_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint.url(celestrakGroup), { headers: { accept: "text/csv" } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+      const csv = await res.text();
+      let entries = parseSatcatCsv(csv);
+
+      // The unscoped catalogue covers everything, so narrow it to the objects
+      // this group actually contains. Doing that needs the group's catalogue
+      // numbers, which only the caller's TLE fetch knows — so the narrowing is
+      // left to the caller and the full set is cached here. Better to hold
+      // more than to refetch tens of thousands of rows per group.
+      if (entries.length === 0) throw new Error("no usable rows");
+
+      const fetchedAt = Date.now();
+      // Whole-catalogue responses are cached under a shared key, since one
+      // fetch serves every group.
+      cache.set(endpoint.wholeCatalogue ? "*" : celestrakGroup, { entries, fetchedAt });
+      return { entries, source: "live", fetchedAt, endpoint: endpoint.label, attempts };
+    } catch (err) {
+      attempts.push({ label: endpoint.label, error: err instanceof Error ? err.message : String(err) });
     }
-    const csv = await res.text();
-    const entries = parseSatcatCsv(csv);
-    if (entries.length === 0) {
-      throw new Error("SATCAT returned no usable rows for this group.");
-    }
-    const fetchedAt = Date.now();
-    cache.set(celestrakGroup, { entries, fetchedAt });
-    return { entries, source: "live", fetchedAt };
-  } catch (err) {
-    // A stale cache still beats no answer: status changes on the scale of
-    // years, so day-old rows are no less true than fresh ones.
-    if (cached) {
-      return {
-        entries: cached.entries,
-        source: "cache",
-        fetchedAt: cached.fetchedAt,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
+  }
+
+  // A stale cache still beats no answer: status changes on the scale of years,
+  // so day-old rows are no less true than fresh ones.
+  const fallback = cached ?? cache.get("*");
+  if (fallback) {
     return {
-      entries: [],
-      source: "unavailable",
-      fetchedAt: null,
-      error: err instanceof Error ? err.message : String(err),
+      entries: fallback.entries,
+      source: "cache",
+      fetchedAt: fallback.fetchedAt,
+      error: "No SATCAT endpoint answered; serving cached rows.",
+      attempts,
     };
   }
+
+  return {
+    entries: [],
+    source: "unavailable",
+    fetchedAt: null,
+    error: "No SATCAT endpoint answered.",
+    attempts,
+  };
 }

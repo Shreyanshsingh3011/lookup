@@ -226,13 +226,17 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
  * before rather than losing the distinction or failing the request.
  */
 app.get("/api/satcat/:group", async (req, res) => {
-  const { entries, source, fetchedAt, error } = await getSatcatForGroup(req.params.group);
+  const { entries, source, fetchedAt, endpoint, error, attempts } = await getSatcatForGroup(
+    req.params.group
+  );
   res.json({
     group: req.params.group,
     count: entries.length,
     source,
+    endpoint,
     fetchedAt: fetchedAt ? new Date(fetchedAt).toISOString() : null,
     error,
+    attempts,
     // Precomputed so the client does not have to re-encode the status rules.
     derelictCount: entries.filter(isDerelictByStatus).length,
     entries,

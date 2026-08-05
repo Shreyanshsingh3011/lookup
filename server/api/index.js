@@ -42982,8 +42982,24 @@ async function getSmallBodies() {
 }
 
 // src/satcat.ts
-var SATCAT_BASE = "https://celestrak.org/pub/satcat.php";
 var CACHE_TTL_MS7 = 24 * 60 * 60 * 1e3;
+var SATCAT_ENDPOINTS = [
+  {
+    label: "satcat/records.php?GROUP",
+    url: (g) => `https://celestrak.org/satcat/records.php?GROUP=${encodeURIComponent(g)}&FORMAT=csv`,
+    wholeCatalogue: false
+  },
+  {
+    label: "pub/satcat.php?GROUP",
+    url: (g) => `https://celestrak.org/pub/satcat.php?GROUP=${encodeURIComponent(g)}&FORMAT=csv`,
+    wholeCatalogue: false
+  },
+  {
+    label: "pub/satcat.csv",
+    url: () => "https://celestrak.org/pub/satcat.csv",
+    wholeCatalogue: true
+  }
+];
 function parseOpsStatus(raw) {
   switch (raw.trim().toUpperCase()) {
     case "+":
@@ -43101,36 +43117,38 @@ async function getSatcatForGroup(groupId) {
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS7) {
     return { entries: cached.entries, source: "cache", fetchedAt: cached.fetchedAt };
   }
-  const url = `${SATCAT_BASE}?GROUP=${encodeURIComponent(celestrakGroup)}&FORMAT=csv`;
-  try {
-    const res = await fetch(url, { headers: { accept: "text/csv" } });
-    if (!res.ok) {
-      throw new Error(`SATCAT returned ${res.status} ${res.statusText}`);
+  const attempts = [];
+  for (const endpoint of SATCAT_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint.url(celestrakGroup), { headers: { accept: "text/csv" } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const csv = await res.text();
+      let entries = parseSatcatCsv(csv);
+      if (entries.length === 0) throw new Error("no usable rows");
+      const fetchedAt = Date.now();
+      cache7.set(endpoint.wholeCatalogue ? "*" : celestrakGroup, { entries, fetchedAt });
+      return { entries, source: "live", fetchedAt, endpoint: endpoint.label, attempts };
+    } catch (err) {
+      attempts.push({ label: endpoint.label, error: err instanceof Error ? err.message : String(err) });
     }
-    const csv = await res.text();
-    const entries = parseSatcatCsv(csv);
-    if (entries.length === 0) {
-      throw new Error("SATCAT returned no usable rows for this group.");
-    }
-    const fetchedAt = Date.now();
-    cache7.set(celestrakGroup, { entries, fetchedAt });
-    return { entries, source: "live", fetchedAt };
-  } catch (err) {
-    if (cached) {
-      return {
-        entries: cached.entries,
-        source: "cache",
-        fetchedAt: cached.fetchedAt,
-        error: err instanceof Error ? err.message : String(err)
-      };
-    }
+  }
+  const fallback = cached ?? cache7.get("*");
+  if (fallback) {
     return {
-      entries: [],
-      source: "unavailable",
-      fetchedAt: null,
-      error: err instanceof Error ? err.message : String(err)
+      entries: fallback.entries,
+      source: "cache",
+      fetchedAt: fallback.fetchedAt,
+      error: "No SATCAT endpoint answered; serving cached rows.",
+      attempts
     };
   }
+  return {
+    entries: [],
+    source: "unavailable",
+    fetchedAt: null,
+    error: "No SATCAT endpoint answered.",
+    attempts
+  };
 }
 
 // src/routes.ts
@@ -43483,13 +43501,17 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   }
 });
 app.get("/api/satcat/:group", async (req, res) => {
-  const { entries, source, fetchedAt, error } = await getSatcatForGroup(req.params.group);
+  const { entries, source, fetchedAt, endpoint, error, attempts } = await getSatcatForGroup(
+    req.params.group
+  );
   res.json({
     group: req.params.group,
     count: entries.length,
     source,
+    endpoint,
     fetchedAt: fetchedAt ? new Date(fetchedAt).toISOString() : null,
     error,
+    attempts,
     // Precomputed so the client does not have to re-encode the status rules.
     derelictCount: entries.filter(isDerelictByStatus).length,
     entries
