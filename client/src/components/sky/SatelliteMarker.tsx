@@ -329,9 +329,17 @@ interface Props {
   note?: string;
   /** Record a sighting, the same hand-off the debris list and pass table use. */
   onLogSighting?: (subject: string, satnum: string | null) => void;
+  /**
+   * Name this object without waiting to be hovered.
+   *
+   * Set once the view is zoomed in far enough that only a few objects are in
+   * frame. It is how you pick out a particular one after the wide view has
+   * shown you that there is something to pick out.
+   */
+  labelled?: boolean;
 }
 
-export function SatelliteMarker({ sat, tle, selected, onSelect, note, onLogSighting }: Props) {
+export function SatelliteMarker({ sat, tle, selected, onSelect, note, onLogSighting, labelled = false }: Props) {
   const spinRef = useRef<THREE.Group>(null);
   const [hovered, setHovered] = useState(false);
   // An external model when one is configured for this satellite; otherwise the
@@ -457,6 +465,21 @@ export function SatelliteMarker({ sat, tle, selected, onSelect, note, onLogSight
             <GenericSatBody />
           )}
         </group>
+
+        {/* Zoomed in, every object in frame says what it is. Suppressed the
+            moment the full panel is up, so the two never stack. */}
+        {labelled && !selected && !hovered && (
+          <FrontFacingHtml position={[0, 0, 0]} zIndexRange={[18, 0]} offsetYPx={-20}>
+            <div
+              className={`text-[10px] font-medium tracking-wide whitespace-nowrap px-1 ${
+                isDerelict ? 'text-amber-glow' : 'text-glow-400'
+              }`}
+              style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
+            >
+              {displayName}
+            </div>
+          </FrontFacingHtml>
+        )}
 
         {/* Interactive only when the panel actually holds a control. The
             logbook button is the only one, and it is only rendered for a

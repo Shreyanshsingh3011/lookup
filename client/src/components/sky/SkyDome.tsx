@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import catalog from '../../data/skyCatalog.json';
@@ -54,6 +54,48 @@ const CAMERA_START: [number, number, number] = [0, -0.011472, 0.016384];
 
 const MIN_FOV = 25;
 const MAX_FOV = 95;
+
+/**
+ * Zoom sets level of detail, and never hides anything.
+ *
+ * Wide open is the overview: everything the enabled layers hold is drawn, so one
+ * glance shows the whole population — actives, derelicts and the shaded breakup
+ * regions together. Nothing is withheld at any zoom, because a view that
+ * quietly omits objects is the one thing this dome must not be.
+ *
+ * Zoomed in is for picking out a particular object. Names appear on whatever is
+ * in frame without having to hover each one, which is only affordable because a
+ * narrow field holds few objects and the label overlay mounts nothing for
+ * anchors outside the viewport. At wide field the same labels would be hundreds
+ * of DOM nodes under an unreadable pile of text.
+ *
+ * The threshold sits nearer the wide end than the middle, so labels arrive on a
+ * deliberate zoom rather than an accidental scroll.
+ */
+const LABEL_FOV_DEG = 50;
+
+/**
+ * Publishes whether the view is magnified, and nothing else.
+ *
+ * Deliberately a boolean rather than the field of view itself. Fov changes on
+ * every wheel event and every frame of damping; lifting that into React state
+ * would re-render the whole scene continuously. A boolean changes twice per
+ * gesture at most.
+ */
+function ZoomWatch({ onChange }: { onChange: (labelled: boolean) => void }) {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
+  const last = useRef<boolean | null>(null);
+
+  useFrame(() => {
+    const labelled = camera.fov <= LABEL_FOV_DEG;
+    if (last.current !== labelled) {
+      last.current = labelled;
+      onChange(labelled);
+    }
+  });
+
+  return null;
+}
 
 /**
  * Zoom by changing field of view rather than dollying, since the camera's
@@ -175,6 +217,9 @@ interface SceneProps {
   satcat: Map<string, SatcatEntry>;
   /** Binned fragment density for a loaded breakup cloud, drawn as a region. */
   cloudBins: DensityBin[];
+  /** True once the field of view is narrow enough to label what is in frame. */
+  labelled: boolean;
+  onLabelledChange: (labelled: boolean) => void;
 }
 
 function SkyScene({
@@ -197,6 +242,8 @@ function SkyScene({
   onDebrisCountChange,
   satcat,
   cloudBins,
+  labelled,
+  onLabelledChange,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes, 'active', satcat);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
@@ -389,6 +436,7 @@ function SkyScene({
           key={sat.satnum}
           sat={sat}
           tle={tles.find((t) => t.satnum === sat.satnum)}
+          labelled={labelled}
           selected={selected === sat.satnum}
           onSelect={handleSelect}
         />
@@ -402,6 +450,7 @@ function SkyScene({
           key={`debris-${sat.satnum}`}
           sat={sat}
           tle={extraDebrisTles.find((t) => t.satnum === sat.satnum)}
+          labelled={labelled}
           selected={selected === sat.satnum}
           onSelect={handleSelect}
           note={debrisNotes.get(sat.satnum)}
@@ -423,6 +472,7 @@ function SkyScene({
         maxPolarAngle={Math.PI - 0.02}
       />
       <FovZoom />
+      <ZoomWatch onChange={onLabelledChange} />
       {orientationLook ? <OrientationCamera look={orientationLook} /> : <CameraAim target={aimTarget} />}
       {import.meta.env.DEV && <DevProbe satellites={satellites} debris={debris} aircraft={aircraft} />}
     </>
@@ -523,6 +573,8 @@ export function SkyDome({
   );
   const [visibleCount, setVisibleCount] = useState(0);
   const [debrisCount, setDebrisCount] = useState(0);
+  // Zoom level, as a single boolean. See LABEL_FOV_DEG.
+  const [labelled, setLabelled] = useState(false);
   const [aimRequest, setAimRequest] = useState(0);
   const [layerState, setLayerState] = useState<SkyLayers>({
     satellites: true,
@@ -720,6 +772,8 @@ export function SkyDome({
               onDebrisCountChange={setDebrisCount}
               satcat={satcat}
               cloudBins={cloudRegion?.density.bins ?? EMPTY_BINS}
+              labelled={labelled}
+              onLabelledChange={setLabelled}
             />
           </Suspense>
         </Canvas>
@@ -796,7 +850,13 @@ export function SkyDome({
             <div className="glass-panel rounded-lg px-3 py-1.5 text-[10px] text-space-300 text-right leading-relaxed hidden sm:block">
               drag to look around · scroll to zoom
               <br />
-              click a satellite for details
+              {/* Says which half of the zoom range you are in, so the labels
+                  appearing reads as a feature rather than a glitch. */}
+              {labelled ? (
+                <span className="text-glow-400">zoomed in · everything in frame is named</span>
+              ) : (
+                <span>zoom in to name what you see</span>
+              )}
             </div>
           </div>
         </div>
