@@ -603,6 +603,11 @@ interface Props {
    * whatever you point at into a full marker.
    */
   fieldTles?: TleRecord[];
+  fieldLoading?: boolean;
+  /** Why the bulk field is empty, when it is. Stated, never swallowed. */
+  fieldError?: string | null;
+  /** The server has no Space-Track credentials, so the field cannot load at all. */
+  fieldUnconfigured?: boolean;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -642,6 +647,9 @@ export function SkyDome({
   satcat = EMPTY_SATCAT,
   cloudRegion = null,
   fieldTles = EMPTY_TLES,
+  fieldLoading = false,
+  fieldError = null,
+  fieldUnconfigured = false,
   debrisLoading = false,
   debrisError = null,
   debrisUnreachable = 0,
@@ -730,6 +738,21 @@ export function SkyDome({
     // from two numbers in the element set, with no propagation at all.
     return preFilter(out, observer).candidates;
   }, [tles, debrisTles, observer]);
+
+  /**
+   * How many derelicts the selected satellite groups contributed.
+   *
+   * The layer's coverage silently depends on a setting that has nothing to do
+   * with it. With CelesTrak's "visual" group selected the groups supply about
+   * ninety spent stages; deselect it and the count falls to the eight curated
+   * ones, with the status line still explaining where group-derived stages come
+   * from as though they were there. Knowing the split lets it say which case the
+   * reader is actually looking at, and what to do about it.
+   */
+  const derelictsFromGroups = useMemo(
+    () => tles.filter((t) => isDerelictByName(t.name)).length,
+    [tles]
+  );
 
   const nextRise = useMemo(() => {
     if (!debrisEnabled || debrisCount > 0 || allDerelictTles.length === 0) return null;
@@ -1099,6 +1122,39 @@ export function SkyDome({
           fragment is some 250 times fainter than the naked eye reaches. These
           are catalogued positions plotted as data, and saying so is what makes
           drawing them defensible. */}
+      {/* An empty field states why it is empty.
+
+          This line used to render only when it had objects, which meant the one
+          case that most needed explaining — no data at all — showed nothing,
+          indistinguishable from a sky that genuinely has no debris in it. In
+          production it is currently the *only* case: the server has no
+          Space-Track credentials, so the field is empty every time and said so
+          nowhere. The rest of this app reports "unavailable" with a reason, and
+          the largest layer in it was the one place that did not. */}
+      {layers.debris && fieldInfo.tracked === 0 && (
+        <p className="text-[11px] leading-snug max-w-md text-space-400">
+          {fieldLoading ? (
+            'Loading the full debris catalogue…'
+          ) : fieldUnconfigured ? (
+            <>
+              <span className="text-amber-glow">
+                The full debris catalogue is not loaded — no Space-Track credentials on the server.
+              </span>{' '}
+              Space-Track is the only source for the ~17,000 non-active objects in orbit, and it
+              requires an account. Set SPACETRACK_USER and SPACETRACK_PASS on the server to plot
+              them. Until then the amber derelicts below are the whole of what is shown, and they
+              come from the satellite groups you have selected plus a curated shortlist — not from
+              the catalogue.
+            </>
+          ) : fieldError ? (
+            <>
+              <span className="text-amber-glow">Full debris catalogue unavailable</span> —{' '}
+              {fieldError} The amber derelicts below are unaffected.
+            </>
+          ) : null}
+        </p>
+      )}
+
       {layers.debris && fieldInfo.tracked > 0 && (
         <p className="text-[11px] leading-snug max-w-md">
           <span style={{ color: '#8b7fd4' }}>
@@ -1156,8 +1212,20 @@ export function SkyDome({
               <span className="text-amber-glow">
                 {debrisCount} of {allDerelictTles.length} tracked derelicts above the horizon
               </span>{' '}
-              — drawn in amber. Spent rocket bodies count as derelict whichever group they arrived
-              in; most of the brightest-objects group is spent stages.
+              — drawn in amber.{' '}
+              {derelictsFromGroups > 0 ? (
+                <>
+                  Spent rocket bodies count as derelict whichever group they arrived in;{' '}
+                  {derelictsFromGroups} of these came from the satellite groups you have selected,
+                  the rest from a curated shortlist.
+                </>
+              ) : (
+                <>
+                  These are the curated shortlist only — no derelicts came from the satellite
+                  groups currently loaded. Selecting the brightest-objects group brings in about
+                  ninety more, since most of that group is spent stages.
+                </>
+              )}
             </>
           ) : (
             <>

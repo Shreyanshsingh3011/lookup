@@ -36,6 +36,10 @@ export interface CatalogueField {
   unreachable: number;
   loading: boolean;
   available: boolean;
+  /** Why the field is empty, when it is empty for a reason worth stating. */
+  error: string | null;
+  /** True when the server has no Space-Track credentials configured. */
+  unconfigured: boolean;
 }
 
 const EMPTY_TLES: TleRecord[] = [];
@@ -45,6 +49,8 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
   const [loading, setLoading] = useState(false);
   const [available, setAvailable] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [unconfigured, setUnconfigured] = useState(false);
 
   useEffect(() => {
     if (!enabled || loaded) return;
@@ -54,11 +60,18 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
       .then((res) => {
         if (cancelled) return;
         setAvailable(res.source !== 'unavailable');
+        // An empty field has to say why. Silently rendering nothing is the one
+        // outcome this app is not allowed to produce: it looks identical to a
+        // sky with no debris in it, which is the opposite of the truth.
+        setUnconfigured(res.configured === false);
+        setError(res.source === 'unavailable' ? (res.error ?? 'Space-Track is unavailable.') : null);
         setObjects(res.objects.map((o) => o.tle));
         setLoaded(true);
       })
-      .catch(() => {
-        if (!cancelled) setAvailable(false);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAvailable(false);
+        setError(err instanceof Error ? err.message : 'The catalogue request failed.');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -81,5 +94,7 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
     unreachable: filtered.unreachable,
     loading,
     available,
+    error,
+    unconfigured,
   };
 }

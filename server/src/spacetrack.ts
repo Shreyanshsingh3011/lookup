@@ -114,6 +114,13 @@ export interface SatcatRecord {
   NORAD_CAT_ID: string;
   OBJECT_NAME: string;
   OBJECT_TYPE: string;
+  /**
+   * Space-Track's operational status flag: "+" operational, "-" nonoperational,
+   * "P" partially operational, "B" backup, "S" spare, "X" extended mission,
+   * "D" decayed, absent or "?" unknown. The only field that separates a working
+   * satellite from a dead one, since both are OBJECT_TYPE=PAYLOAD.
+   */
+  OPS_STATUS_CODE?: string | null;
   DECAY: string | null;
   RCS_SIZE: string | null;
   COUNTRY: string | null;
@@ -339,6 +346,69 @@ let cache: { catalogue: DebrisCatalogue; fetchedAt: number } | null = null;
  * back to the curated four clouds and eight derelicts, which is a smaller true
  * answer rather than a broken screen.
  */
+/**
+ * Every current element set, in one request where possible.
+ *
+ * The bulk form asks gp for everything still in orbit and keeps the rows that
+ * match the objects wanted, which trades a slightly larger response for two
+ * requests instead of forty-odd. If it fails for any reason — URL rejected,
+ * response truncated, a shape change at the far end — the id-chunked form still
+ * works, so that is tried rather than giving up on the catalogue entirely.
+ *
+ * Both paths are rate-limited through the same limiter, so the fallback cannot
+ * quietly exceed what the bulk path was avoiding; it will fail loudly instead.
+ */
+async function fetchElements(wanted: SatcatRecord[]): Promise<GpRecord[]> {
+  const ids = wanted.map((r) => r.NORAD_CAT_ID).filter(Boolean);
+  const keep = new Set(ids);
+
+  try {
+    const all = (await authedGet(
+      `${QUERY}/class/gp/decay_date/null-val/orderby/NORAD_CAT_ID/format/json`
+    )) as GpRecord[];
+    if (!Array.isArray(all) || all.length === 0) throw new Error("gp returned no rows.");
+    const matched = all.filter((r) => keep.has(String(r.NORAD_CAT_ID)));
+    if (matched.length === 0) throw new Error("gp returned rows but none matched the object list.");
+    return matched;
+  } catch {
+    const gp: GpRecord[] = [];
+    for (const chunk of chunkIds(ids)) {
+      const part = (await authedGet(
+        `${QUERY}/class/gp/NORAD_CAT_ID/${chunk.join(",")}/format/json`
+      )) as GpRecord[];
+      if (Array.isArray(part)) gp.push(...part);
+    }
+    return gp;
+  }
+}
+
+/**
+ * Everything in orbit that is not a working satellite.
+ *
+ * Fragments and spent stages were never spacecraft, so type settles them. A
+ * payload needs the catalogue to actually say it is dead: "-" is
+ * nonoperational, and that is the only claim Space-Track makes here. Backup and
+ * spare are dormant but alive, extended mission is still working past its
+ * planned span, and an absent status is an absent answer — inferring death from
+ * silence would put thousands of live satellites in the derelict field, which is
+ * exactly the kind of invention this whole layer exists to avoid.
+ *
+ * OBJECT_TYPE=UNKNOWN and TBA are excluded for the same reason: the catalogue
+ * has not said what they are, and "probably debris" is a guess. That leaves a
+ * known gap rather than a wrong answer, which is the right way round.
+ *
+ * This mirrors isDerelictByStatus in satcat.ts, which decides the same question
+ * from the CSV catalogue. Deliberately the same rule in both places.
+ */
+export function nonActive(rows: SatcatRecord[]): SatcatRecord[] {
+  return rows.filter((r) => {
+    const type = (r.OBJECT_TYPE ?? "").trim().toUpperCase();
+    if (type === "ROCKET BODY" || type === "DEBRIS") return true;
+    if (type !== "PAYLOAD") return false;
+    return (r.OPS_STATUS_CODE ?? "").trim() === "-";
+  });
+}
+
 export async function getSpaceTrackDebris(
   normaliseId: (id: string) => string,
   limit = 900
@@ -361,25 +431,44 @@ export async function getSpaceTrackDebris(
   }
 
   try {
-    // 1. Object list. DECAY/null-val keeps the ~12,500 still in orbit rather
-    //    than the ~35,800 ever catalogued — two thirds of that file is history.
+    // 1. Object list. DECAY/null-val keeps what is still in orbit rather than
+    //    the ~35,800 ever catalogued — two thirds of that file is history.
+    //
+    //    No OBJECT_TYPE filter. There was one, pinned to DEBRIS, and it was
+    //    wrong: Space-Track files spent stages as ROCKET BODY and dead
+    //    satellites as PAYLOAD, so a DEBRIS-only query returned fragments and
+    //    silently excluded every derelict a person could actually go outside
+    //    and see. The dome was left showing whichever stages happened to be in
+    //    the user's selected CelesTrak groups — around ninety with "visual"
+    //    chosen, and exactly the eight curated ones without it — while a status
+    //    line claimed to be plotting the catalogue.
     const satcat = (await authedGet(
-      `${QUERY}/class/satcat/OBJECT_TYPE/DEBRIS/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
+      `${QUERY}/class/satcat/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
     )) as SatcatRecord[];
     if (!Array.isArray(satcat) || satcat.length === 0) throw new Error("satcat returned no rows.");
 
-    // 2. Elements for exactly those objects, chunked so the URLs are valid.
-    const ids = satcat.map((r) => r.NORAD_CAT_ID).filter(Boolean);
-    const gp: GpRecord[] = [];
-    for (const chunk of chunkIds(ids)) {
-      const part = (await authedGet(
-        `${QUERY}/class/gp/NORAD_CAT_ID/${chunk.join(",")}/format/json`
-      )) as GpRecord[];
-      if (Array.isArray(part)) gp.push(...part);
-    }
+    // 2. Elements. One request for every current element set, not one per
+    //    chunk of ids.
+    //
+    //    This used to ask for elements by id, 400 at a time. At the old
+    //    DEBRIS-only size that was 32 requests; widened to stages and dead
+    //    payloads it is well over forty, and that does not merely get slower —
+    //    it stops working twice over. The limiter allows 18 requests a minute
+    //    and throws rather than waiting, so the refresh dies partway through;
+    //    and a refresh happens on whichever user request finds the cache cold,
+    //    inside a serverless invocation with a timeout measured in seconds.
+    //
+    //    gp filtered on decay_date/null-val returns every in-orbit element set
+    //    in a single response, so the whole fetch is two requests regardless of
+    //    catalogue size. The id-chunked path is kept below as a fallback,
+    //    because a URL-length or response-size failure on the bulk form should
+    //    degrade to the slow route rather than to nothing.
+    const wanted = nonActive(satcat);
+    if (wanted.length === 0) throw new Error("satcat returned no non-active objects.");
+    const gp = await fetchElements(wanted);
 
     // 3. Join, then rank so a capped response keeps the largest objects.
-    const { joined, missingElements } = joinSatcatWithGp(satcat, gp, normaliseId);
+    const { joined, missingElements } = joinSatcatWithGp(wanted, gp, normaliseId);
     if (joined.length === 0) throw new Error("satcat and gp produced no joined objects.");
 
     const catalogue: DebrisCatalogue = {

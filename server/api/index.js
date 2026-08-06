@@ -43501,6 +43501,36 @@ async function authedGet(url, allowRetry = true) {
   }
 }
 var cache8 = null;
+async function fetchElements(wanted) {
+  const ids = wanted.map((r) => r.NORAD_CAT_ID).filter(Boolean);
+  const keep = new Set(ids);
+  try {
+    const all = await authedGet(
+      `${QUERY}/class/gp/decay_date/null-val/orderby/NORAD_CAT_ID/format/json`
+    );
+    if (!Array.isArray(all) || all.length === 0) throw new Error("gp returned no rows.");
+    const matched = all.filter((r) => keep.has(String(r.NORAD_CAT_ID)));
+    if (matched.length === 0) throw new Error("gp returned rows but none matched the object list.");
+    return matched;
+  } catch {
+    const gp = [];
+    for (const chunk of chunkIds(ids)) {
+      const part = await authedGet(
+        `${QUERY}/class/gp/NORAD_CAT_ID/${chunk.join(",")}/format/json`
+      );
+      if (Array.isArray(part)) gp.push(...part);
+    }
+    return gp;
+  }
+}
+function nonActive(rows) {
+  return rows.filter((r) => {
+    const type = (r.OBJECT_TYPE ?? "").trim().toUpperCase();
+    if (type === "ROCKET BODY" || type === "DEBRIS") return true;
+    if (type !== "PAYLOAD") return false;
+    return (r.OPS_STATUS_CODE ?? "").trim() === "-";
+  });
+}
 async function getSpaceTrackDebris(normaliseId, limit2 = 900) {
   const now = Date.now();
   if (cache8 && now - cache8.fetchedAt < CACHE_TTL_MS8) {
@@ -43519,18 +43549,13 @@ async function getSpaceTrackDebris(normaliseId, limit2 = 900) {
   }
   try {
     const satcat = await authedGet(
-      `${QUERY}/class/satcat/OBJECT_TYPE/DEBRIS/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
+      `${QUERY}/class/satcat/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
     );
     if (!Array.isArray(satcat) || satcat.length === 0) throw new Error("satcat returned no rows.");
-    const ids = satcat.map((r) => r.NORAD_CAT_ID).filter(Boolean);
-    const gp = [];
-    for (const chunk of chunkIds(ids)) {
-      const part = await authedGet(
-        `${QUERY}/class/gp/NORAD_CAT_ID/${chunk.join(",")}/format/json`
-      );
-      if (Array.isArray(part)) gp.push(...part);
-    }
-    const { joined, missingElements } = joinSatcatWithGp(satcat, gp, normaliseId);
+    const wanted = nonActive(satcat);
+    if (wanted.length === 0) throw new Error("satcat returned no non-active objects.");
+    const gp = await fetchElements(wanted);
+    const { joined, missingElements } = joinSatcatWithGp(wanted, gp, normaliseId);
     if (joined.length === 0) throw new Error("satcat and gp produced no joined objects.");
     const catalogue = {
       objects: rankBySize(joined),

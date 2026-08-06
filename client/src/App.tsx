@@ -482,6 +482,9 @@ function App() {
               satcat={satcat.byId}
               cloudRegion={cloudRegion}
               fieldTles={catalogueField.tles}
+              fieldLoading={catalogueField.loading}
+              fieldError={catalogueField.error}
+              fieldUnconfigured={catalogueField.unconfigured}
             />
           </Suspense>
           <TimeScrubber control={time} />

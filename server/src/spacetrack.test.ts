@@ -3,6 +3,7 @@ import { test } from "node:test";
 import * as satellite from "satellite.js";
 import {
   IDS_PER_QUERY,
+  nonActive,
   RATE_LIMIT_PER_HOUR,
   RATE_LIMIT_PER_MINUTE,
   RateLimiter,
@@ -15,7 +16,7 @@ import {
   type GpRecord,
   type SatcatRecord,
 } from "./spacetrack.js";
-import { toAlpha5 } from "./satcat.js";
+import { isDerelictByStatus, toAlpha5 } from "./satcat.js";
 
 /**
  * satcat rows in exactly the shape Space-Track returns them, taken from a real
@@ -252,5 +253,74 @@ test("bad credentials degrade to unavailable rather than propagating an error", 
     if (pass === undefined) delete process.env.SPACETRACK_PASS;
     else process.env.SPACETRACK_PASS = pass;
     resetSpaceTrackState();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// What counts as non-active, which decides what the dome's point field holds
+// ---------------------------------------------------------------------------
+
+function row(type: string, ops?: string | null): SatcatRecord {
+  return {
+    NORAD_CAT_ID: "1", OBJECT_NAME: "X", OBJECT_TYPE: type, OPS_STATUS_CODE: ops ?? null,
+    DECAY: null, RCS_SIZE: null, COUNTRY: null, LAUNCH: null, PERIGEE: null, APOGEE: null,
+    INCLINATION: null,
+  };
+}
+
+/**
+ * The bug this exists to prevent recurring: the satcat query was pinned to
+ * OBJECT_TYPE=DEBRIS, so every spent stage and dead satellite — the only
+ * derelicts a person could actually go outside and see — was silently absent
+ * from a field whose status line claimed to plot the catalogue.
+ */
+test("stages and fragments are non-active regardless of any status flag", () => {
+  assert.equal(nonActive([row("ROCKET BODY")]).length, 1);
+  assert.equal(nonActive([row("DEBRIS")]).length, 1);
+  assert.equal(nonActive([row("ROCKET BODY", "+")]).length, 1);
+});
+
+test("a payload is non-active only when the catalogue says nonoperational", () => {
+  assert.equal(nonActive([row("PAYLOAD", "-")]).length, 1);
+  for (const ops of ["+", "P", "B", "S", "X", "?", "", null]) {
+    assert.equal(
+      nonActive([row("PAYLOAD", ops)]).length,
+      0,
+      `payload with ops "${ops}" must not be treated as derelict`
+    );
+  }
+});
+
+/**
+ * Inferring death from an absent answer would put live satellites in the
+ * derelict field, which is the invention this whole layer exists to avoid.
+ */
+test("an undetermined object type is left out rather than guessed at", () => {
+  assert.equal(nonActive([row("UNKNOWN")]).length, 0);
+  assert.equal(nonActive([row("TBA")]).length, 0);
+  assert.equal(nonActive([row("")]).length, 0);
+});
+
+test("the rule matches isDerelictByStatus, which decides the same thing elsewhere", () => {
+  // Same question, two data sources; a disagreement between them would mean the
+  // dome and the debris screen classified the same object differently.
+  const cases: Array<[string, string | null]> = [
+    ["ROCKET BODY", null], ["DEBRIS", null], ["PAYLOAD", "-"], ["PAYLOAD", "+"],
+    ["PAYLOAD", "B"], ["PAYLOAD", "S"], ["PAYLOAD", "X"], ["PAYLOAD", "?"],
+  ];
+  for (const [type, ops] of cases) {
+    const viaSatcat = isDerelictByStatus({
+      satnum: "1", name: "X",
+      objectType: type as never,
+      opsStatus:
+        ops === "-" ? "nonoperational" : ops === "+" ? "operational" : ops === "B" ? "backup"
+        : ops === "S" ? "spare" : ops === "X" ? "extended-mission" : "unknown",
+      rcsSquareMetres: null, launchDate: null, decayDate: null,
+    });
+    assert.equal(
+      nonActive([row(type, ops)]).length === 1,
+      viaSatcat,
+      `${type}/${ops} must classify the same in both places`
+    );
   }
 });
