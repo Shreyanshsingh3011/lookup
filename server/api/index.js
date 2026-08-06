@@ -43825,7 +43825,25 @@ app.get("/api/debris/probe", async (_req, res) => {
       }
     })
   );
-  res.json({ results });
+  let activeBreakdown = { error: "not fetched" };
+  try {
+    const r = await fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle", {
+      headers: { "user-agent": "lookup/1.0" }
+    });
+    const tles = parseTle(await r.text());
+    const counts = { total: tles.length, rocketBody: 0, debris: 0, other: 0 };
+    for (const t of tles) {
+      const type = classify(t.name).type;
+      if (type === "rocket-body") counts.rocketBody++;
+      else if (type === "debris") counts.debris++;
+      else counts.other++;
+    }
+    counts.derelictByName = counts.rocketBody + counts.debris;
+    activeBreakdown = counts;
+  } catch (err) {
+    activeBreakdown = { error: err instanceof Error ? err.message : "failed" };
+  }
+  res.json({ results, activeBreakdown });
 });
 app.get("/api/debris/field", async (_req, res) => {
   const results = await Promise.all(
