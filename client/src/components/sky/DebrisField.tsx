@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { azElToVec3, observerToGeodetic, parseSatrec, skySampleAt } from '../../lib/sky';
 import { nearestToBoresight } from '../../hooks/useDebrisField';
+import { FrontFacingHtml } from './FrontFacingHtml';
 import type { Observer, TleRecord } from '../../types';
 
 /**
@@ -115,14 +116,16 @@ export function DebrisField({
   const parsed = useMemo(() => {
     const recs = [];
     const ids: string[] = [];
+    const names: string[] = [];
     for (const tle of tles) {
       const rec = parseSatrec(tle);
       if (rec) {
         recs.push(rec);
         ids.push(tle.satnum);
+        names.push(tle.name);
       }
     }
-    return { recs, ids };
+    return { recs, ids, names };
   }, [tles]);
 
   const observerGd = useMemo(() => observerToGeodetic(observer), [observer]);
@@ -130,6 +133,8 @@ export function DebrisField({
   // One allocation per catalogue size, reused for the field's whole lifetime.
   const buffer = useMemo(() => new Float32Array(parsed.recs.length * 3), [parsed.recs.length]);
   const visibleIds = useRef<string[]>([]);
+  /** Parallel to visibleIds: what the tooltip needs, without a second lookup. */
+  const visibleInfo = useRef<Array<{ name: string; satnum: string; az: number; el: number; km: number }>>([]);
 
   /**
    * A fixed random orientation per fragment, and a little size variation.
@@ -164,6 +169,29 @@ export function DebrisField({
   // The scrubber's time, read through a ref so a moving clock does not re-render.
   const timeRef = useRef(displayTime);
   timeRef.current = displayTime;
+
+
+  /**
+   * What the pointer is over, if anything.
+   *
+   * three.js raycasts an InstancedMesh and reports which instance was hit, so
+   * the whole field needs one hit target rather than one per fragment — the
+   * same reason it needs one draw call. Without this the field was the only
+   * thing in the dome you could not interrogate: it drew two thousand objects
+   * and would not tell you what any of them were.
+   *
+   * Held as state because a tooltip is a DOM node and has to re-render, but it
+   * changes only when the pointer moves onto a different fragment, not per
+   * frame — the propagation loop above still touches no state at all.
+   */
+  const [hover, setHover] = useState<{
+    name: string;
+    satnum: string;
+    az: number;
+    el: number;
+    km: number;
+    at: [number, number, number];
+  } | null>(null);
 
   const camera = useThree((s) => s.camera);
   const boresight = useRef(new THREE.Vector3());
@@ -202,6 +230,7 @@ export function DebrisField({
 
     const when = new Date(tick * FIELD_TICK_MS);
     const ids: string[] = [];
+    const info: Array<{ name: string; satnum: string; az: number; el: number; km: number }> = [];
     let n = 0;
     for (let i = 0; i < parsed.recs.length; i++) {
       const sample = skySampleAt(parsed.recs[i], observerGd, when);
@@ -219,9 +248,17 @@ export function DebrisField({
       scratchMatrix.compose(scratchPos, attitudes.q[i], scratchScale);
       mesh.current.setMatrixAt(n, scratchMatrix);
       ids.push(parsed.ids[i]);
+      info.push({
+        name: parsed.names[i],
+        satnum: parsed.ids[i],
+        az: sample.azimuthDeg,
+        el: sample.elevationDeg,
+        km: sample.rangeKm,
+      });
       n++;
     }
     visibleIds.current = ids;
+    visibleInfo.current = info;
     drawn.current = n;
     mesh.current.count = n;
     mesh.current.instanceMatrix.needsUpdate = true;
@@ -236,22 +273,59 @@ export function DebrisField({
   if (parsed.recs.length === 0) return null;
 
   return (
-    <instancedMesh
-      // Capacity is fixed when the mesh is built, so a new catalogue needs a
-      // new mesh rather than a resized one.
-      key={parsed.recs.length}
-      ref={mesh}
-      args={[undefined, undefined, parsed.recs.length]}
-      frustumCulled={false}
-    >
-      <octahedronGeometry args={[FRAGMENT_RADIUS, 0]} />
-      <meshLambertMaterial
-        color={FIELD_COLOR}
-        emissive={FIELD_COLOR}
-        emissiveIntensity={0.45}
-        transparent
-        opacity={FIELD_OPACITY}
-      />
-    </instancedMesh>
+    <>
+      <instancedMesh
+        // Capacity is fixed when the mesh is built, so a new catalogue needs a
+        // new mesh rather than a resized one.
+        key={parsed.recs.length}
+        ref={mesh}
+        args={[undefined, undefined, parsed.recs.length]}
+        frustumCulled={false}
+        onPointerMove={(e) => {
+          const id = e.instanceId;
+          if (id === undefined || id >= drawn.current) return;
+          // Only the nearest hit matters, and only this object's.
+          e.stopPropagation();
+          const info = visibleInfo.current[id];
+          if (!info) return;
+          if (hover?.satnum === info.satnum) return;
+          setHover({
+            ...info,
+            at: [buffer[id * 3], buffer[id * 3 + 1], buffer[id * 3 + 2]],
+          });
+        }}
+        onPointerOut={() => setHover(null)}
+      >
+        <octahedronGeometry args={[FRAGMENT_RADIUS, 0]} />
+        <meshLambertMaterial
+          color={FIELD_COLOR}
+          emissive={FIELD_COLOR}
+          emissiveIntensity={0.45}
+          transparent
+          opacity={FIELD_OPACITY}
+        />
+      </instancedMesh>
+
+      {hover && (
+        <FrontFacingHtml position={hover.at} offsetYPx={-14} zIndexRange={[40, 0]}>
+          <div className="pointer-events-none whitespace-nowrap rounded-md border border-[#8b7fd4]/40 bg-space-900/95 px-2 py-1.5 text-[11px] leading-tight shadow-lg">
+            <div className="font-semibold" style={{ color: FIELD_COLOR }}>
+              {hover.name}
+            </div>
+            <div className="text-space-300 font-mono text-[10px] mt-0.5">
+              #{hover.satnum} · el {hover.el.toFixed(1)}° · az {hover.az.toFixed(1)}°
+            </div>
+            <div className="text-space-300 font-mono text-[10px]">
+              {Math.round(hover.km).toLocaleString()} km away
+            </div>
+            {/* The one thing a tooltip on a plotted object has to say, or it
+                reads as an observing target. */}
+            <div className="text-space-400 text-[10px] mt-1 max-w-[15rem] whitespace-normal">
+              Catalogued debris — far too faint to see. Zoom in to pick it out with a full label.
+            </div>
+          </div>
+        </FrontFacingHtml>
+      )}
+    </>
   );
 }
