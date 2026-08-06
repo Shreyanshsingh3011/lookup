@@ -35756,7 +35756,19 @@ var TLE_GROUPS = {
   "fengyun-1c-debris": "fengyun-1c-debris",
   "cosmos-2251-debris": "cosmos-2251-debris",
   "iridium-33-debris": "iridium-33-debris",
-  "cosmos-1408-debris": "cosmos-1408-debris"
+  "cosmos-1408-debris": "cosmos-1408-debris",
+  /**
+   * The largest file CelesTrak serves without an account: 16,103 objects,
+   * measured 2026-08-06.
+   *
+   * Named "active", which it is not. Its first entry is Calsphere 1, a passive
+   * 1964 calibration sphere, and thousands of spent rocket stages sit among the
+   * working satellites. It is fetched here for the derelicts inside it, which
+   * are taken by classification rather than by trusting the name — and it is
+   * kept out of SATELLITE_GROUPS deliberately, because it is not a sensible
+   * choice in a picker that decides which satellites to track.
+   */
+  active: "active"
 };
 var cache = /* @__PURE__ */ new Map();
 var inFlight = /* @__PURE__ */ new Map();
@@ -43639,8 +43651,7 @@ var ROUTE_DESCRIPTIONS = {
   "POST /api/passes/custom": "Visible passes for caller-supplied element sets, for satellites outside the tracked groups.",
   "GET /api/debris/catalogue": "The debris screen's two collections: named breakup clouds, and notable derelicts resolved individually so a vanished catalogue number is reported per object.",
   "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
-  "GET /api/debris/probe": "TEMPORARY. Reports which CelesTrak bulk sources exist and how many objects each returns, so the field's coverage gap can be measured rather than guessed. Hardcoded candidate list; delete once answered.",
-  "GET /api/debris/field": "Every fragment CelesTrak serves without an account: the four tracked breakup clouds merged and deduplicated. The dome's point-field source when Space-Track has no credentials \u2014 fewer objects than the full catalogue, but real and available to everyone.",
+  "GET /api/debris/field": "Every non-active object CelesTrak serves without an account: the four tracked breakup clouds, plus the spent stages and debris classified out of its bulk file. The dome's point-field source when Space-Track has no credentials.",
   "GET /api/satcat/:group": "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
   "GET /api/spacetrack/debris": "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
   "GET /api/spacetrack/search": "Search the cached non-active catalogue by name, catalogue number, declared type or size class. Served from memory, so it costs Space-Track nothing; results are capped for choosing from one at a time.",
@@ -43801,52 +43812,8 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
 });
-app.get("/api/debris/probe", async (_req, res) => {
-  const candidates = [
-    ["group: active", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"],
-    ["group: analyst", "https://celestrak.org/NORAD/elements/gp.php?GROUP=analyst&FORMAT=tle"],
-    ["group: cosmos-1408-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-1408-debris&FORMAT=tle"],
-    ["group: 1999-025 (fengyun intl des)", "https://celestrak.org/NORAD/elements/gp.php?INTDES=1999-025&FORMAT=tle"],
-    ["full catalog.txt", "https://celestrak.org/pub/TLE/catalog.txt"],
-    ["full catalog.php", "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full&FORMAT=tle"],
-    ["group: last-30-days", "https://celestrak.org/NORAD/elements/gp.php?GROUP=last-30-days&FORMAT=tle"],
-    ["group: debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=debris&FORMAT=tle"],
-    ["group: cosmos-2251-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle"]
-  ];
-  const results = await Promise.all(
-    candidates.map(async ([label, url]) => {
-      try {
-        const r = await fetch(url, { headers: { "user-agent": "lookup/1.0" } });
-        const text = await r.text();
-        const objects = r.ok ? parseTle(text).length : 0;
-        return { label, status: r.status, objects, sample: text.slice(0, 60).replace(/\s+/g, " ") };
-      } catch (err) {
-        return { label, status: 0, objects: 0, error: err instanceof Error ? err.message : "failed" };
-      }
-    })
-  );
-  let activeBreakdown = { error: "not fetched" };
-  try {
-    const r = await fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle", {
-      headers: { "user-agent": "lookup/1.0" }
-    });
-    const tles = parseTle(await r.text());
-    const counts = { total: tles.length, rocketBody: 0, debris: 0, other: 0 };
-    for (const t of tles) {
-      const type = classify(t.name).type;
-      if (type === "ROCKET BODY") counts.rocketBody++;
-      else if (type === "DEBRIS") counts.debris++;
-      else counts.other++;
-    }
-    counts.derelictByName = counts.rocketBody + counts.debris;
-    activeBreakdown = counts;
-  } catch (err) {
-    activeBreakdown = { error: err instanceof Error ? err.message : "failed" };
-  }
-  res.json({ results, activeBreakdown });
-});
 app.get("/api/debris/field", async (_req, res) => {
-  const results = await Promise.all(
+  const cloudResults = await Promise.all(
     DEBRIS_CLOUDS.map(async (cloud) => {
       try {
         const { tles: tles2, source } = await getTleGroup(cloud.celestrakGroup);
@@ -43863,6 +43830,30 @@ app.get("/api/debris/field", async (_req, res) => {
       }
     })
   );
+  let derelicts = [];
+  let activeSource = "unavailable";
+  let activeTotal = 0;
+  try {
+    const { tles: tles2, source } = await getTleGroup("active");
+    activeTotal = tles2.length;
+    activeSource = source;
+    derelicts = tles2.filter((t) => {
+      const type = classify(t.name).type;
+      return type === "ROCKET BODY" || type === "DEBRIS";
+    });
+  } catch {
+    activeSource = "unavailable";
+  }
+  const results = [
+    ...cloudResults,
+    {
+      id: "non-active",
+      label: "Spent stages and other debris",
+      count: derelicts.length,
+      source: activeSource,
+      tles: derelicts
+    }
+  ];
   const seen = /* @__PURE__ */ new Set();
   const tles = [];
   for (const r of results) {

@@ -58,11 +58,8 @@ export const ROUTE_DESCRIPTIONS: Record<string, string> = {
   "GET /api/debris/cloud/:id":
     "Every catalogued fragment of one breakup cloud. Thousands of objects — requested explicitly, never loaded by default.",
 
-  "GET /api/debris/probe":
-    "TEMPORARY. Reports which CelesTrak bulk sources exist and how many objects each returns, so the field's coverage gap can be measured rather than guessed. Hardcoded candidate list; delete once answered.",
-
   "GET /api/debris/field":
-    "Every fragment CelesTrak serves without an account: the four tracked breakup clouds merged and deduplicated. The dome's point-field source when Space-Track has no credentials — fewer objects than the full catalogue, but real and available to everyone.",
+    "Every non-active object CelesTrak serves without an account: the four tracked breakup clouds, plus the spent stages and debris classified out of its bulk file. The dome's point-field source when Space-Track has no credentials.",
 
   "GET /api/satcat/:group":
     "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",

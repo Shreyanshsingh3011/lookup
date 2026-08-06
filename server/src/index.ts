@@ -223,73 +223,6 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
 });
 
 /**
- * TEMPORARY. Which CelesTrak sources actually exist, measured rather than guessed.
- *
- * The field falls back to four breakup clouds, which is 2,639 objects against
- * the ~12,500 debris objects Space-Track knows about. Closing that gap means
- * knowing what else CelesTrak serves without an account, and the sandbox this
- * was written in cannot reach celestrak.org at all — so the question can only
- * be answered from a deployed server.
- *
- * The candidate list is hardcoded. No part of it comes from the request, so
- * this cannot be pointed at an arbitrary host.
- *
- * Delete once the answer is known.
- */
-app.get("/api/debris/probe", async (_req, res) => {
-  const candidates = [
-    ["group: active", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"],
-    ["group: analyst", "https://celestrak.org/NORAD/elements/gp.php?GROUP=analyst&FORMAT=tle"],
-    ["group: cosmos-1408-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-1408-debris&FORMAT=tle"],
-    ["group: 1999-025 (fengyun intl des)", "https://celestrak.org/NORAD/elements/gp.php?INTDES=1999-025&FORMAT=tle"],
-    ["full catalog.txt", "https://celestrak.org/pub/TLE/catalog.txt"],
-    ["full catalog.php", "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full&FORMAT=tle"],
-    ["group: last-30-days", "https://celestrak.org/NORAD/elements/gp.php?GROUP=last-30-days&FORMAT=tle"],
-    ["group: debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=debris&FORMAT=tle"],
-    ["group: cosmos-2251-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle"],
-  ] as const;
-
-  const results = await Promise.all(
-    candidates.map(async ([label, url]) => {
-      try {
-        const r = await fetch(url, { headers: { "user-agent": "lookup/1.0" } });
-        const text = await r.text();
-        const objects = r.ok ? parseTle(text).length : 0;
-        return { label, status: r.status, objects, sample: text.slice(0, 60).replace(/\s+/g, " ") };
-      } catch (err) {
-        return { label, status: 0, objects: 0, error: err instanceof Error ? err.message : "failed" };
-      }
-    })
-  );
-
-  // What the "active" group is actually made of. It is the largest thing
-  // CelesTrak serves in one request and its first entry is a dead 1964
-  // calibration sphere, so the name cannot be taken at face value: the split
-  // between working satellites and derelicts decides whether it can feed the
-  // field at all.
-  let activeBreakdown: Record<string, number> | { error: string } = { error: "not fetched" };
-  try {
-    const r = await fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle", {
-      headers: { "user-agent": "lookup/1.0" },
-    });
-    const tles = parseTle(await r.text());
-    const counts: Record<string, number> = { total: tles.length, rocketBody: 0, debris: 0, other: 0 };
-    for (const t of tles) {
-      const type = classify(t.name).type;
-      if (type === "ROCKET BODY") counts.rocketBody++;
-      else if (type === "DEBRIS") counts.debris++;
-      else counts.other++;
-    }
-    counts.derelictByName = counts.rocketBody + counts.debris;
-    activeBreakdown = counts;
-  } catch (err) {
-    activeBreakdown = { error: err instanceof Error ? err.message : "failed" };
-  }
-
-  res.json({ results, activeBreakdown });
-});
-
-/**
  * Every fragment CelesTrak will serve without an account.
  *
  * The dome's point field was built against Space-Track, which needs
@@ -309,7 +242,7 @@ app.get("/api/debris/probe", async (_req, res) => {
  * groups cost four upstream requests at most once per cache period.
  */
 app.get("/api/debris/field", async (_req, res) => {
-  const results = await Promise.all(
+  const cloudResults = await Promise.all(
     DEBRIS_CLOUDS.map(async (cloud) => {
       try {
         const { tles, source } = await getTleGroup(cloud.celestrakGroup);
@@ -326,6 +259,42 @@ app.get("/api/debris/field", async (_req, res) => {
       }
     })
   );
+
+  // The rest of the non-active catalogue, from the one bulk file CelesTrak
+  // serves without an account.
+  //
+  // Its group is called "active", which is not what it holds: 16,103 objects
+  // whose very first entry is Calsphere 1, a passive calibration sphere from
+  // 1964. It is closer to "everything CelesTrak tracks that is not fragment
+  // debris" — thousands of spent stages among the working satellites. Those
+  // stages are exactly what the field was missing, so they are taken by
+  // classification rather than by trusting the group's name, and the working
+  // payloads are left out.
+  let derelicts: TleRecord[] = [];
+  let activeSource = "unavailable";
+  let activeTotal = 0;
+  try {
+    const { tles, source } = await getTleGroup("active");
+    activeTotal = tles.length;
+    activeSource = source;
+    derelicts = tles.filter((t) => {
+      const type = classify(t.name).type;
+      return type === "ROCKET BODY" || type === "DEBRIS";
+    });
+  } catch {
+    activeSource = "unavailable";
+  }
+
+  const results = [
+    ...cloudResults,
+    {
+      id: "non-active",
+      label: "Spent stages and other debris",
+      count: derelicts.length,
+      source: activeSource,
+      tles: derelicts,
+    },
+  ];
 
   // Deduplicated across groups. The clouds are disjoint by construction, but a
   // parent body catalogued in two of them would otherwise be propagated twice.
