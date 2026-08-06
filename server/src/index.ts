@@ -276,8 +276,8 @@ app.get("/api/debris/probe", async (_req, res) => {
     const counts: Record<string, number> = { total: tles.length, rocketBody: 0, debris: 0, other: 0 };
     for (const t of tles) {
       const type = classify(t.name).type;
-      if (type === "rocket-body") counts.rocketBody++;
-      else if (type === "debris") counts.debris++;
+      if (type === "ROCKET BODY") counts.rocketBody++;
+      else if (type === "DEBRIS") counts.debris++;
       else counts.other++;
     }
     counts.derelictByName = counts.rocketBody + counts.debris;
