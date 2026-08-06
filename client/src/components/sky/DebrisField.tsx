@@ -16,24 +16,40 @@ import type { Observer, TleRecord } from '../../types';
  * Drawn deliberately unlike everything else in the dome. These are catalogued
  * positions, not things you could see — each is around magnitude 12, some 250
  * times fainter than the naked eye reaches — so the field has to read as data
- * rather than as sky. Small, dim, flat, uniform, and in the same violet the
- * breakup regions use, which is the colour this app reserves for "population,
- * not object". Teal is a working satellite and amber is a derelict you could
+ * rather than as sky. Flat, uniform, unlit, and in the same violet the breakup
+ * regions use, which is the colour this app reserves for "population, not
+ * object". Teal is a working satellite and amber is a derelict you could
  * actually go and look at; neither of those meanings applies here.
+ *
+ * What that no longer means is "too small to find". The first version made the
+ * points sub-pixel in the name of not overstating them, which just meant the
+ * dome silently omitted objects its own status line was counting. Distinctness
+ * carries the caveat now; size does not.
  */
 
 const FIELD_COLOR = '#8b7fd4';
 
 /**
- * Small enough not to imply visibility.
+ * Big enough to actually see, in CSS pixels rather than device pixels.
  *
- * A point large enough to look like a star would be the whole problem: the
- * field would read as a sky full of objects rather than as a plotted catalogue.
- * `sizeAttenuation` off keeps each one a fixed pixel size, so zooming in
- * magnifies the sky without inflating the data.
+ * This was 1.6 with `sizeAttenuation` off, chosen so the field would not imply
+ * these objects are visible to the eye. It went too far: three.js sizes points
+ * in the drawing buffer, so on a 2x display 1.6 became 0.8 CSS pixels, and at
+ * 55% opacity the field was drawing 195 objects that nobody could find. A
+ * status line reporting objects the dome does not show is worse than either
+ * choice on its own.
+ *
+ * So the size is now multiplied by the renderer's pixel ratio, which makes it
+ * mean the same thing on every display. The honesty that the small size was
+ * carrying moves to where it belongs: the colour is still the violet reserved
+ * for "population, not object", and the status line under the dome states the
+ * magnitude outright.
+ *
+ * `sizeAttenuation` stays off so zooming magnifies the sky without inflating
+ * the data — a fragment must not grow into something that looks bright.
  */
-const POINT_SIZE = 1.6;
-const POINT_OPACITY = 0.55;
+const POINT_SIZE_CSS_PX = 3.4;
+const POINT_OPACITY = 0.85;
 
 /** Propagation interval for the bulk field, in milliseconds. */
 export const FIELD_TICK_MS = 250;
@@ -78,6 +94,38 @@ export function DebrisField({
   onPromotedChange: (satnums: string[]) => void;
 }) {
   const geometry = useMemo(() => new THREE.BufferGeometry(), []);
+
+  // Point size is in drawing-buffer pixels, so it has to be scaled by the
+  // renderer's ratio or the field is half size on a retina screen and double on
+  // none. Read from the renderer rather than window.devicePixelRatio, because
+  // the canvas is what actually decides it.
+  const pixelRatio = useThree((s) => s.gl.getPixelRatio());
+
+  /**
+   * A round dot rather than the default square.
+   *
+   * At three pixels a square reads as a hard speck of dust; a disc with a soft
+   * edge reads as a plotted object and survives being drawn two thousand times
+   * without turning the sky into gravel. Built once, in code, so there is no
+   * image to fetch and nothing to go missing offline.
+   */
+  const dotTexture = useMemo(() => {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.95)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    return tex;
+  }, []);
   const attribute = useRef<THREE.BufferAttribute | null>(null);
   const drawn = useRef(0);
   const lastTick = useRef(-1);
@@ -172,6 +220,7 @@ export function DebrisField({
   });
 
   useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(() => () => dotTexture?.dispose(), [dotTexture]);
 
   if (parsed.recs.length === 0) return null;
 
@@ -179,7 +228,9 @@ export function DebrisField({
     <points geometry={geometry} frustumCulled={false}>
       <pointsMaterial
         color={FIELD_COLOR}
-        size={POINT_SIZE}
+        size={POINT_SIZE_CSS_PX * pixelRatio}
+        map={dotTexture}
+        alphaTest={0.01}
         sizeAttenuation={false}
         transparent
         opacity={POINT_OPACITY}
