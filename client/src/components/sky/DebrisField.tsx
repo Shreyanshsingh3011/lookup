@@ -8,10 +8,11 @@ import type { Observer, TleRecord } from '../../types';
 /**
  * The bulk catalogue, drawn as one object.
  *
- * A single THREE.Points holding every tracked fragment above the horizon: one
- * geometry, one draw call, and per update nothing but a buffer write and a draw
- * range change. Twelve thousand marker components would be twelve thousand
- * React nodes and tens of thousands of draw calls; this is one of each.
+ * A single InstancedMesh holding every tracked fragment above the horizon: one
+ * geometry, one material, one draw call, and per update nothing but a matrix
+ * per object and an instance count. Twelve thousand marker components would be
+ * twelve thousand React nodes and tens of thousands of draw calls; this is one
+ * of each.
  *
  * Drawn deliberately unlike everything else in the dome. These are catalogued
  * positions, not things you could see — each is around magnitude 12, some 250
@@ -30,26 +31,37 @@ import type { Observer, TleRecord } from '../../types';
 const FIELD_COLOR = '#8b7fd4';
 
 /**
- * Big enough to actually see, in CSS pixels rather than device pixels.
+ * Solid bodies, not sprites — and still one draw call.
  *
- * This was 1.6 with `sizeAttenuation` off, chosen so the field would not imply
- * these objects are visible to the eye. It went too far: three.js sizes points
- * in the drawing buffer, so on a 2x display 1.6 became 0.8 CSS pixels, and at
- * 55% opacity the field was drawing 195 objects that nobody could find. A
- * status line reporting objects the dome does not show is worse than either
- * choice on its own.
+ * These were flat points, which is what let one object hold the whole
+ * catalogue. An InstancedMesh keeps that property: a single geometry and
+ * material submitted once, with a transform per instance, so two and a half
+ * thousand real octahedra cost one draw call exactly as the point cloud did.
+ * A marker component each would be thousands of React nodes and thousands of
+ * draws; this is one of each, and the only per-object work is composing a
+ * matrix.
  *
- * So the size is now multiplied by the renderer's pixel ratio, which makes it
- * mean the same thing on every display. The honesty that the small size was
- * carrying moves to where it belongs: the colour is still the violet reserved
- * for "population, not object", and the status line under the dome states the
- * magnitude outright.
- *
- * `sizeAttenuation` stays off so zooming magnifies the sky without inflating
- * the data — a fragment must not grow into something that looks bright.
+ * The shape is the derelict marker's octahedron, which is deliberate: a
+ * fragment and a spent stage are the same kind of thing at different sizes, so
+ * they should not be different shapes. Lambert rather than basic, so the
+ * dome's existing lights actually model them and they read as solid from any
+ * angle, with a little emissive so one facing away does not vanish.
  */
-const POINT_SIZE_CSS_PX = 3.4;
-const POINT_OPACITY = 0.85;
+const FRAGMENT_RADIUS = 0.42;
+
+/**
+ * Slightly bigger than the dot it replaces, and no bigger.
+ *
+ * The dot was 3.4 CSS pixels. At a 60-degree field of view over a 780-pixel
+ * canvas this subtends around five, which is the "slightly bigger" asked for
+ * and still far below the ~55 pixels a satellite marker occupies. The ordering
+ * matters more than the absolute size: a fragment must never look like a thing
+ * you could go outside and see.
+ *
+ * Unlike the points, these are world-space geometry, so they now grow when you
+ * zoom in — the same behaviour as every other object in the dome.
+ */
+const FIELD_OPACITY = 0.9;
 
 /** Propagation interval for the bulk field, in milliseconds. */
 export const FIELD_TICK_MS = 250;
@@ -93,40 +105,7 @@ export function DebrisField({
   onCountChange: (visible: number, tracked: number) => void;
   onPromotedChange: (satnums: string[]) => void;
 }) {
-  const geometry = useMemo(() => new THREE.BufferGeometry(), []);
-
-  // Point size is in drawing-buffer pixels, so it has to be scaled by the
-  // renderer's ratio or the field is half size on a retina screen and double on
-  // none. Read from the renderer rather than window.devicePixelRatio, because
-  // the canvas is what actually decides it.
-  const pixelRatio = useThree((s) => s.gl.getPixelRatio());
-
-  /**
-   * A round dot rather than the default square.
-   *
-   * At three pixels a square reads as a hard speck of dust; a disc with a soft
-   * edge reads as a plotted object and survives being drawn two thousand times
-   * without turning the sky into gravel. Built once, in code, so there is no
-   * image to fetch and nothing to go missing offline.
-   */
-  const dotTexture = useMemo(() => {
-    const size = 64;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    g.addColorStop(0, 'rgba(255,255,255,1)');
-    g.addColorStop(0.45, 'rgba(255,255,255,0.95)');
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, []);
-  const attribute = useRef<THREE.BufferAttribute | null>(null);
+  const mesh = useRef<THREE.InstancedMesh | null>(null);
   const drawn = useRef(0);
   const lastTick = useRef(-1);
   const reportedCount = useRef(-1);
@@ -152,13 +131,35 @@ export function DebrisField({
   const buffer = useMemo(() => new Float32Array(parsed.recs.length * 3), [parsed.recs.length]);
   const visibleIds = useRef<string[]>([]);
 
+  /**
+   * A fixed random orientation per fragment, and a little size variation.
+   *
+   * Real debris is irregular, and a field of identically-oriented octahedra
+   * reads as a repeated sprite rather than a population of objects. The
+   * orientations are generated once and reused, not re-rolled per frame:
+   * tumbling them would mean rebuilding and re-uploading every instance matrix
+   * sixty times a second, which is exactly the per-object cost this component
+   * exists to avoid. Deterministic from the index, so a fragment does not jump
+   * to a new attitude on re-render.
+   */
+  const attitudes = useMemo(() => {
+    const q: THREE.Quaternion[] = [];
+    const scales: number[] = [];
+    const e = new THREE.Euler();
+    for (let i = 0; i < parsed.recs.length; i++) {
+      const a = Math.sin(i * 12.9898) * 43758.5453;
+      const b = Math.sin(i * 78.233) * 12345.6789;
+      const c = Math.sin(i * 39.425) * 24634.6345;
+      e.set((a - Math.floor(a)) * Math.PI * 2, (b - Math.floor(b)) * Math.PI * 2, (c - Math.floor(c)) * Math.PI * 2);
+      q.push(new THREE.Quaternion().setFromEuler(e));
+      scales.push(0.75 + (c - Math.floor(c)) * 0.5);
+    }
+    return { q, scales };
+  }, [parsed.recs.length]);
+
   useEffect(() => {
-    if (buffer.length === 0) return;
-    attribute.current = new THREE.BufferAttribute(buffer, 3);
-    attribute.current.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('position', attribute.current);
     lastTick.current = -1;
-  }, [buffer, geometry]);
+  }, [parsed.recs.length]);
 
   // The scrubber's time, read through a ref so a moving clock does not re-render.
   const timeRef = useRef(displayTime);
@@ -168,8 +169,13 @@ export function DebrisField({
   const boresight = useRef(new THREE.Vector3());
   const promotedKey = useRef('');
 
+  // Scratch objects, reused every tick so the loop allocates nothing.
+  const scratchMatrix = useMemo(() => new THREE.Matrix4(), []);
+  const scratchPos = useMemo(() => new THREE.Vector3(), []);
+  const scratchScale = useMemo(() => new THREE.Vector3(), []);
+
   useFrame(() => {
-    if (parsed.recs.length === 0 || !attribute.current) return;
+    if (parsed.recs.length === 0 || !mesh.current) return;
     const tick = Math.floor(timeRef.current.getTime() / FIELD_TICK_MS);
 
     // Promotion tracks the camera, so it is checked every frame while zoomed in
@@ -201,16 +207,24 @@ export function DebrisField({
       const sample = skySampleAt(parsed.recs[i], observerGd, when);
       if (!sample || sample.elevationDeg < 0) continue;
       const [x, y, z] = azElToVec3(sample.azimuthDeg, sample.elevationDeg);
+      // Kept alongside the instance matrices: boresight promotion reads raw
+      // positions, and a dot product over a flat array beats decomposing
+      // matrices for every object in the cone.
       buffer[n * 3] = x;
       buffer[n * 3 + 1] = y;
       buffer[n * 3 + 2] = z;
+      scratchPos.set(x, y, z);
+      const s = attitudes.scales[i];
+      scratchScale.set(s, s, s);
+      scratchMatrix.compose(scratchPos, attitudes.q[i], scratchScale);
+      mesh.current.setMatrixAt(n, scratchMatrix);
       ids.push(parsed.ids[i]);
       n++;
     }
     visibleIds.current = ids;
     drawn.current = n;
-    attribute.current.needsUpdate = true;
-    geometry.setDrawRange(0, n);
+    mesh.current.count = n;
+    mesh.current.instanceMatrix.needsUpdate = true;
 
     // Only this crosses into React, and only when it moves.
     if (n !== reportedCount.current) {
@@ -219,23 +233,25 @@ export function DebrisField({
     }
   });
 
-  useEffect(() => () => geometry.dispose(), [geometry]);
-  useEffect(() => () => dotTexture?.dispose(), [dotTexture]);
-
   if (parsed.recs.length === 0) return null;
 
   return (
-    <points geometry={geometry} frustumCulled={false}>
-      <pointsMaterial
+    <instancedMesh
+      // Capacity is fixed when the mesh is built, so a new catalogue needs a
+      // new mesh rather than a resized one.
+      key={parsed.recs.length}
+      ref={mesh}
+      args={[undefined, undefined, parsed.recs.length]}
+      frustumCulled={false}
+    >
+      <octahedronGeometry args={[FRAGMENT_RADIUS, 0]} />
+      <meshLambertMaterial
         color={FIELD_COLOR}
-        size={POINT_SIZE_CSS_PX * pixelRatio}
-        map={dotTexture}
-        alphaTest={0.01}
-        sizeAttenuation={false}
+        emissive={FIELD_COLOR}
+        emissiveIntensity={0.45}
         transparent
-        opacity={POINT_OPACITY}
-        depthWrite={false}
+        opacity={FIELD_OPACITY}
       />
-    </points>
+    </instancedMesh>
   );
 }
