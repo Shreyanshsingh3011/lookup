@@ -485,6 +485,8 @@ function App() {
               fieldLoading={catalogueField.loading}
               fieldError={catalogueField.error}
               fieldUnconfigured={catalogueField.unconfigured}
+              fieldSource={catalogueField.source}
+              fieldPartial={catalogueField.partial}
             />
           </Suspense>
           <TimeScrubber control={time} />

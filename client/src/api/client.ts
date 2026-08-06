@@ -156,6 +156,24 @@ export function fetchSpaceTrackDebris(limit?: number): Promise<SpaceTrackDebrisR
   return apiFetch<SpaceTrackDebrisResponse>(`/api/spacetrack/debris${q}`);
 }
 
+export interface DebrisFieldResponse {
+  count: number;
+  clouds: Array<{ id: string; label: string; count: number; source: string }>;
+  source: 'live' | 'partial' | 'unavailable';
+  tles: TleRecord[];
+}
+
+/**
+ * Every fragment CelesTrak serves without an account.
+ *
+ * The fallback for the dome's point field when Space-Track has no credentials.
+ * Fewer objects than the full catalogue and only from the four tracked breakup
+ * events, but real, current, and available to everyone with no configuration.
+ */
+export function fetchDebrisField(): Promise<DebrisFieldResponse> {
+  return apiFetch<DebrisFieldResponse>('/api/debris/field');
+}
+
 /**
  * Search the cached non-active catalogue.
  *

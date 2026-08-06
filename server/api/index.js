@@ -43639,6 +43639,7 @@ var ROUTE_DESCRIPTIONS = {
   "POST /api/passes/custom": "Visible passes for caller-supplied element sets, for satellites outside the tracked groups.",
   "GET /api/debris/catalogue": "The debris screen's two collections: named breakup clouds, and notable derelicts resolved individually so a vanished catalogue number is reported per object.",
   "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
+  "GET /api/debris/field": "Every fragment CelesTrak serves without an account: the four tracked breakup clouds merged and deduplicated. The dome's point-field source when Space-Track has no credentials \u2014 fewer objects than the full catalogue, but real and available to everyone.",
   "GET /api/satcat/:group": "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
   "GET /api/spacetrack/debris": "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
   "GET /api/spacetrack/search": "Search the cached non-active catalogue by name, catalogue number, declared type or size class. Served from memory, so it costs Space-Track nothing; results are capped for choosing from one at a time.",
@@ -43798,6 +43799,48 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+app.get("/api/debris/field", async (_req, res) => {
+  const results = await Promise.all(
+    DEBRIS_CLOUDS.map(async (cloud) => {
+      try {
+        const { tles: tles2, source } = await getTleGroup(cloud.celestrakGroup);
+        return { id: cloud.id, label: cloud.label, count: tles2.length, source, tles: tles2 };
+      } catch (err) {
+        return {
+          id: cloud.id,
+          label: cloud.label,
+          count: 0,
+          source: "unavailable",
+          error: err instanceof Error ? err.message : "fetch failed",
+          tles: []
+        };
+      }
+    })
+  );
+  const seen = /* @__PURE__ */ new Set();
+  const tles = [];
+  for (const r of results) {
+    for (const t of r.tles) {
+      if (seen.has(t.satnum)) continue;
+      seen.add(t.satnum);
+      tles.push(t);
+    }
+  }
+  const failed = results.filter((r) => r.source === "unavailable");
+  const rank = ["unavailable", "fixture", "file", "cache", "live"];
+  const weakest = results.reduce(
+    (worst, r) => rank.indexOf(r.source) < rank.indexOf(worst) ? r.source : worst,
+    "live"
+  );
+  res.json({
+    count: tles.length,
+    // Per-cloud, so a partial answer says which part is missing rather than
+    // quietly returning a smaller number.
+    clouds: results.map(({ id, label, count, source }) => ({ id, label, count, source })),
+    source: failed.length === results.length ? "unavailable" : failed.length > 0 ? "partial" : weakest,
+    tles
+  });
 });
 app.get("/api/spacetrack/debris", async (req, res) => {
   const requested = Number(req.query.limit);

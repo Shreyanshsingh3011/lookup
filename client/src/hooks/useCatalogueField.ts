@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchSpaceTrackDebris } from '../api/client';
+import { fetchDebrisField, fetchSpaceTrackDebris } from '../api/client';
 import { preFilter } from '../lib/debris';
 import type { Observer, TleRecord } from '../types';
 
@@ -14,10 +14,18 @@ import type { Observer, TleRecord } from '../types';
  * everything while silently omitting the only category anyone can actually see.
  *
  * Fetched once when the debris layer is switched on and kept afterwards, so
- * toggling does not re-request. Requests the full set rather than a capped slice
- * — the point field can hold it, which is the entire reason that component
- * exists — and falls back silently to nothing if Space-Track is unavailable,
- * because the curated layer beneath it is already a complete, honest answer.
+ * toggling does not re-request. Requests the full set rather than a capped
+ * slice — the point field can hold it, which is the entire reason that
+ * component exists.
+ *
+ * Two sources, in order. Space-Track has everything but needs an account, and
+ * when the deployment has no credentials it returns nothing at all — which is
+ * what every visitor to this app was getting: a layer promising the catalogue
+ * and drawing an empty sky. CelesTrak publishes the four tracked breakup clouds
+ * to anyone, so that is the fallback: a few thousand real, current fragments
+ * rather than zero. Which source answered is reported, because the two support
+ * very different claims and the dome must not make the larger one on the
+ * smaller data.
  *
  * Reach-filtered before it reaches the dome, and that is not optional here: at
  * twelve thousand objects, propagating things that can never rise at this
@@ -40,7 +48,17 @@ export interface CatalogueField {
   error: string | null;
   /** True when the server has no Space-Track credentials configured. */
   unconfigured: boolean;
+  /** Which source answered, so the dome can say what it is plotting. */
+  source: FieldSource;
+  /** True when only some of the CelesTrak clouds could be fetched. */
+  partial: boolean;
 }
+
+/**
+ * Space-Track has everything; CelesTrak has the four tracked breakup clouds and
+ * needs no account. Which one answered changes what the dome may claim.
+ */
+export type FieldSource = 'spacetrack' | 'celestrak' | 'none';
 
 const EMPTY_TLES: TleRecord[] = [];
 
@@ -51,31 +69,63 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unconfigured, setUnconfigured] = useState(false);
+  const [source, setSource] = useState<FieldSource>('none');
+  const [partial, setPartial] = useState(false);
 
   useEffect(() => {
     if (!enabled || loaded) return;
     let cancelled = false;
     setLoading(true);
-    fetchSpaceTrackDebris(HARD_CEILING)
-      .then((res) => {
-        if (cancelled) return;
-        setAvailable(res.source !== 'unavailable');
-        // An empty field has to say why. Silently rendering nothing is the one
-        // outcome this app is not allowed to produce: it looks identical to a
-        // sky with no debris in it, which is the opposite of the truth.
-        setUnconfigured(res.configured === false);
-        setError(res.source === 'unavailable' ? (res.error ?? 'Space-Track is unavailable.') : null);
-        setObjects(res.objects.map((o) => o.tle));
+
+    // Space-Track first, because it is the only source that has everything.
+    // CelesTrak second, because it needs no account and having a few thousand
+    // real fragments beats having none — which is what every visitor got while
+    // the field depended on credentials the deployment did not have.
+    (async () => {
+      const primary = await fetchSpaceTrackDebris(HARD_CEILING).catch((err: unknown) => ({
+        source: 'unavailable' as const,
+        configured: true,
+        error: err instanceof Error ? err.message : 'The catalogue request failed.',
+        objects: [],
+      }));
+      if (cancelled) return;
+
+      if (primary.source !== 'unavailable' && primary.objects.length > 0) {
+        setAvailable(true);
+        setUnconfigured(false);
+        setError(null);
+        setSource('spacetrack');
+        setObjects(primary.objects.map((o) => o.tle));
         setLoaded(true);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
+        return;
+      }
+
+      const unconfiguredNow = primary.configured === false;
+      setUnconfigured(unconfiguredNow);
+
+      const fallback = await fetchDebrisField().catch(() => null);
+      if (cancelled) return;
+
+      if (fallback && fallback.tles.length > 0) {
+        setAvailable(true);
+        setSource('celestrak');
+        setObjects(fallback.tles);
+        setPartial(fallback.source === 'partial');
+        // Not an error — a smaller true answer. The reason the larger one is
+        // missing still has to reach the reader, so it is kept separately.
+        setError(null);
+      } else {
         setAvailable(false);
-        setError(err instanceof Error ? err.message : 'The catalogue request failed.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        setSource('none');
+        setError(
+          ('error' in primary ? primary.error : null) ?? 'No debris catalogue could be loaded.'
+        );
+      }
+      setLoaded(true);
+    })().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+
     return () => {
       cancelled = true;
     };
@@ -96,5 +146,7 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
     available,
     error,
     unconfigured,
+    source,
+    partial,
   };
 }

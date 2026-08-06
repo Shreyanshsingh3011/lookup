@@ -222,6 +222,79 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
 });
 
 /**
+ * Every fragment CelesTrak will serve without an account.
+ *
+ * The dome's point field was built against Space-Track, which needs
+ * credentials, and without them it drew nothing at all — a layer advertising
+ * the whole catalogue and delivering an empty sky. CelesTrak publishes the four
+ * tracked breakup clouds to anyone, and the app already fetches them one at a
+ * time for the debris screen. Merged, they are a few thousand real, current,
+ * propagatable objects available to every visitor with no configuration.
+ *
+ * This is deliberately not presented as the full catalogue, because it is not:
+ * it is fragments from four named events, with no spent stages and no dead
+ * payloads beyond whichever parent bodies are still catalogued alongside their
+ * debris. The full ~17,000 still needs Space-Track. What this removes is the
+ * case where the honest answer was nothing at all.
+ *
+ * Fetched through the same cached group fetcher as everything else, so four
+ * groups cost four upstream requests at most once per cache period.
+ */
+app.get("/api/debris/field", async (_req, res) => {
+  const results = await Promise.all(
+    DEBRIS_CLOUDS.map(async (cloud) => {
+      try {
+        const { tles, source } = await getTleGroup(cloud.celestrakGroup);
+        return { id: cloud.id, label: cloud.label, count: tles.length, source, tles };
+      } catch (err) {
+        return {
+          id: cloud.id,
+          label: cloud.label,
+          count: 0,
+          source: "unavailable" as const,
+          error: err instanceof Error ? err.message : "fetch failed",
+          tles: [] as TleRecord[],
+        };
+      }
+    })
+  );
+
+  // Deduplicated across groups. The clouds are disjoint by construction, but a
+  // parent body catalogued in two of them would otherwise be propagated twice.
+  const seen = new Set<string>();
+  const tles: TleRecord[] = [];
+  for (const r of results) {
+    for (const t of r.tles) {
+      if (seen.has(t.satnum)) continue;
+      seen.add(t.satnum);
+      tles.push(t);
+    }
+  }
+
+  // The weakest source present, not the best one.
+  //
+  // Four groups can answer four different ways, and reporting "live" because
+  // one of them was would overstate the other three — a fixture is a fallback,
+  // not fresh data, and the caller has to be able to tell.
+  const failed = results.filter((r) => r.source === "unavailable");
+  const rank = ["unavailable", "fixture", "file", "cache", "live"];
+  const weakest = results.reduce(
+    (worst, r) => (rank.indexOf(r.source) < rank.indexOf(worst) ? r.source : worst),
+    "live" as string
+  );
+
+  res.json({
+    count: tles.length,
+    // Per-cloud, so a partial answer says which part is missing rather than
+    // quietly returning a smaller number.
+    clouds: results.map(({ id, label, count, source }) => ({ id, label, count, source })),
+    source:
+      failed.length === results.length ? "unavailable" : failed.length > 0 ? "partial" : weakest,
+    tles,
+  });
+});
+
+/**
  * The full public debris catalogue, joined from Space-Track.
  *
  * satcat says what an object is; only gp says where it is. This returns both,

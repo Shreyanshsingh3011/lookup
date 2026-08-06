@@ -29,6 +29,7 @@ test("the index is read from the router, not from a list", () => {
     "GET /api/tle/satellite/:catnr",
     "GET /api/debris/catalogue",
     "GET /api/debris/cloud/:id",
+    "GET /api/debris/field",
     "GET /api/small-bodies",
     "GET /api/radio/:catnr",
     "GET /api/starlink/trains",

@@ -37,6 +37,7 @@ import { DebrisField } from './DebrisField';
 import { MeteorLayer } from './MeteorLayer';
 import { StarLayer } from './StarLayer';
 import type { Observer, Pass, SatcatEntry, TleRecord } from '../../types';
+import type { FieldSource } from '../../hooks/useCatalogueField';
 
 /** Stable empty array, so toggling the layer off doesn't churn memoisation. */
 const EMPTY_SATELLITES: ReturnType<typeof useSkyObjects> = [];
@@ -606,8 +607,12 @@ interface Props {
   fieldLoading?: boolean;
   /** Why the bulk field is empty, when it is. Stated, never swallowed. */
   fieldError?: string | null;
-  /** The server has no Space-Track credentials, so the field cannot load at all. */
+  /** The server has no Space-Track credentials, so the full catalogue is out of reach. */
   fieldUnconfigured?: boolean;
+  /** Which source the field came from. Changes what the status line may claim. */
+  fieldSource?: FieldSource;
+  /** Only some of the CelesTrak clouds answered. */
+  fieldPartial?: boolean;
 }
 
 const LAYER_LABELS: Array<{ key: keyof SkyLayers; label: string }> = [
@@ -650,6 +655,8 @@ export function SkyDome({
   fieldLoading = false,
   fieldError = null,
   fieldUnconfigured = false,
+  fieldSource = 'none',
+  fieldPartial = false,
   debrisLoading = false,
   debrisError = null,
   debrisUnreachable = 0,
@@ -1134,22 +1141,13 @@ export function SkyDome({
       {layers.debris && fieldInfo.tracked === 0 && (
         <p className="text-[11px] leading-snug max-w-md text-space-400">
           {fieldLoading ? (
-            'Loading the full debris catalogue…'
-          ) : fieldUnconfigured ? (
-            <>
-              <span className="text-amber-glow">
-                The full debris catalogue is not loaded — no Space-Track credentials on the server.
-              </span>{' '}
-              Space-Track is the only source for the ~17,000 non-active objects in orbit, and it
-              requires an account. Set SPACETRACK_USER and SPACETRACK_PASS on the server to plot
-              them. Until then the amber derelicts below are the whole of what is shown, and they
-              come from the satellite groups you have selected plus a curated shortlist — not from
-              the catalogue.
-            </>
+            'Loading the debris catalogue…'
           ) : fieldError ? (
             <>
-              <span className="text-amber-glow">Full debris catalogue unavailable</span> —{' '}
-              {fieldError} The amber derelicts below are unaffected.
+              <span className="text-amber-glow">Debris catalogue unavailable</span> — {fieldError}{' '}
+              {fieldUnconfigured &&
+                'Space-Track needs SPACETRACK_USER and SPACETRACK_PASS on the server; CelesTrak needs nothing but did not answer either. '}
+              The amber derelicts below are unaffected.
             </>
           ) : null}
         </p>
@@ -1163,12 +1161,24 @@ export function SkyDome({
           </span>
           <span className="text-space-400">
             {' '}
-            — every catalogued fragment still in orbit, plotted as points. Fragments only: spent
-            stages and dead payloads are the amber count below, and no object is in both. None of
-            this is visible to the eye; at magnitude {FRAGMENT_TYPICAL_MAGNITUDE} a fragment is about{' '}
-            {Math.round(timesFainterThanEye())} times fainter than the naked-eye limit. Positions
-            are real and propagated exactly the way everything else here is. Zoom in to name
-            whatever you point at.
+            {fieldSource === 'celestrak' ? (
+              <>
+                — fragments from the four tracked breakup events, via CelesTrak
+                {fieldPartial && ' (some clouds did not answer)'}. Not the whole catalogue: the
+                ~17,000 non-active objects in orbit are only available from Space-Track, which
+                needs an account, and this server has no credentials set. Adding SPACETRACK_USER
+                and SPACETRACK_PASS plots all of them.
+              </>
+            ) : (
+              <>
+                — every catalogued fragment still in orbit, plotted as points. Fragments only:
+                spent stages and dead payloads are the amber count below, and no object is in both.
+              </>
+            )}{' '}
+            None of this is visible to the eye; at magnitude {FRAGMENT_TYPICAL_MAGNITUDE} a fragment
+            is about {Math.round(timesFainterThanEye())} times fainter than the naked-eye limit.
+            Positions are real and propagated exactly the way everything else here is. Zoom in to
+            name whatever you point at.
           </span>
         </p>
       )}
