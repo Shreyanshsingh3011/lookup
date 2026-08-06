@@ -47,21 +47,42 @@ const FIELD_COLOR = '#8b7fd4';
  * they should not be different shapes. Lambert rather than basic, so the
  * dome's existing lights actually model them and they read as solid from any
  * angle, with a little emissive so one facing away does not vanish.
+ *
+ * Nominal radius against a dome radius of 100. At a 60-degree field of view
+ * over a 780-pixel canvas this subtends roughly seven pixels before the
+ * per-instance shard scaling below stretches it either way — still a fraction
+ * of the ~55 pixels a satellite marker occupies. That ordering matters more
+ * than the absolute size: a fragment must never look like a thing you could go
+ * outside and see.
+ *
+ * These are world-space geometry, so unlike the points they replaced they grow
+ * when you zoom in, the same as every other object in the dome.
  */
-const FRAGMENT_RADIUS = 0.42;
+const FRAGMENT_RADIUS = 0.58;
 
 /**
- * Slightly bigger than the dot it replaces, and no bigger.
+ * Irregular, because that is the one thing about their shape that is known.
  *
- * The dot was 3.4 CSS pixels. At a 60-degree field of view over a 780-pixel
- * canvas this subtends around five, which is the "slightly bigger" asked for
- * and still far below the ~55 pixels a satellite marker occupies. The ordering
- * matters more than the absolute size: a fragment must never look like a thing
- * you could go outside and see.
+ * There is no appearance reference for these objects and there cannot be. A
+ * catalogued fragment is a ten-centimetre piece of a shredded satellite; it has
+ * been tracked by radar, never photographed. Drawing a "realistic" fragment
+ * would mean inventing one, so this does not attempt a likeness of any
+ * particular object.
  *
- * Unlike the points, these are world-space geometry, so they now grow when you
- * zoom in — the same behaviour as every other object in the dome.
+ * What is documented is the form. Collision and explosion debris is angular and
+ * irregular, spanning a wide range of area-to-mass ratios — the distribution
+ * that breakup models are built around — which in practice means plates and
+ * splinters rather than uniform lumps. So each instance gets a non-uniform
+ * scale: some flattened, some elongated, none identical. That is a
+ * representative shape, not a portrait, and it is as far as the evidence goes.
+ *
+ * Non-uniform scale rather than different geometries, because a second
+ * geometry would mean a second draw call and a second instance-id space for
+ * hover to disambiguate. One mesh keeps both.
  */
+const SHARD_MIN = 0.45;
+const SHARD_MAX = 1.55;
+
 const FIELD_OPACITY = 0.9;
 
 /** Propagation interval for the bulk field, in milliseconds. */
@@ -137,7 +158,7 @@ export function DebrisField({
   const visibleInfo = useRef<Array<{ name: string; satnum: string; az: number; el: number; km: number }>>([]);
 
   /**
-   * A fixed random orientation per fragment, and a little size variation.
+   * A fixed random orientation and shard proportions per fragment.
    *
    * Real debris is irregular, and a field of identically-oriented octahedra
    * reads as a repeated sprite rather than a population of objects. The
@@ -149,15 +170,27 @@ export function DebrisField({
    */
   const attitudes = useMemo(() => {
     const q: THREE.Quaternion[] = [];
-    const scales: number[] = [];
+    const scales: THREE.Vector3[] = [];
     const e = new THREE.Euler();
+    const frac = (n: number) => n - Math.floor(n);
+    const span = SHARD_MAX - SHARD_MIN;
     for (let i = 0; i < parsed.recs.length; i++) {
-      const a = Math.sin(i * 12.9898) * 43758.5453;
-      const b = Math.sin(i * 78.233) * 12345.6789;
-      const c = Math.sin(i * 39.425) * 24634.6345;
-      e.set((a - Math.floor(a)) * Math.PI * 2, (b - Math.floor(b)) * Math.PI * 2, (c - Math.floor(c)) * Math.PI * 2);
+      const a = frac(Math.sin(i * 12.9898) * 43758.5453);
+      const b = frac(Math.sin(i * 78.233) * 12345.6789);
+      const c = frac(Math.sin(i * 39.425) * 24634.6345);
+      const d = frac(Math.sin(i * 57.117) * 31415.9265);
+      e.set(a * Math.PI * 2, b * Math.PI * 2, c * Math.PI * 2);
       q.push(new THREE.Quaternion().setFromEuler(e));
-      scales.push(0.75 + (c - Math.floor(c)) * 0.5);
+      // Three independent axes, so a fragment can come out as a plate, a
+      // splinter or something between, rather than a scaled copy of its
+      // neighbour.
+      scales.push(
+        new THREE.Vector3(
+          SHARD_MIN + a * span,
+          SHARD_MIN + d * span,
+          SHARD_MIN + c * span
+        )
+      );
     }
     return { q, scales };
   }, [parsed.recs.length]);
@@ -200,7 +233,6 @@ export function DebrisField({
   // Scratch objects, reused every tick so the loop allocates nothing.
   const scratchMatrix = useMemo(() => new THREE.Matrix4(), []);
   const scratchPos = useMemo(() => new THREE.Vector3(), []);
-  const scratchScale = useMemo(() => new THREE.Vector3(), []);
 
   useFrame(() => {
     if (parsed.recs.length === 0 || !mesh.current) return;
@@ -243,9 +275,7 @@ export function DebrisField({
       buffer[n * 3 + 1] = y;
       buffer[n * 3 + 2] = z;
       scratchPos.set(x, y, z);
-      const s = attitudes.scales[i];
-      scratchScale.set(s, s, s);
-      scratchMatrix.compose(scratchPos, attitudes.q[i], scratchScale);
+      scratchMatrix.compose(scratchPos, attitudes.q[i], attitudes.scales[i]);
       mesh.current.setMatrixAt(n, scratchMatrix);
       ids.push(parsed.ids[i]);
       info.push({
