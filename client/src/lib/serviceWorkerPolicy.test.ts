@@ -305,3 +305,36 @@ test('the worker never precaches itself', () => {
   );
   assert.match(buildScript, /EXCLUDE = new Set\(\['sw\.js'\]\)/);
 });
+
+// ---------------------------------------------------------------------------
+// Whether a deploy actually reaches anyone
+// ---------------------------------------------------------------------------
+
+/**
+ * The rule that decides it, stated as a function so it can be checked.
+ *
+ * This exists because the previous rule — never update without asking — put a
+ * "new version is ready" notice below the dome and left anyone who did not
+ * scroll to it running the old build indefinitely. That is not a cosmetic
+ * problem: it made a shipped fix indistinguishable from an unshipped one, and
+ * it is how a corrected status line came back reading exactly as it had before.
+ */
+function appliesSilently(msSinceLoad: number, windowMs = 10_000): boolean {
+  return msSinceLoad < windowMs;
+}
+
+test('an update ready while the page is still settling is taken without asking', () => {
+  assert.equal(appliesSilently(0), true, 'a worker left waiting from last visit');
+  assert.equal(appliesSilently(1_500), true, 'the update check landing just after load');
+  assert.equal(appliesSilently(9_999), true, 'the last moment of the window');
+});
+
+test('an update ready once someone is using the app asks first', () => {
+  assert.equal(appliesSilently(10_000), false, 'the boundary is exclusive');
+  assert.equal(appliesSilently(60_000), false, 'a minute in, mid-task');
+  assert.equal(
+    appliesSilently(45 * 60_000),
+    false,
+    'a long session — reloading here could discard a half-written logbook entry'
+  );
+});
