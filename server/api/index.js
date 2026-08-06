@@ -43639,6 +43639,7 @@ var ROUTE_DESCRIPTIONS = {
   "POST /api/passes/custom": "Visible passes for caller-supplied element sets, for satellites outside the tracked groups.",
   "GET /api/debris/catalogue": "The debris screen's two collections: named breakup clouds, and notable derelicts resolved individually so a vanished catalogue number is reported per object.",
   "GET /api/debris/cloud/:id": "Every catalogued fragment of one breakup cloud. Thousands of objects \u2014 requested explicitly, never loaded by default.",
+  "GET /api/debris/probe": "TEMPORARY. Reports which CelesTrak bulk sources exist and how many objects each returns, so the field's coverage gap can be measured rather than guessed. Hardcoded candidate list; delete once answered.",
   "GET /api/debris/field": "Every fragment CelesTrak serves without an account: the four tracked breakup clouds merged and deduplicated. The dome's point-field source when Space-Track has no credentials \u2014 fewer objects than the full catalogue, but real and available to everyone.",
   "GET /api/satcat/:group": "Catalogue metadata for one group: declared object type and operational status per object, which element sets do not carry. Unavailable rather than fatal when SATCAT cannot be reached.",
   "GET /api/spacetrack/debris": "The full public debris catalogue: Space-Track satcat context joined to gp element sets on catalogue number, so the objects can actually be propagated. Cached server-side; reports unavailable without credentials.",
@@ -43799,6 +43800,32 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+app.get("/api/debris/probe", async (_req, res) => {
+  const candidates = [
+    ["group: active", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"],
+    ["group: analyst", "https://celestrak.org/NORAD/elements/gp.php?GROUP=analyst&FORMAT=tle"],
+    ["group: cosmos-1408-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-1408-debris&FORMAT=tle"],
+    ["group: 1999-025 (fengyun intl des)", "https://celestrak.org/NORAD/elements/gp.php?INTDES=1999-025&FORMAT=tle"],
+    ["full catalog.txt", "https://celestrak.org/pub/TLE/catalog.txt"],
+    ["full catalog.php", "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full&FORMAT=tle"],
+    ["group: last-30-days", "https://celestrak.org/NORAD/elements/gp.php?GROUP=last-30-days&FORMAT=tle"],
+    ["group: debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=debris&FORMAT=tle"],
+    ["group: cosmos-2251-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle"]
+  ];
+  const results = await Promise.all(
+    candidates.map(async ([label, url]) => {
+      try {
+        const r = await fetch(url, { headers: { "user-agent": "lookup/1.0" } });
+        const text = await r.text();
+        const objects = r.ok ? parseTle(text).length : 0;
+        return { label, status: r.status, objects, sample: text.slice(0, 60).replace(/\s+/g, " ") };
+      } catch (err) {
+        return { label, status: 0, objects: 0, error: err instanceof Error ? err.message : "failed" };
+      }
+    })
+  );
+  res.json({ results });
 });
 app.get("/api/debris/field", async (_req, res) => {
   const results = await Promise.all(

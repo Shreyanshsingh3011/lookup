@@ -5,6 +5,7 @@ import {
   fetchSatelliteByCatnr,
   getTleGroup,
   MIN_SEARCH_LENGTH,
+  parseTle,
   SATELLITE_GROUPS,
   SEARCH_RESULT_LIMIT,
   searchSatellitesByName,
@@ -219,6 +220,48 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : `Could not load ${cloud.label}` });
   }
+});
+
+/**
+ * TEMPORARY. Which CelesTrak sources actually exist, measured rather than guessed.
+ *
+ * The field falls back to four breakup clouds, which is 2,639 objects against
+ * the ~12,500 debris objects Space-Track knows about. Closing that gap means
+ * knowing what else CelesTrak serves without an account, and the sandbox this
+ * was written in cannot reach celestrak.org at all — so the question can only
+ * be answered from a deployed server.
+ *
+ * The candidate list is hardcoded. No part of it comes from the request, so
+ * this cannot be pointed at an arbitrary host.
+ *
+ * Delete once the answer is known.
+ */
+app.get("/api/debris/probe", async (_req, res) => {
+  const candidates = [
+    ["group: active", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"],
+    ["group: analyst", "https://celestrak.org/NORAD/elements/gp.php?GROUP=analyst&FORMAT=tle"],
+    ["group: cosmos-1408-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-1408-debris&FORMAT=tle"],
+    ["group: 1999-025 (fengyun intl des)", "https://celestrak.org/NORAD/elements/gp.php?INTDES=1999-025&FORMAT=tle"],
+    ["full catalog.txt", "https://celestrak.org/pub/TLE/catalog.txt"],
+    ["full catalog.php", "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full&FORMAT=tle"],
+    ["group: last-30-days", "https://celestrak.org/NORAD/elements/gp.php?GROUP=last-30-days&FORMAT=tle"],
+    ["group: debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=debris&FORMAT=tle"],
+    ["group: cosmos-2251-debris", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle"],
+  ] as const;
+
+  const results = await Promise.all(
+    candidates.map(async ([label, url]) => {
+      try {
+        const r = await fetch(url, { headers: { "user-agent": "lookup/1.0" } });
+        const text = await r.text();
+        const objects = r.ok ? parseTle(text).length : 0;
+        return { label, status: r.status, objects, sample: text.slice(0, 60).replace(/\s+/g, " ") };
+      } catch (err) {
+        return { label, status: 0, objects: 0, error: err instanceof Error ? err.message : "failed" };
+      }
+    })
+  );
+  res.json({ results });
 });
 
 /**
