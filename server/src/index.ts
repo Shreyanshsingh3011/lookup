@@ -5,7 +5,6 @@ import {
   fetchSatelliteByCatnr,
   getTleGroup,
   MIN_SEARCH_LENGTH,
-  parseTle,
   SATELLITE_GROUPS,
   SEARCH_RESULT_LIMIT,
   searchSatellitesByName,
@@ -242,7 +241,7 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
  * groups cost four upstream requests at most once per cache period.
  */
 app.get("/api/debris/field", async (_req, res) => {
-  const cloudResults = await Promise.all(
+  const results = await Promise.all(
     DEBRIS_CLOUDS.map(async (cloud) => {
       try {
         const { tles, source } = await getTleGroup(cloud.celestrakGroup);
@@ -260,42 +259,18 @@ app.get("/api/debris/field", async (_req, res) => {
     })
   );
 
-  // The rest of the non-active catalogue, from the one bulk file CelesTrak
-  // serves without an account.
+  // No bulk source beyond these.
   //
-  // Its group is called "active", which is not what it holds: 16,103 objects
-  // whose very first entry is Calsphere 1, a passive calibration sphere from
-  // 1964. It is closer to "everything CelesTrak tracks that is not fragment
-  // debris" — thousands of spent stages among the working satellites. Those
-  // stages are exactly what the field was missing, so they are taken by
-  // classification rather than by trusting the group's name, and the working
-  // payloads are left out.
-  let derelicts: TleRecord[] = [];
-  let activeSource = "unavailable";
-  let activeTotal = 0;
-  try {
-    const { tles, source } = await getTleGroup("active");
-    activeTotal = tles.length;
-    activeSource = source;
-    derelicts = tles.filter((t) => {
-      const type = classify(t.name).type;
-      return type === "ROCKET BODY" || type === "DEBRIS";
-    });
-  } catch {
-    activeSource = "unavailable";
-  }
-
-  const results = [
-    ...cloudResults,
-    {
-      id: "non-active",
-      label: "Spent stages and other debris",
-      count: derelicts.length,
-      source: activeSource,
-      tles: derelicts,
-    },
-  ];
-
+  // CelesTrak's largest unauthenticated file, GROUP=active, looked like the
+  // answer at 16,103 objects — but it is active payloads, and classifying it
+  // turned up five genuine rocket bodies in the whole file. Fetching sixteen
+  // thousand objects for five is not a trade worth making, so it is not
+  // fetched. Measured 2026-08-06; the probe that measured it is in the history.
+  //
+  // There is no full-catalogue download either: pub/TLE/catalog.txt is 403,
+  // SPECIAL=full is 404, and GROUP=debris is not a group. The roughly ten
+  // thousand fragments that are not from these four events are only available
+  // from Space-Track, with an account.
   // Deduplicated across groups. The clouds are disjoint by construction, but a
   // parent body catalogued in two of them would otherwise be propagated twice.
   const seen = new Set<string>();

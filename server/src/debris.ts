@@ -45,7 +45,7 @@ export type ObjectType = "PAYLOAD" | "ROCKET BODY" | "DEBRIS" | "UNKNOWN";
  * payload never announces itself. See the catalogue layer for the other half.
  */
 export const ROCKET_BODY_NAME =
-  /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|CENTAUR|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
+  /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|\bCENTAUR\b|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
 export const DEBRIS_NAME = /\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/;
 
 export type ClassificationSource = "field" | "name";

@@ -227,18 +227,6 @@ export const TLE_GROUPS: Record<string, string> = {
   "cosmos-2251-debris": "cosmos-2251-debris",
   "iridium-33-debris": "iridium-33-debris",
   "cosmos-1408-debris": "cosmos-1408-debris",
-  /**
-   * The largest file CelesTrak serves without an account: 16,103 objects,
-   * measured 2026-08-06.
-   *
-   * Named "active", which it is not. Its first entry is Calsphere 1, a passive
-   * 1964 calibration sphere, and thousands of spent rocket stages sit among the
-   * working satellites. It is fetched here for the derelicts inside it, which
-   * are taken by classification rather than by trusting the name — and it is
-   * kept out of SATELLITE_GROUPS deliberately, because it is not a sensible
-   * choice in a picker that decides which satellites to track.
-   */
-  active: "active",
 };
 
 const cache = new Map<string, CacheEntry>();

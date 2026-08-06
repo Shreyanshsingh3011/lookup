@@ -35756,19 +35756,7 @@ var TLE_GROUPS = {
   "fengyun-1c-debris": "fengyun-1c-debris",
   "cosmos-2251-debris": "cosmos-2251-debris",
   "iridium-33-debris": "iridium-33-debris",
-  "cosmos-1408-debris": "cosmos-1408-debris",
-  /**
-   * The largest file CelesTrak serves without an account: 16,103 objects,
-   * measured 2026-08-06.
-   *
-   * Named "active", which it is not. Its first entry is Calsphere 1, a passive
-   * 1964 calibration sphere, and thousands of spent rocket stages sit among the
-   * working satellites. It is fetched here for the derelicts inside it, which
-   * are taken by classification rather than by trusting the name — and it is
-   * kept out of SATELLITE_GROUPS deliberately, because it is not a sensible
-   * choice in a picker that decides which satellites to track.
-   */
-  active: "active"
+  "cosmos-1408-debris": "cosmos-1408-debris"
 };
 var cache = /* @__PURE__ */ new Map();
 var inFlight = /* @__PURE__ */ new Map();
@@ -41903,7 +41891,7 @@ var GravSimEndpoint = class {
 };
 
 // src/debris.ts
-var ROCKET_BODY_NAME = /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|CENTAUR|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
+var ROCKET_BODY_NAME = /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|\bCENTAUR\b|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
 var DEBRIS_NAME = /\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/;
 function classify(name, objectType) {
   const declared = normaliseObjectType(objectType);
@@ -43813,7 +43801,7 @@ app.get("/api/debris/cloud/:id", async (req, res) => {
   }
 });
 app.get("/api/debris/field", async (_req, res) => {
-  const cloudResults = await Promise.all(
+  const results = await Promise.all(
     DEBRIS_CLOUDS.map(async (cloud) => {
       try {
         const { tles: tles2, source } = await getTleGroup(cloud.celestrakGroup);
@@ -43830,30 +43818,6 @@ app.get("/api/debris/field", async (_req, res) => {
       }
     })
   );
-  let derelicts = [];
-  let activeSource = "unavailable";
-  let activeTotal = 0;
-  try {
-    const { tles: tles2, source } = await getTleGroup("active");
-    activeTotal = tles2.length;
-    activeSource = source;
-    derelicts = tles2.filter((t) => {
-      const type = classify(t.name).type;
-      return type === "ROCKET BODY" || type === "DEBRIS";
-    });
-  } catch {
-    activeSource = "unavailable";
-  }
-  const results = [
-    ...cloudResults,
-    {
-      id: "non-active",
-      label: "Spent stages and other debris",
-      count: derelicts.length,
-      source: activeSource,
-      tles: derelicts
-    }
-  ];
   const seen = /* @__PURE__ */ new Set();
   const tles = [];
   for (const r of results) {

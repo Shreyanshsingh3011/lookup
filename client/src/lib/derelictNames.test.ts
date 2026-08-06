@@ -111,3 +111,26 @@ test('the widened pattern still does not swallow working spacecraft', () => {
     assert.equal(isDerelictByName(name), false, name);
   }
 });
+
+/**
+ * A working satellite whose name merely starts the same way as an upper stage.
+ *
+ * CENTAUR was unanchored in ROCKET_BODY_NAME, so CENTAURI-1 — a Fleet Space
+ * payload, alive and operating — matched as a spent Centaur stage. Found by
+ * classifying CelesTrak's 16,103-object bulk file and reading what came back:
+ * five of the ten "rocket bodies" it produced were CENTAURI satellites.
+ *
+ * This is the failure mode the whole layer is built to avoid, running in the
+ * opposite direction: not a derelict drawn as alive, but a live satellite
+ * declared dead and drawn in the colour reserved for junk.
+ */
+test('a satellite is not a rocket body because its name begins like one', () => {
+  for (const alive of ['CENTAURI-1', 'CENTAURI-6', 'CENTAURI-9', 'CENTAURUS']) {
+    assert.equal(isDerelictByName(alive), false, `${alive} is a working payload`);
+  }
+
+  // The stages the pattern is actually for still match.
+  for (const stage of ['ATLAS CENTAUR 2', 'ATLAS CENTAUR R/B', 'CENTAUR']) {
+    assert.equal(isDerelictByName(stage), true, `${stage} is a spent stage`);
+  }
+});

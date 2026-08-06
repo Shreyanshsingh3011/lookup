@@ -351,7 +351,7 @@ export function nextDerelictRise(
  * derelict shortlist, and rendered active in a browser.
  */
 export const ROCKET_BODY_NAME =
-  /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|CENTAUR|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
+  /R\/B|ROCKET BODY|\bAKM\b|\bPKM\b|\bCENTAUR\b|\bBREEZE\b|\bBRIZ\b|\bFREGAT\b|TRANSTAGE|\bAGENA\b|\bABLESTAR\b/;
 export const DEBRIS_NAME = /\bDEB\b|DEBRIS|\bFRAG\b|\bCOOLANT\b|\bSHROUD\b|\bWESTFORD NEEDLES\b/;
 
 export function isDerelictByName(name: string): boolean {
