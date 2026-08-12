@@ -242,15 +242,30 @@ Four layers had never been verified against anything outside the app. Audited
   `360 - compassHeading` conversion; twelve existing tests cover the hand-checked
   cases.
 
-That audit found one real gap, which is now measured rather than unknown.
-`screenRollFrom` reports how far the handset is rolled about the direction it
-points — zero in portrait, ninety in landscape — and **the rendered view does not
-apply it**. The camera is aimed through OrbitControls, which pins its up vector
-to world up, so the dome points correctly at any attitude while the rotation of
-the sky on screen is only right in portrait. Held sideways, the constellations
-appear turned by up to 90° from what is actually behind the phone. Fixing it
-means driving the camera's orientation directly instead of through the controls'
-spherical angles.
+That audit found one real gap, since fixed: the rendered view ignored roll. The
+camera was aimed through OrbitControls, which parameterises it by azimuth and
+polar angle about a fixed world up — so there was nowhere in that description to
+put a rotation about the view axis. The dome pointed correctly at any attitude
+while the sky's rotation on screen was only right in portrait; held sideways, the
+constellations came out turned by up to 90° from what was actually behind the
+handset.
+
+`lookDirectionFrom` now reports `rollDeg` alongside azimuth and elevation, eased
+through the same wrap-aware smoothing so it cannot spin the sky at the ±180°
+seam, and `OrientationCamera` drives the camera directly rather than through the
+controls. Two details that are easy to get wrong and are therefore pinned by
+tests: the up vector is rebuilt from the three smoothed angles rather than
+carried as a vector — a vector cannot be eased between samples without drifting
+off the unit sphere — and that reconstruction is checked against the rotation
+matrix's own second column across ~1,900 attitudes, agreeing to better than
+0.001°. The camera write happens in a frame callback rather than an effect,
+because drei's OrbitControls calls `update()` every frame at priority −1 and
+would otherwise overwrite it.
+
+Verified in a browser with synthesised `DeviceOrientationEvent`s: portrait leaves
+the camera's up as world up, and the two landscape holds tilt it 90° to east and
+west respectively — opposite signs, so the sky rolls the correct way rather than
+mirrored — with the pointing direction identical in all three.
 
 ### Planets
 

@@ -112,6 +112,10 @@ export function useDeviceOrientation(): DeviceOrientationControl {
             azimuthDeg: smoothAngle(previous.azimuthDeg, raw.azimuthDeg, SMOOTHING),
             elevationDeg:
               previous.elevationDeg + (raw.elevationDeg - previous.elevationDeg) * SMOOTHING,
+            // Eased the same way azimuth is, and for the same reason: roll wraps,
+            // so a plain lerp would take the long way round at the +-180 seam
+            // and spin the sky when the phone passes upside down.
+            rollDeg: smoothAngle(previous.rollDeg, raw.rollDeg, SMOOTHING),
           }
         : raw;
 

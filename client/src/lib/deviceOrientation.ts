@@ -50,6 +50,16 @@ export interface LookDirection {
   azimuthDeg: number;
   /** Degrees above the horizon; negative means pointing at the ground. */
   elevationDeg: number;
+  /**
+   * How far the handset is rolled about the direction it points, degrees.
+   *
+   * Zero is the top of the screen as near straight up as this pointing allows;
+   * positive is clockwise from the viewer's side. Carried alongside azimuth and
+   * elevation because the rendered view needs all three to match reality — with
+   * only the first two, the sky is correct in portrait and turned by up to
+   * ninety degrees in landscape.
+   */
+  rollDeg: number;
 }
 
 /**
@@ -89,7 +99,68 @@ export function lookDirectionFrom(sample: OrientationSample): LookDirection {
   return {
     azimuthDeg,
     elevationDeg: Math.atan2(vz, Math.hypot(vx, vy)) / DEG,
+    rollDeg: screenRollFrom(sample),
   };
+}
+
+/**
+ * The device's screen-up axis in the east/north/up world frame.
+ *
+ * Straight out of the rotation matrix's second column, so it involves no sign
+ * convention to get wrong. Used to check that the reconstruction below agrees
+ * with the matrix rather than merely looking plausible.
+ */
+export function deviceUpFrom(sample: OrientationSample): [number, number, number] {
+  const alphaDeg = sample.compassHeading != null ? 360 - sample.compassHeading : sample.alpha;
+  const a = alphaDeg * DEG;
+  const b = sample.beta * DEG;
+  const cA = Math.cos(a), sA = Math.sin(a);
+  const cB = Math.cos(b), sB = Math.sin(b);
+  return [-sA * cB, cA * cB, sB];
+}
+
+/**
+ * Screen-up rebuilt from azimuth, elevation and roll.
+ *
+ * The camera needs an up vector, and the three angles are what survive
+ * smoothing — a vector cannot be eased between samples without drifting off the
+ * unit sphere, while an angle can. So the vector is reconstructed here from the
+ * smoothed angles, in the east/north/up frame, and `deviceUpFrom` above is the
+ * reference a test compares it against across a grid of attitudes.
+ */
+export function upFromRoll(
+  azimuthDeg: number,
+  elevationDeg: number,
+  rollDeg: number
+): [number, number, number] {
+  const az = azimuthDeg * DEG;
+  const el = elevationDeg * DEG;
+  const roll = rollDeg * DEG;
+
+  // Where the camera looks, in east/north/up.
+  const fx = Math.sin(az) * Math.cos(el);
+  const fy = Math.cos(az) * Math.cos(el);
+  const fz = Math.sin(el);
+
+  // World up with the along-view component removed: the zero-roll reference.
+  let rx = -fx * fz;
+  let ry = -fy * fz;
+  let rz = 1 - fz * fz;
+  const rl = Math.hypot(rx, ry, rz);
+  if (rl < 1e-9) {
+    // Straight up or down: no reference exists, so any consistent choice will
+    // do. North keeps the view from snapping as the phone passes the zenith.
+    return [0, 1, 0];
+  }
+  rx /= rl; ry /= rl; rz /= rl;
+
+  // f x r completes the right-handed pair, giving the axis roll sweeps toward.
+  const sx = fy * rz - fz * ry;
+  const sy = fz * rx - fx * rz;
+  const sz = fx * ry - fy * rx;
+
+  const c = Math.cos(roll), sn = Math.sin(roll);
+  return [rx * c + sx * sn, ry * c + sy * sn, rz * c + sz * sn];
 }
 
 /**
