@@ -146,6 +146,23 @@ const FIELD_OPACITY = 0.9;
 export const FIELD_TICK_MS = 250;
 
 /**
+ * How many objects are propagated per frame.
+ *
+ * Propagating the whole catalogue in one frame is what the tick used to do, and
+ * measured at twelve and a half thousand objects that is 42 ms — two or three
+ * dropped frames every quarter second, and 97% of it SGP4 rather than anything
+ * that could be optimised away. Matrix composition and the readout arrays
+ * together account for under 2 ms, so the only useful lever is when the work
+ * happens rather than how much there is.
+ *
+ * So a tick starts a sweep and each frame advances it by this many objects. At
+ * twelve and a half thousand that is eight frames of about 5 ms, which no longer
+ * shows as a hitch. Smaller catalogues finish in one or two frames and behave
+ * exactly as before.
+ */
+const PER_FRAME = 1_600;
+
+/**
  * How much of the field becomes individually identified when you zoom in.
  *
  * A cone around the boresight, with a hard cap. Each promoted object becomes a
@@ -214,8 +231,11 @@ export function DebrisField({
   // One allocation per catalogue size, reused for the field's whole lifetime.
   const buffer = useMemo(() => new Float32Array(parsed.recs.length * 3), [parsed.recs.length]);
   const visibleIds = useRef<string[]>([]);
-  /** Parallel to visibleIds: what the tooltip needs, without a second lookup. */
-  const visibleInfo = useRef<Array<{ name: string; satnum: string; az: number; el: number; km: number }>>([]);
+  /**
+   * Parallel to visibleIds: everything a readout needs, position included, so
+   * hovering or tapping costs a lookup rather than a second computation.
+   */
+  const visibleInfo = useRef<FragmentReadout[]>([]);
 
   /**
    * A fixed random orientation and shard proportions per fragment.
@@ -356,10 +376,7 @@ export function DebrisField({
     if (!satnum) return null;
     const at = visibleIds.current.indexOf(satnum);
     if (at === -1) return null;
-    return {
-      ...visibleInfo.current[at],
-      at: [buffer[at * 3], buffer[at * 3 + 1], buffer[at * 3 + 2]],
-    };
+    return visibleInfo.current[at];
   };
   const promotedKey = useRef('');
 
@@ -367,84 +384,122 @@ export function DebrisField({
   const scratchMatrix = useMemo(() => new THREE.Matrix4(), []);
   const scratchPos = useMemo(() => new THREE.Vector3(), []);
 
+  /**
+   * A sweep in progress: the instant being propagated for, and how far through.
+   *
+   * The sweep writes into scratch storage rather than into the live buffers,
+   * because a half-updated field must never be drawn. Compaction is the reason:
+   * visible objects are packed to the front, so which slot an object occupies
+   * depends on how many before it were above the horizon — mixing slots from two
+   * different instants would not be slightly stale, it would put fragments at
+   * each other's positions. The scratch snapshot is swapped in whole, once
+   * complete, so what is on screen is always one coherent instant.
+   */
+  const sweep = useRef<{ when: Date; index: number; n: number } | null>(null);
+  const scratchPositions = useMemo(() => new Float32Array(parsed.recs.length * 3), [parsed.recs.length]);
+  const scratchMatrices = useMemo(() => new Float32Array(parsed.recs.length * 16), [parsed.recs.length]);
+  const scratchIds = useRef<string[]>([]);
+  const scratchInfo = useRef<FragmentReadout[]>([]);
+
   useFrame(() => {
     if (parsed.recs.length === 0 || !mesh.current) return;
     const tick = Math.floor(timeRef.current.getTime() / FIELD_TICK_MS);
 
-    // Promotion tracks the camera, so it is checked every frame while zoomed in
-    // even when positions have not moved. It is a dot product per visible
-    // object against a list that is already in hand.
-    if (tick === lastTick.current) {
-      if (!labelled) {
-        if (promotedKey.current !== '') {
-          promotedKey.current = '';
-          onPromotedChange([]);
-        }
-        return;
+    // A sweep already running takes precedence over starting another. At low
+    // frame rates a sweep can outlast its tick; finishing it and picking up the
+    // then-current time self-throttles instead of restarting forever.
+    if (!sweep.current && tick !== lastTick.current) {
+      lastTick.current = tick;
+      sweep.current = { when: new Date(tick * FIELD_TICK_MS), index: 0, n: 0 };
+      scratchIds.current = [];
+      scratchInfo.current = [];
+    }
+
+    if (sweep.current) {
+      const { when } = sweep.current;
+      const end = Math.min(sweep.current.index + PER_FRAME, parsed.recs.length);
+      let n = sweep.current.n;
+
+      for (let i = sweep.current.index; i < end; i++) {
+        const sample = skySampleAt(parsed.recs[i], observerGd, when);
+        if (!sample || sample.elevationDeg < 0) continue;
+        const [x, y, z] = azElToVec3(sample.azimuthDeg, sample.elevationDeg);
+        // Positions are kept flat alongside the matrices: boresight promotion
+        // and tap selection both scan them, and a dot product over a plain array
+        // beats decomposing a matrix per candidate.
+        scratchPositions[n * 3] = x;
+        scratchPositions[n * 3 + 1] = y;
+        scratchPositions[n * 3 + 2] = z;
+        scratchPos.set(x, y, z);
+        scratchMatrix.compose(scratchPos, attitudes.q[i], attitudes.scales[i]);
+        scratchMatrix.toArray(scratchMatrices, n * 16);
+        scratchIds.current.push(parsed.ids[i]);
+        scratchInfo.current.push({
+          name: parsed.names[i],
+          satnum: parsed.ids[i],
+          az: sample.azimuthDeg,
+          el: sample.elevationDeg,
+          km: sample.rangeKm,
+          at: [x, y, z],
+        });
+        n++;
       }
-      camera.getWorldDirection(boresight.current);
-      const near = nearestToBoresight(buffer, drawn.current, visibleIds.current, boresight.current, PROMOTE_CONE_DEG, MAX_PROMOTED);
-      const key = near.join(',');
-      if (key !== promotedKey.current) {
-        promotedKey.current = key;
-        onPromotedChange(near);
+
+      sweep.current.index = end;
+      sweep.current.n = n;
+
+      if (end >= parsed.recs.length) {
+        // Complete: publish the whole snapshot at once.
+        buffer.set(scratchPositions.subarray(0, n * 3));
+        (mesh.current.instanceMatrix.array as Float32Array).set(scratchMatrices.subarray(0, n * 16));
+        mesh.current.count = n;
+        mesh.current.instanceMatrix.needsUpdate = true;
+
+        visibleIds.current = scratchIds.current;
+        visibleInfo.current = scratchInfo.current;
+        drawn.current = n;
+        sweep.current = null;
+
+        // Keep a selected fragment's readout current, and drop it once the
+        // object sets rather than leaving a label pinned to empty sky.
+        const pinned = selectedRef.current;
+        if (pinned) {
+          const at = visibleIds.current.indexOf(pinned);
+          select(at === -1 ? null : { ...visibleInfo.current[at] });
+        }
+
+        // Only this crosses into React, and only when it moves.
+        if (n !== reportedCount.current) {
+          reportedCount.current = n;
+          onCountChange(n, parsed.recs.length);
+        }
       }
       return;
     }
-    lastTick.current = tick;
 
-    const when = new Date(tick * FIELD_TICK_MS);
-    const ids: string[] = [];
-    const info: Array<{ name: string; satnum: string; az: number; el: number; km: number }> = [];
-    let n = 0;
-    for (let i = 0; i < parsed.recs.length; i++) {
-      const sample = skySampleAt(parsed.recs[i], observerGd, when);
-      if (!sample || sample.elevationDeg < 0) continue;
-      const [x, y, z] = azElToVec3(sample.azimuthDeg, sample.elevationDeg);
-      // Kept alongside the instance matrices: boresight promotion reads raw
-      // positions, and a dot product over a flat array beats decomposing
-      // matrices for every object in the cone.
-      buffer[n * 3] = x;
-      buffer[n * 3 + 1] = y;
-      buffer[n * 3 + 2] = z;
-      scratchPos.set(x, y, z);
-      scratchMatrix.compose(scratchPos, attitudes.q[i], attitudes.scales[i]);
-      mesh.current.setMatrixAt(n, scratchMatrix);
-      ids.push(parsed.ids[i]);
-      info.push({
-        name: parsed.names[i],
-        satnum: parsed.ids[i],
-        az: sample.azimuthDeg,
-        el: sample.elevationDeg,
-        km: sample.rangeKm,
-      });
-      n++;
-    }
-    visibleIds.current = ids;
-    visibleInfo.current = info;
-    drawn.current = n;
-
-    // Keep a selected fragment's readout current, and drop it once the object
-    // sets rather than leaving a label pinned to an empty patch of sky.
-    const pinned = selectedRef.current;
-    if (pinned) {
-      const at = ids.indexOf(pinned);
-      if (at === -1) {
-        select(null);
-      } else {
-        select({
-          ...info[at],
-          at: [buffer[at * 3], buffer[at * 3 + 1], buffer[at * 3 + 2]],
-        });
+    // Between sweeps: promotion still tracks the camera, since it depends on
+    // where the view points rather than on anything having moved. A dot product
+    // per visible object against a list already in hand.
+    if (!labelled) {
+      if (promotedKey.current !== '') {
+        promotedKey.current = '';
+        onPromotedChange([]);
       }
+      return;
     }
-    mesh.current.count = n;
-    mesh.current.instanceMatrix.needsUpdate = true;
-
-    // Only this crosses into React, and only when it moves.
-    if (n !== reportedCount.current) {
-      reportedCount.current = n;
-      onCountChange(n, parsed.recs.length);
+    camera.getWorldDirection(boresight.current);
+    const near = nearestToBoresight(
+      buffer,
+      drawn.current,
+      visibleIds.current,
+      boresight.current,
+      PROMOTE_CONE_DEG,
+      MAX_PROMOTED
+    );
+    const key = near.join(',');
+    if (key !== promotedKey.current) {
+      promotedKey.current = key;
+      onPromotedChange(near);
     }
   });
 
@@ -471,10 +526,7 @@ export function DebrisField({
           const info = visibleInfo.current[id];
           if (!info) return;
           if (hover?.satnum === info.satnum) return;
-          setHover({
-            ...info,
-            at: [buffer[id * 3], buffer[id * 3 + 1], buffer[id * 3 + 2]],
-          });
+          setHover(info);
         }}
         onPointerOut={() => setHover(null)}
         onPointerDown={(e) => {
@@ -507,10 +559,7 @@ export function DebrisField({
             select(null);
             return;
           }
-          select({
-            ...info,
-            at: [buffer[id * 3], buffer[id * 3 + 1], buffer[id * 3 + 2]],
-          });
+          select(info);
         }}
         onPointerMissed={(e) => {
           // A near miss is still a choice. Only a tap on genuinely empty sky
