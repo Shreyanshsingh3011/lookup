@@ -103,6 +103,43 @@ const SHARD_MAX = 1.55;
  */
 const RCS_SCALE: Record<string, number> = { SMALL: 0.7, MEDIUM: 1, LARGE: 1.45 };
 
+/**
+ * What counts as a tap rather than the start of a pan.
+ *
+ * Generous on distance because a finger on glass moves several pixels even when
+ * its owner means to hold still, and tight on time because a slow press is more
+ * likely someone beginning to drag the sky.
+ */
+const TAP_SLOP_PX = 10;
+const TAP_MAX_MS = 500;
+
+/**
+ * How far off a tap may be and still count.
+ *
+ * A fragment is about seven pixels across and crosses several pixels a second,
+ * so an exact hit is genuinely hard — measured while testing this, a mouse click
+ * aimed from a position read one round trip earlier missed roughly half the
+ * time, and a fingertip is far blunter than a mouse. Requiring the ray to
+ * intersect the geometry would make the readout technically present and
+ * practically unreachable.
+ *
+ * So a tap that hits nothing looks for the nearest fragment within this angle of
+ * where it pointed. At the default field of view it is around twenty pixels.
+ * Reuses the boresight search the zoom promotion already relies on, which is a
+ * dot product per visible object.
+ */
+const TAP_TOLERANCE_DEG = 1.5;
+
+/** What the readout shows, and where to anchor it. */
+interface FragmentReadout {
+  name: string;
+  satnum: string;
+  az: number;
+  el: number;
+  km: number;
+  at: [number, number, number];
+}
+
 const FIELD_OPACITY = 0.9;
 
 /** Propagation interval for the bulk field, in milliseconds. */
@@ -241,17 +278,89 @@ export function DebrisField({
    * changes only when the pointer moves onto a different fragment, not per
    * frame — the propagation loop above still touches no state at all.
    */
-  const [hover, setHover] = useState<{
-    name: string;
-    satnum: string;
-    az: number;
-    el: number;
-    km: number;
-    at: [number, number, number];
-  } | null>(null);
+  const [hover, setHover] = useState<FragmentReadout | null>(null);
+
+  /**
+   * A fragment picked deliberately, which stays picked.
+   *
+   * Hover is a mouse idea. This app's whole point is standing outside with a
+   * phone, where there is no hover at all — so on touch the field was drawing
+   * two thousand objects that could not be identified by any gesture. A tap
+   * selects, and the selection survives until it is dismissed, which is also
+   * more useful with a mouse than a label that vanishes when you look away
+   * from it.
+   *
+   * Stored as a catalogue number rather than a snapshot, because the object
+   * keeps moving: the readout is refreshed from the propagation loop below so
+   * the label tracks its fragment instead of detaching from it.
+   */
+  const [selected, setSelected] = useState<FragmentReadout | null>(null);
+
+  /**
+   * Which fragment is selected, as the frame loop sees it.
+   *
+   * Deliberately not a render-time mirror of the state. It was, and that was a
+   * bug with teeth: clearing the selection set state, but useFrame could run
+   * before React committed the re-render, read the stale ref, and put the
+   * readout straight back. The label then outlived every attempt to dismiss it,
+   * because state said gone and the ref said otherwise.
+   *
+   * So the ref is written at the same instant as the state, imperatively, and
+   * the loop trusts only the ref.
+   */
+  const selectedRef = useRef<string | null>(null);
+  const select = (readout: FragmentReadout | null) => {
+    selectedRef.current = readout?.satnum ?? null;
+    setSelected(readout);
+  };
+
+  /**
+   * Tap versus drag.
+   *
+   * A drag across the sky rotates the view, and on a touch screen it also
+   * passes over fragments — so "pointer went down and came up on this object"
+   * is not enough to mean the object was chosen. Movement and duration are
+   * checked so panning the sky does not select whatever happened to be under
+   * the finger.
+   */
+  const press = useRef<{ x: number; y: number; at: number; id: number } | null>(null);
 
   const camera = useThree((s) => s.camera);
+  const canvas = useThree((s) => s.gl.domElement);
   const boresight = useRef(new THREE.Vector3());
+  const tapDir = useRef(new THREE.Vector3());
+
+  /**
+   * The fragment nearest to where a tap pointed, if one is close enough.
+   *
+   * Unprojects the tap into a world direction and reuses nearestToBoresight,
+   * which reads the same position buffer the frame loop just wrote.
+   */
+  const nearestFragment = (clientX: number, clientY: number): FragmentReadout | null => {
+    if (drawn.current === 0) return null;
+    const rect = canvas.getBoundingClientRect();
+    tapDir.current
+      .set(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1), 0.5)
+      .unproject(camera)
+      .sub(camera.position)
+      .normalize();
+
+    const [satnum] = nearestToBoresight(
+      buffer,
+      drawn.current,
+      visibleIds.current,
+      tapDir.current,
+      TAP_TOLERANCE_DEG,
+      1
+    );
+    if (!satnum) return null;
+    const at = visibleIds.current.indexOf(satnum);
+    if (at === -1) return null;
+    return {
+      ...visibleInfo.current[at],
+      at: [buffer[at * 3], buffer[at * 3 + 1], buffer[at * 3 + 2]],
+    };
+  };
   const promotedKey = useRef('');
 
   // Scratch objects, reused every tick so the loop allocates nothing.
@@ -314,6 +423,21 @@ export function DebrisField({
     visibleIds.current = ids;
     visibleInfo.current = info;
     drawn.current = n;
+
+    // Keep a selected fragment's readout current, and drop it once the object
+    // sets rather than leaving a label pinned to an empty patch of sky.
+    const pinned = selectedRef.current;
+    if (pinned) {
+      const at = ids.indexOf(pinned);
+      if (at === -1) {
+        select(null);
+      } else {
+        select({
+          ...info[at],
+          at: [buffer[at * 3], buffer[at * 3 + 1], buffer[at * 3 + 2]],
+        });
+      }
+    }
     mesh.current.count = n;
     mesh.current.instanceMatrix.needsUpdate = true;
 
@@ -336,6 +460,10 @@ export function DebrisField({
         args={[undefined, undefined, parsed.recs.length]}
         frustumCulled={false}
         onPointerMove={(e) => {
+          // Hover is for pointers that can hover. On touch every move is part
+          // of a drag, and following it would flash labels across the sky
+          // while someone is only trying to pan.
+          if (e.pointerType === 'touch') return;
           const id = e.instanceId;
           if (id === undefined || id >= drawn.current) return;
           // Only the nearest hit matters, and only this object's.
@@ -349,6 +477,47 @@ export function DebrisField({
           });
         }}
         onPointerOut={() => setHover(null)}
+        onPointerDown={(e) => {
+          const id = e.instanceId;
+          if (id === undefined || id >= drawn.current) return;
+          press.current = { x: e.clientX, y: e.clientY, at: Date.now(), id };
+        }}
+        // onClick rather than onPointerUp: the camera controls take a pointer
+        // capture on drag, and a raw pointerup does not reliably reach this
+        // object through it — which is why a real tap selected nothing while a
+        // synthetic pointerup appeared to work. R3F resolves the capture itself
+        // and only calls this when the press and release hit the same object.
+        onClick={(e) => {
+          const start = press.current;
+          press.current = null;
+          const id = e.instanceId;
+          if (id === undefined || id >= drawn.current) return;
+          // Still guard against a drag that happens to end where it began.
+          if (start) {
+            const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+            if (moved > TAP_SLOP_PX || Date.now() - start.at > TAP_MAX_MS) return;
+          }
+
+          e.stopPropagation();
+          const info = visibleInfo.current[id];
+          if (!info) return;
+          // Tapping the same fragment again puts it away, so a selection can be
+          // dismissed without hunting for empty sky.
+          if (selectedRef.current === info.satnum) {
+            select(null);
+            return;
+          }
+          select({
+            ...info,
+            at: [buffer[id * 3], buffer[id * 3 + 1], buffer[id * 3 + 2]],
+          });
+        }}
+        onPointerMissed={(e) => {
+          // A near miss is still a choice. Only a tap on genuinely empty sky
+          // dismisses.
+          const near = nearestFragment(e.clientX, e.clientY);
+          select(near);
+        }}
       >
         <octahedronGeometry args={[FRAGMENT_RADIUS, 0]} />
         <meshLambertMaterial
@@ -360,22 +529,34 @@ export function DebrisField({
         />
       </instancedMesh>
 
-      {hover && (
-        <FrontFacingHtml position={hover.at} offsetYPx={-14} zIndexRange={[40, 0]}>
-          <div className="pointer-events-none whitespace-nowrap rounded-md border border-[#8b7fd4]/40 bg-space-900/95 px-2 py-1.5 text-[11px] leading-tight shadow-lg">
+      {(selected ?? hover) && (
+        <FrontFacingHtml
+          position={(selected ?? hover)!.at}
+          offsetYPx={selected ? -22 : -14}
+          zIndexRange={[40, 0]}
+        >
+          <div
+            className={`pointer-events-none whitespace-nowrap rounded-md border bg-space-900/95 px-2 py-1.5 text-[11px] leading-tight shadow-lg ${
+              selected ? 'border-[#8b7fd4]/80' : 'border-[#8b7fd4]/40'
+            }`}
+          >
             <div className="font-semibold" style={{ color: FIELD_COLOR }}>
-              {hover.name}
+              {(selected ?? hover)!.name}
             </div>
             <div className="text-space-300 font-mono text-[10px] mt-0.5">
-              #{hover.satnum} · el {hover.el.toFixed(1)}° · az {hover.az.toFixed(1)}°
+              #{(selected ?? hover)!.satnum} · el {(selected ?? hover)!.el.toFixed(1)}° · az{' '}
+              {(selected ?? hover)!.az.toFixed(1)}°
             </div>
             <div className="text-space-300 font-mono text-[10px]">
-              {Math.round(hover.km).toLocaleString()} km away
+              {Math.round((selected ?? hover)!.km).toLocaleString()} km away
             </div>
-            {/* The one thing a tooltip on a plotted object has to say, or it
+            {/* The one thing a readout on a plotted object has to say, or it
                 reads as an observing target. */}
             <div className="text-space-400 text-[10px] mt-1 max-w-[15rem] whitespace-normal">
-              Catalogued debris — far too faint to see. Zoom in to pick it out with a full label.
+              Catalogued debris — far too faint to see.{' '}
+              {selected
+                ? 'Tap it again, or anywhere else, to dismiss.'
+                : 'Zoom in to pick it out with a full label.'}
             </div>
           </div>
         </FrontFacingHtml>
