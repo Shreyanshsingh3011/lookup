@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import * as satellite from 'satellite.js';
 import { altitudeBandsOverlap, findCloseApproaches } from './conjunctions';
 import { orbitalElementsFromTle } from './decay';
+import { parseSatrec } from './sky';
 import type { TleRecord } from '../types';
 
 const ISS: TleRecord = {
@@ -83,4 +85,125 @@ test('findCloseApproaches respects a tighter threshold', () => {
   const impossible = findCloseApproaches([ISS, ISS_CLONE], EPOCH, { windowHours: 1, thresholdKm: -1 });
   assert.equal(generous.length, 1);
   assert.equal(impossible.length, 0);
+});
+
+/**
+ * Four real Fengyun-1C fragments, from CelesTrak's public element sets. The
+ * synthetic pairs above are useful for the plumbing but useless for checking the
+ * sampling: an identical orbit is close at every instant, so any step size finds
+ * it. Only a real, brief encounter distinguishes a scan that resolves approaches
+ * from one that steps over them, and these four are the pairs the sampling
+ * rewrite was measured against.
+ */
+const FY_30494: TleRecord = {
+  name: 'FENGYUN 1C DEB',
+  satnum: '30494',
+  line1: '1 30494U 99025AHG 26217.33575883  .00000669  00000+0  60469-3 0  9993',
+  line2: '2 30494  99.2623 252.9563 0184374 318.2112  40.5084 13.80017283977355',
+};
+const FY_36216: TleRecord = {
+  name: 'FENGYUN 1C DEB',
+  satnum: '36216',
+  line1: '1 36216U 99025DUR 26213.29183608  .00000553  00000+0  28155-3 0  9990',
+  line2: '2 36216  98.5922 231.6523 0045732  69.3429 291.2643 14.19156346676568',
+};
+const FY_29805: TleRecord = {
+  name: 'FENGYUN 1C DEB',
+  satnum: '29805',
+  line1: '1 29805U 99025CX  26217.12301174  .00000024  00000+0  66268-4 0  9993',
+  line2: '2 29805  99.4227 269.9780 0187793 337.1770  22.1111 13.72726417979321',
+};
+const FY_32169: TleRecord = {
+  name: 'FENGYUN 1C DEB',
+  satnum: '32169',
+  line1: '1 32169U 99025CTP 26217.01649324  .00016543  00000+0  21755-2 0  9993',
+  line2: '2 32169  98.5454  63.6563 0030207  98.1957 262.2681 14.79958655   824',
+};
+
+const FY_FROM = new Date('2026-08-12T00:00:00Z');
+
+// Parsing is memoised because the brute-force baselines below call this tens of
+// thousands of times; twoline2satrec on every sample would dominate the run.
+const satrecCache = new Map<string, satellite.SatRec>();
+function satrecFor(tle: TleRecord): satellite.SatRec {
+  const hit = satrecCache.get(tle.satnum);
+  if (hit) return hit;
+  const parsed = parseSatrec(tle);
+  assert.ok(parsed, `fixture TLE ${tle.satnum} must parse`);
+  satrecCache.set(tle.satnum, parsed);
+  return parsed;
+}
+
+/** Separation of two records at one instant, straight out of SGP4. */
+function separationAtKm(a: TleRecord, b: TleRecord, at: Date): number {
+  const recA = satrecFor(a);
+  const recB = satrecFor(b);
+  const pvA = satellite.propagate(recA, at);
+  const pvB = satellite.propagate(recB, at);
+  assert.ok(pvA?.position && pvB?.position, 'fixture TLEs must propagate');
+  const dx = pvA.position.x - pvB.position.x;
+  const dy = pvA.position.y - pvB.position.y;
+  const dz = pvA.position.z - pvB.position.z;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/** Smallest separation over the window by exhaustive sampling. */
+function bruteForceMinKm(a: TleRecord, b: TleRecord, from: Date, windowHours: number, dtSeconds: number): number {
+  let best = Infinity;
+  const steps = Math.floor((windowHours * 3600) / dtSeconds);
+  for (let s = 0; s <= steps; s++) {
+    best = Math.min(best, separationAtKm(a, b, new Date(from.getTime() + s * dtSeconds * 1000)));
+  }
+  return best;
+}
+
+test('a fixed 90-second step turns a real 4 km approach into a non-event', () => {
+  // Not a test of the scan — a test that the fixture is a real regression guard.
+  // These two fragments pass 4.2 km apart, and a 90-second grid sees them no
+  // closer than 28.3 km: past the 25 km threshold the UI screens on, so the
+  // approach is not merely mis-measured, it is dropped and never shown. That is
+  // the defect the adaptive stepping fixes, and any scan that reports the
+  // smallest separation on a fixed grid fails the next two tests.
+  const truth = bruteForceMinKm(FY_30494, FY_36216, FY_FROM, 2, 0.5);
+  const coarse = bruteForceMinKm(FY_30494, FY_36216, FY_FROM, 2, 90);
+  assert.ok(truth < 25, `expected a real close approach, brute force says ${truth.toFixed(1)} km`);
+  assert.ok(coarse > 25, `expected the 90 s grid to put it past the threshold, got ${coarse.toFixed(1)} km`);
+});
+
+test('findCloseApproaches agrees with half-second brute force on a real approach', () => {
+  const truth = bruteForceMinKm(FY_30494, FY_36216, FY_FROM, 2, 0.5);
+  const results = findCloseApproaches([FY_30494, FY_36216], FY_FROM, { windowHours: 2, thresholdKm: 25 });
+  assert.equal(results.length, 1, 'a sub-25 km approach must be reported at the 25 km threshold');
+  assert.ok(
+    Math.abs(results[0].minDistanceKm - truth) < 1,
+    `reported ${results[0].minDistanceKm} km against a true ${truth.toFixed(2)} km`
+  );
+});
+
+test('the reported time of closest approach is when the pair is actually closest', () => {
+  const results = findCloseApproaches([FY_30494, FY_36216], FY_FROM, { windowHours: 2, thresholdKm: 25 });
+  assert.equal(results.length, 1);
+  const tca = new Date(results[0].timeOfClosestApproach);
+  const atTca = bruteForceMinKm(FY_30494, FY_36216, tca, 0, 1);
+  assert.ok(
+    Math.abs(atTca - results[0].minDistanceKm) < 1,
+    `separation at the reported time is ${atTca.toFixed(2)} km, but it reported ${results[0].minDistanceKm} km`
+  );
+});
+
+test('the altitude band pre-filter widens with the threshold being screened on', () => {
+  // Bands 859-1135 km and 615-658 km: 201 km of clear air between them, so no
+  // 25 km approach is geometrically possible and skipping the pair is right.
+  // They do come within 426 km, though, so a 500 km screen has to keep them —
+  // which a filter with a flat 100 km margin did not, and it discarded them
+  // before propagating anything, so nothing downstream could notice.
+  const a = orbitalElementsFromTle(FY_29805);
+  const b = orbitalElementsFromTle(FY_32169);
+  assert.equal(altitudeBandsOverlap(a, b, 25 + 100), false);
+  assert.equal(altitudeBandsOverlap(a, b, 500 + 100), true);
+
+  assert.equal(findCloseApproaches([FY_29805, FY_32169], FY_FROM, { windowHours: 6, thresholdKm: 25 }).length, 0);
+  const wide = findCloseApproaches([FY_29805, FY_32169], FY_FROM, { windowHours: 6, thresholdKm: 500 });
+  assert.equal(wide.length, 1, 'a 426 km approach must survive a 500 km screen');
+  assert.ok(wide[0].minDistanceKm > 400 && wide[0].minDistanceKm < 450, `got ${wide[0].minDistanceKm} km`);
 });

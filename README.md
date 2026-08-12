@@ -303,6 +303,54 @@ range, so this re-anchors the timeline's zero point rather than offsetting from
 the present instant — at which point the scrubber shows the date instead of
 "+2h from now", which would be a lie.
 
+## Close-approach scan
+
+A geometric proximity screen over every pair of tracked objects, reporting the
+closest each pair comes within 24 hours if that is under 25 km. Explicitly not a
+collision warning: there is no covariance here, and a week-old TLE carries
+kilometres of along-track error in its own right, larger than the distances being
+reported.
+
+It was, until 2026-08-12, unsound rather than merely coarse. Both trajectories
+were sampled every 90 seconds and the smallest **sampled** separation was
+reported as the miss distance, with no refinement. Two objects in opposing low
+orbits close at up to about 15.8 km/s, so 90 seconds lets them move 1,400 km
+relative to each other between looks — an error two orders of magnitude past the
+25 km being screened on. Measured against half-second brute force over 60 real
+Fengyun-1C fragments across 24 hours: **13 pairs genuinely came within 25 km, the
+closest at 4.2 km, and the scan reported none of them.** The panel said "no pair
+came within 25 km" and that was false.
+
+Tuning the interval does not fix it. Keeping between-sample motion small next to
+a 25 km threshold needs a step under 1.6 seconds, or 54,600 samples per pair per
+day. So the step is adaptive: from a separation of *d*, the pair cannot reach the
+threshold in less than (*d* − threshold) / 15.8 seconds whatever they are doing,
+and stepping by that much therefore cannot step over an approach. Far apart the
+steps run long and cost about what the fixed one did; as a pair converges they
+shrink on their own. The bracketed minimum is then pinned by ternary search,
+separation being smooth and single-dipped across one encounter.
+
+Re-measured after the change: all 13 real approaches found, worst error against
+brute force 0.23 km, for 3.9 s against the old 3.0 s — 28% more work to stop
+missing everything. Verified again at 100 km and 500 km thresholds, where the old
+sampling missed 81 of 111 and 88 of 563 respectively and the new one misses none.
+
+That measurement also exposed a second defect, in the altitude-band pre-filter
+that keeps an all-pairs scan tractable. Pairs whose perigee/apogee bands are
+further apart than the threshold cannot possibly meet it and are skipped before
+either is propagated — but the margin was a flat 100 km regardless of what the
+caller asked to screen on. Sound at 25 km; at 500 km it threw away ten genuine
+approaches, the closest 195 km, and threw them away before propagating anything
+so nothing downstream could recover them. The margin now scales with the
+threshold, keeping 100 km of slack for how far the bands themselves drift over
+the window.
+
+The fixtures pinning all of this are four real Fengyun-1C fragments rather than
+the synthetic pairs used elsewhere in that test file, and deliberately so: an
+identical-orbit clone is close at every instant, so any step size finds it. Only
+a real, brief encounter tells a scan that resolves approaches apart from one that
+steps over them.
+
 ## Time scrubber
 
 `useTimeControl` decouples display time from wall-clock time. In live mode an anchor follows the real clock each second; scrubbing or playing freezes the anchor and moves an offset over a 24-hour range. Playback advances at 1×/60×/300×/1800×, throttled to 25 Hz so propagation isn't recomputed 60 times a second.
