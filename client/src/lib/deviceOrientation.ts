@@ -93,6 +93,63 @@ export function lookDirectionFrom(sample: OrientationSample): LookDirection {
 }
 
 /**
+ * How far the phone is rolled about the direction it is pointing.
+ *
+ * Zero means the top of the screen is as close to straight up as it can be for
+ * this pointing direction; positive is a clockwise roll as the viewer sees it.
+ * Portrait held normally gives roughly zero, landscape gives roughly ninety.
+ *
+ * Not currently applied to the rendered view, which is a real gap: the camera
+ * is aimed through OrbitControls, and OrbitControls pins the camera's up vector
+ * to world up. So the direction the dome shows is right at any attitude while
+ * the rotation of the sky on screen is only right in portrait — hold the phone
+ * sideways and the constellations appear turned by this angle relative to what
+ * is actually behind the handset.
+ *
+ * Exported so the size of that error is measurable rather than assumed, and so
+ * a fix has the value it needs.
+ */
+export function screenRollFrom(sample: OrientationSample): number {
+  const alphaDeg = sample.compassHeading != null ? 360 - sample.compassHeading : sample.alpha;
+  const a = alphaDeg * DEG;
+  const b = sample.beta * DEG;
+  const g = sample.gamma * DEG;
+  const cA = Math.cos(a), sA = Math.sin(a);
+  const cB = Math.cos(b), sB = Math.sin(b);
+  const cG = Math.cos(g), sG = Math.sin(g);
+
+  // Second column of Rz(alpha)·Rx(beta)·Ry(gamma): the device's +Y axis, which
+  // is "up the screen", expressed in the east/north/up world frame.
+  const yx = -sA * cB;
+  const yy = cA * cB;
+  const yz = sB;
+
+  // Third column, negated: where the camera looks. Same as lookDirectionFrom.
+  const vx = -(cA * sG + sA * sB * cG);
+  const vy = -(sA * sG - cA * sB * cG);
+  const vz = -(cB * cG);
+
+  // World up, with the component along the view direction removed, is the
+  // reference "up" in the image plane. The roll is the signed angle from that
+  // reference to the screen's own up, measured about the view direction.
+  const upDot = vz;
+  const rx = -vx * upDot;
+  const ry = -vy * upDot;
+  const rz = 1 - vz * upDot;
+  const rl = Math.hypot(rx, ry, rz);
+  if (rl < 1e-9) return 0; // Pointing at the zenith or nadir: roll is undefined.
+
+  const ux = rx / rl, uy = ry / rl, uz = rz / rl;
+  const cos = ux * yx + uy * yy + uz * yz;
+  // Sign from whether screen-up leans along (view x reference-up).
+  const crossX = vy * uz - vz * uy;
+  const crossY = vz * ux - vx * uz;
+  const crossZ = vx * uy - vy * ux;
+  const sin = crossX * yx + crossY * yy + crossZ * yz;
+  return (Math.atan2(sin, cos) / DEG);
+}
+
+/**
  * Whether this browser can report device orientation at all.
  *
  * Presence of the event constructor is necessary but not sufficient — a

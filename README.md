@@ -217,6 +217,41 @@ app. The Milky Way band and the meteor radiants are still drawn from J2000
 coordinates: both are diffuse or approximate enough that a third of a degree
 does not change what you see.
 
+### What has been checked against an independent source
+
+Four layers had never been verified against anything outside the app. Audited
+2026-08-12, with the checks kept as tests where they could be:
+
+- **Planet apparent size.** Observed minimum and maximum angular diameters over
+  800 days against published ranges: Mercury 4.6-12.1" (published 4.5-13),
+  Venus 9.6-61.1" (9.7-66), Jupiter 30.8-46.6" (29.8-50.1), Saturn 15.8-20.0"
+  excluding rings (14.5-20.1), Moon 32.6' (29.4-33.5'). Mars reaches only 13.8"
+  in this window against a published maximum of 25.1", which is correct rather
+  than wrong: 25" needs a perihelic opposition, and the last was 2018 with the
+  next in 2035.
+- **The galactic frame.** Pole to origin comes out 90.0001°, and four objects
+  with published galactic coordinates round-trip to better than 0.05° — Sgr A*
+  lands on 359.944, -0.046 exactly. Note the origin constant is the galactic
+  coordinate origin, not Sgr A* itself, which is the correct choice for defining
+  the frame and differs from the black hole's position by about a hundredth of a
+  degree.
+- **Moon illumination**, against the fraction implied by its elongation from the
+  Sun, (1 - cos elongation) / 2, across four phases: agreement within 0.002.
+- **AR pointing.** The closed form in `lookDirectionFrom` was re-derived by hand
+  as the third column of Rz(alpha)Rx(beta)Ry(gamma) and matches, including the
+  `360 - compassHeading` conversion; twelve existing tests cover the hand-checked
+  cases.
+
+That audit found one real gap, which is now measured rather than unknown.
+`screenRollFrom` reports how far the handset is rolled about the direction it
+points — zero in portrait, ninety in landscape — and **the rendered view does not
+apply it**. The camera is aimed through OrbitControls, which pins its up vector
+to world up, so the dome points correctly at any attitude while the rotation of
+the sky on screen is only right in portrait. Held sideways, the constellations
+appear turned by up to 90° from what is actually behind the phone. Fixing it
+means driving the camera's orientation directly instead of through the controls'
+spherical angles.
+
 ### Planets
 
 Sun, Moon, Mercury, Venus, Mars, Jupiter and Saturn come from astronomy-engine

@@ -25,6 +25,14 @@ interface AimableControls {
  *
  * While active, manual drag is disabled: the two would fight, and the sensor
  * would always win the next frame.
+ *
+ * KNOWN GAP: roll is not applied. Aiming through the controls' spherical angles
+ * means the camera's up vector stays world up, so the direction is right at any
+ * device attitude while the rotation of the sky on screen is only right in
+ * portrait — held sideways, the view is turned by up to ninety degrees from what
+ * is behind the handset. screenRollFrom in deviceOrientation.ts measures the
+ * angle; applying it needs the camera driven directly rather than through
+ * OrbitControls.
  */
 export function OrientationCamera({ look }: { look: LookDirection | null }) {
   const controls = useThree((s) => s.controls) as (AimableControls & THREE.EventDispatcher) | null;
