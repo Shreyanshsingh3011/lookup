@@ -351,6 +351,17 @@ identical-orbit clone is close at every instant, so any step size finds it. Only
 a real, brief encounter tells a scan that resolves approaches apart from one that
 steps over them.
 
+Confirmed end to end in a browser as well, not only in the library: the two
+fragments pasted into the app's own custom-TLE box, with the page clock pinned via
+`page.clock.setFixedTime` so the window the scan opens contains the encounter. The
+panel reports 4.2 km at 01:27, matching the brute-force minimum of 4.2126 km at
+01:27:12.5Z. Pinning the clock was necessary rather than convenient: run at the
+real wall clock this pair reports nothing, and correctly so — their relative phase
+drifts *upward* through 180° over that particular day, so the separation only ever
+grows from the 11,538 km it starts at. Two objects in low orbit are not obliged to
+meet within any given 24 hours, which is worth stating because assuming otherwise
+is what made that empty result look like a bug at first.
+
 ## Time scrubber
 
 `useTimeControl` decouples display time from wall-clock time. In live mode an anchor follows the real clock each second; scrubbing or playing freezes the anchor and moves an offset over a 24-hour range. Playback advances at 1×/60×/300×/1800×, throttled to 25 Hz so propagation isn't recomputed 60 times a second.
