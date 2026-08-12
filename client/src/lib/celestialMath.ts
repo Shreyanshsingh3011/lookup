@@ -75,3 +75,79 @@ export function raDecToAzEl(
   if (azimuthDeg < 0) azimuthDeg += 360;
   return { azimuthDeg, elevationDeg };
 }
+
+/**
+ * Precession from J2000 to the mean equinox of date.
+ *
+ * The star catalogue, the constellation lines, the galactic pole and the
+ * small-body elements are all J2000. The planets are not: usePlanetPositions
+ * asks astronomy-engine for of-date coordinates. So the two frames in this app
+ * disagree, and the size of the disagreement is not negligible — measured
+ * against astronomy-engine at the current epoch it reaches 0.36° for
+ * Betelgeuse, around 4-5 pixels at the default field of view, growing by about
+ * 0.14° a decade. The README claimed sub-arcminute, which was wrong by a factor
+ * of roughly twenty.
+ *
+ * Implemented here rather than taken from astronomy-engine because this module
+ * is deliberately dependency-free — panels import it for a sidereal time
+ * without pulling in three.js or an ephemeris. It is the standard IAU 1976
+ * zeta/z/theta rotation, which is accurate to well under an arcsecond over the
+ * decades this app deals in, and celestialMath.test.ts cross-checks it against
+ * astronomy-engine's independent implementation.
+ *
+ * Mean equinox, not true: nutation is deliberately omitted, at most about 17
+ * arcseconds and well under a rendered star glyph. Atmospheric refraction is
+ * likewise not applied anywhere in this app, matching how satellite elevations
+ * are computed.
+ */
+export function precessionRows(
+  when: Date
+): [[number, number, number], [number, number, number], [number, number, number]] {
+  // Julian centuries from J2000.0.
+  const jd = when.getTime() / 86_400_000 + 2_440_587.5;
+  const T = (jd - 2_451_545.0) / 36_525;
+
+  const arcsec = Math.PI / (180 * 3600);
+  const zeta = (2306.2181 * T + 0.30188 * T * T + 0.017998 * T * T * T) * arcsec;
+  const z = (2306.2181 * T + 1.09468 * T * T + 0.018203 * T * T * T) * arcsec;
+  const theta = (2004.3109 * T - 0.42665 * T * T - 0.041833 * T * T * T) * arcsec;
+
+  const cz = Math.cos(zeta);
+  const sz = Math.sin(zeta);
+  const cZ = Math.cos(z);
+  const sZ = Math.sin(z);
+  const ct = Math.cos(theta);
+  const st = Math.sin(theta);
+
+  return [
+    [cz * ct * cZ - sz * sZ, -sz * ct * cZ - cz * sZ, -st * cZ],
+    [cz * ct * sZ + sz * cZ, -sz * ct * sZ + cz * cZ, -st * sZ],
+    [cz * st, -sz * st, ct],
+  ];
+}
+
+/**
+ * A J2000 right ascension and declination, moved to the mean equinox of date.
+ *
+ * Returned in the same units it takes, so a call site that had J2000 degrees
+ * can be corrected without changing anything else about how it works.
+ */
+export function precessRaDec(
+  raDeg: number,
+  decDeg: number,
+  when: Date
+): { raDeg: number; decDeg: number } {
+  const [ex, ey, ez] = raDecToEquatorial(raDeg, decDeg);
+  const [r0, r1, r2] = precessionRows(when);
+
+  const x = r0[0] * ex + r0[1] * ey + r0[2] * ez;
+  const y = r1[0] * ex + r1[1] * ey + r1[2] * ez;
+  const zc = r2[0] * ex + r2[1] * ey + r2[2] * ez;
+
+  let ra = (Math.atan2(y, x) * 180) / Math.PI;
+  if (ra < 0) ra += 360;
+  return {
+    raDeg: ra,
+    decDeg: (Math.asin(Math.max(-1, Math.min(1, zc))) * 180) / Math.PI,
+  };
+}

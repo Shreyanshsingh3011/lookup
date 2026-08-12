@@ -1,5 +1,5 @@
 import { Astronomy } from './astronomy';
-import { raDecToAzEl } from './celestialMath';
+import { precessRaDec, raDecToAzEl } from './celestialMath';
 import type { Observer } from '../types';
 
 /**
@@ -232,7 +232,17 @@ export function positionOf(
     (2 * heliocentricAu * distanceAu);
   const phaseAngleDeg = (Math.acos(Math.max(-1, Math.min(1, cosPhase))) * 180) / Math.PI;
 
-  const { azimuthDeg, elevationDeg } = raDecToAzEl(raDeg, decDeg, lstRad, observer.latitude);
+  // The elements, and therefore this position, are J2000 — see
+  // eclipticToEquatorial. The star field and the planets are both drawn at the
+  // equinox of date, so plotting a comet straight from J2000 would place it
+  // consistently off against the sky around it.
+  const ofDate = precessRaDec(raDeg, decDeg, date);
+  const { azimuthDeg, elevationDeg } = raDecToAzEl(
+    ofDate.raDeg,
+    ofDate.decDeg,
+    lstRad,
+    observer.latitude
+  );
 
   return {
     raDeg,

@@ -2,7 +2,13 @@ import { strict as assert } from 'node:assert';
 import test from 'node:test';
 import * as THREE from 'three';
 import { equatorialToSceneMatrix } from './celestial';
-import { raDecToAzEl, raDecToEquatorial, sceneRotationRows } from './celestialMath';
+import {
+  precessRaDec,
+  precessionRows,
+  raDecToAzEl,
+  raDecToEquatorial,
+  sceneRotationRows,
+} from './celestialMath';
 
 /**
  * The point of these is that splitting three.js out of the coordinate maths
@@ -81,4 +87,82 @@ test('the sky still behaves like a sky', () => {
   // And a unit vector stays a unit vector.
   const [x, y, z] = raDecToEquatorial(123, -45);
   assert.ok(Math.abs(Math.hypot(x, y, z) - 1) < 1e-15);
+});
+
+// ---------------------------------------------------------------------------
+// Precession, cross-checked against an independent implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * The app's own rotation against astronomy-engine's Rotation_EQJ_EQD.
+ *
+ * Same practice as the horizontal-coordinate check above: the value of a second
+ * implementation is that it was written by someone else from the same
+ * literature, so an agreement is evidence and a disagreement is a bug in one of
+ * them.
+ *
+ * The tolerance is arcseconds rather than sub-arcsecond on purpose.
+ * astronomy-engine's EQD is the *true* equator of date and includes nutation;
+ * precessionRows is the mean equinox and deliberately omits it, which is a
+ * known difference of up to about 17 arcseconds. Anything much beyond that
+ * would mean the precession itself is wrong, which is what this is for.
+ */
+test('precession agrees with astronomy-engine to within nutation', async () => {
+  const A = await import('astronomy-engine');
+
+  const cases: Array<[string, number, number]> = [
+    ['Vega', 279.234, 38.7837],
+    ['Polaris', 37.9545, 89.2641],
+    ['Sirius', 101.2875, -16.7161],
+    ['Betelgeuse', 88.7929, 7.407],
+    ['equator/zero', 0, 0],
+    ['south', 210, -60],
+  ];
+  const dates = [new Date('2026-01-01T00:00:00Z'), new Date('2040-07-01T00:00:00Z')];
+
+  let worstArcsec = 0;
+  for (const when of dates) {
+    const t = A.MakeTime(when);
+    const rot = A.Rotation_EQJ_EQD(t);
+    for (const [name, raDeg, decDeg] of cases) {
+      const [ex, ey, ez] = raDecToEquatorial(raDeg, decDeg);
+      const theirs = A.RotateVector(rot, new A.Vector(ex, ey, ez, t));
+
+      const mine = precessRaDec(raDeg, decDeg, when);
+      const [mx, my, mz] = raDecToEquatorial(mine.raDeg, mine.decDeg);
+
+      const len = Math.hypot(theirs.x, theirs.y, theirs.z);
+      const dot = (mx * theirs.x + my * theirs.y + mz * theirs.z) / len;
+      const sepArcsec =
+        (Math.acos(Math.max(-1, Math.min(1, dot))) * 180 * 3600) / Math.PI;
+
+      assert.ok(
+        sepArcsec < 25,
+        `${name} at ${when.toISOString().slice(0, 10)}: ${sepArcsec.toFixed(1)}" apart`
+      );
+      worstArcsec = Math.max(worstArcsec, sepArcsec);
+    }
+  }
+  // Non-trivial: a stub returning its input would be ~1300" out, not ~17".
+  assert.ok(worstArcsec > 1, `suspiciously exact (${worstArcsec.toFixed(2)}") — is anything applied?`);
+});
+
+test('precession is a proper rotation, and does nothing at J2000', () => {
+  const rows = precessionRows(new Date('2000-01-01T12:00:00Z'));
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      assert.ok(
+        Math.abs(rows[i][j] - (i === j ? 1 : 0)) < 1e-6,
+        `at its own epoch the rotation should be the identity, got ${rows[i][j]} at ${i},${j}`
+      );
+    }
+  }
+
+  // Orthonormal rows at an arbitrary epoch: lengths one, mutually perpendicular.
+  const r = precessionRows(new Date('2035-03-04T05:06:07Z'));
+  const dot = (a: number[], b: number[]) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+  for (const row of r) assert.ok(Math.abs(dot(row, row) - 1) < 1e-12, 'row not unit length');
+  assert.ok(Math.abs(dot(r[0], r[1])) < 1e-12, 'rows 0,1 not perpendicular');
+  assert.ok(Math.abs(dot(r[0], r[2])) < 1e-12, 'rows 0,2 not perpendicular');
+  assert.ok(Math.abs(dot(r[1], r[2])) < 1e-12, 'rows 1,2 not perpendicular');
 });

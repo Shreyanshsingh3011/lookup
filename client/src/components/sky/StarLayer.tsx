@@ -6,6 +6,7 @@ import {
   bvToColor,
   equatorialToSceneMatrix,
   magnitudeToSize,
+  precessRaDec,
   raDecToAzEl,
   raDecToEquatorial,
 } from '../../lib/celestial';
@@ -172,8 +173,8 @@ export function StarLayer({
   // The entire celestial sphere is one rigid rotation away from scene
   // coordinates, so the geometry never has to be rebuilt as time advances.
   const sceneMatrix = useMemo(
-    () => equatorialToSceneMatrix(lstRad, latitude),
-    [lstRad, latitude]
+    () => equatorialToSceneMatrix(lstRad, latitude, displayTime),
+    [lstRad, latitude, displayTime]
   );
 
   useLayoutEffect(() => {
@@ -190,20 +191,27 @@ export function StarLayer({
     if (!showStars) return [];
     return catalog.namedStars
       .filter((s) => s.mag <= STAR_LABEL_MAG_LIMIT)
-      .map((s) => ({ ...s, ...raDecToAzEl(s.ra, s.dec, lstRad, latitude) }))
+      .map((s) => {
+        // Labels sit outside the rotating group, so they need the same
+        // precession the group's matrix applies — otherwise a name drifts off
+        // the star it belongs to by the full 0.36 degrees.
+        const p = precessRaDec(s.ra, s.dec, displayTime);
+        return { ...s, ...raDecToAzEl(p.raDeg, p.decDeg, lstRad, latitude) };
+      })
       .filter((s) => s.elevationDeg > 3);
-  }, [lstRad, latitude, showStars]);
+  }, [lstRad, latitude, showStars, displayTime]);
 
   const constellationLabels = useMemo(() => {
     if (!showConstellations) return [];
     return catalog.constellationLabels
-      .map((c) => ({ ...c, ...raDecToAzEl(c.ra, c.dec, lstRad, latitude) }))
+      .map((c) => {
+        const p = precessRaDec(c.ra, c.dec, displayTime);
+        return { ...c, ...raDecToAzEl(p.raDeg, p.decDeg, lstRad, latitude) };
+      })
       .filter((c) => c.elevationDeg > 10);
-  }, [lstRad, latitude, showConstellations]);
+  }, [lstRad, latitude, showConstellations, displayTime]);
 
-  // displayTime is what drives lstRad upstream; referenced so the dependency is
-  // explicit to readers even though the matrix keys off the derived value.
-  void displayTime;
+  // displayTime is now used directly, for precession as well as driving lstRad.
 
   return (
     <>

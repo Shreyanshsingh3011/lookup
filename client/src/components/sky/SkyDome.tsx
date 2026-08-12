@@ -4,7 +4,7 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import catalog from '../../data/skyCatalog.json';
 import { fetchExplanation } from '../../api/client';
-import { localSiderealTime, raDecToAzEl } from '../../lib/celestial';
+import { localSiderealTime, precessRaDec, raDecToAzEl } from '../../lib/celestial';
 import { DOME_RADIUS } from '../../lib/sky';
 import {
   excludeDrawnAsMarkers,
@@ -371,7 +371,11 @@ function SkyScene({
     }
     if (layers.stars) {
       for (const star of catalog.namedStars) {
-        const { azimuthDeg, elevationDeg } = raDecToAzEl(star.ra, star.dec, lstRad, observer.latitude);
+        // Precessed to match where the star field actually draws it. Without
+        // this, "what am I looking at" would answer from J2000 positions while
+        // the dome drew the epoch-of-date ones.
+        const p = precessRaDec(star.ra, star.dec, displayTime);
+        const { azimuthDeg, elevationDeg } = raDecToAzEl(p.raDeg, p.decDeg, lstRad, observer.latitude);
         if (elevationDeg < 0) continue;
         candidates.push({ azimuthDeg, elevationDeg, data: { kind: 'star', star, azimuthDeg, elevationDeg } });
       }
@@ -391,6 +395,9 @@ function SkyScene({
     onIdentifyMatch(match ? toExplainSubject(match.data) : null, identifyRequest);
   }, [
     identifyRequest,
+    // Stars are precessed to this instant, so a stale value would identify
+    // against positions the dome is no longer drawing.
+    displayTime,
     satellites,
     debris,
     planetPositions,

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { sceneRotationRows } from './celestialMath';
+import { precessionRows, sceneRotationRows } from './celestialMath';
 import { DOME_RADIUS } from './sky';
 
 /**
@@ -8,7 +8,14 @@ import { DOME_RADIUS } from './sky';
  * engine — into the initial bundle. Re-exported here so the sky components can
  * keep importing everything from one place.
  */
-export { localSiderealTime, raDecToAzEl, raDecToEquatorial, sceneRotationRows } from './celestialMath';
+export {
+  localSiderealTime,
+  precessRaDec,
+  precessionRows,
+  raDecToAzEl,
+  raDecToEquatorial,
+  sceneRotationRows,
+} from './celestialMath';
 
 /**
  * Rotation taking the equatorial frame into dome/scene coordinates
@@ -29,9 +36,20 @@ export { localSiderealTime, raDecToAzEl, raDecToEquatorial, sceneRotationRows } 
  * This is what makes a 5000-star field cheap. The geometry is built once from
  * fixed RA/Dec and only this matrix changes as time advances or the observer
  * moves, instead of re-deriving horizontal coordinates per star per frame.
+ *
+ * Precession rides in the same matrix. The catalogue is J2000 and the sky is
+ * not, so the J2000 vectors are rotated to the mean equinox of date before the
+ * horizontal rotation — one extra 3x3 multiply per matrix rebuild, and none per
+ * star. Pass the instant being drawn; omitting it leaves the coordinates in
+ * J2000, which is what the whole star field used to do.
  */
-export function equatorialToSceneMatrix(lstRad: number, latitudeDeg: number): THREE.Matrix4 {
-  const [r0, r1, r2] = sceneRotationRows(lstRad, latitudeDeg);
+export function equatorialToSceneMatrix(
+  lstRad: number,
+  latitudeDeg: number,
+  when?: Date
+): THREE.Matrix4 {
+  const [h0, h1, h2] = sceneRotationRows(lstRad, latitudeDeg);
+  const [r0, r1, r2] = when ? composeRows([h0, h1, h2], precessionRows(when)) : [h0, h1, h2];
   // Row-major, matching Matrix4.set.
   return new THREE.Matrix4().set(
     r0[0], r0[1], r0[2], 0,
@@ -39,6 +57,18 @@ export function equatorialToSceneMatrix(lstRad: number, latitudeDeg: number): TH
     r2[0], r2[1], r2[2], 0,
     0,     0,     0,     1
   );
+}
+
+/** Row-major 3x3 product, so precession can be folded into the scene rotation. */
+type Rows = [[number, number, number], [number, number, number], [number, number, number]];
+function composeRows(a: Rows, b: Rows): Rows {
+  const out = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+    }
+  }
+  return out as Rows;
 }
 
 /**

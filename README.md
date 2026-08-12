@@ -194,10 +194,28 @@ independent `Horizon()` implementation: agreement within 0.002° across 180
 star/site/time combinations spanning the equator, the arctic, and both
 hemispheres.
 
-Coordinates are J2000 and are not precessed to the epoch of date, which is a
-sub-arcminute effect at present — smaller than a rendered star glyph.
-Atmospheric refraction is deliberately not applied, matching how satellite
-elevations are computed elsewhere in the app.
+The catalogue is J2000 and is precessed to the mean equinox of date before it
+is drawn. This used to say the effect was "sub-arcminute … smaller than a
+rendered star glyph", which was wrong by a factor of about twenty: measured
+against astronomy-engine at the current epoch, leaving it out displaced
+Betelgeuse by 0.354°, four to five pixels at the default field of view, and it
+grows by roughly 0.14° a decade. It also put the stars in a different frame from
+the planets, which come from astronomy-engine as of-date coordinates — so two
+layers of the same sky disagreed.
+
+Precession rides inside the same 3×3 that carries the horizontal rotation, so it
+costs one extra matrix multiply per rebuild and nothing per star. The star
+labels, the constellation labels, the "what am I looking at" boresight match and
+the small-body positions apply it too, since anything drawn against a precessed
+sky has to move with it. Cross-checked against astronomy-engine's independent
+star pipeline: worst-case agreement improves from 0.354° to 0.007°.
+
+Nutation and stellar aberration are deliberately omitted — together about 25
+arcseconds, which is the residual in that figure. Atmospheric refraction is not
+applied either, matching how satellite elevations are computed elsewhere in the
+app. The Milky Way band and the meteor radiants are still drawn from J2000
+coordinates: both are diffuse or approximate enough that a third of a degree
+does not change what you see.
 
 ### Planets
 
