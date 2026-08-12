@@ -7,6 +7,7 @@ import {
   fetchTransmitters,
 } from '../api/client';
 import { PassTable } from './PassTable';
+import { ReentryWatch } from './ReentryWatch';
 import { assessRisk, preFilter, type Freshness } from '../lib/debris';
 import type {
   DebrisCatalogueResponse,
@@ -181,6 +182,8 @@ export function DebrisScreen({
           </div>
         )}
       </section>
+
+      <ReentryWatch onShowInSky={onShowInSky} />
 
       <section className="flex flex-col gap-2">
         <div>
