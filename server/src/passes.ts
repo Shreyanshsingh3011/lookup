@@ -160,15 +160,54 @@ function mag(a: Vec3): number {
 }
 
 /**
+ * Air mass by Kasten and Young (1989): how much atmosphere the line of sight
+ * passes through, relative to straight up.
+ *
+ * The naive 1/sin(elevation) diverges at the horizon and is already several per
+ * cent wrong by 10 degrees, which is exactly where satellite passes spend most
+ * of their time. This form is well behaved all the way down: 1.0 at the zenith,
+ * 5.6 at 10 degrees, 10.3 at 5, and about 38 at the horizon.
+ */
+export function airMass(elevationDeg: number): number {
+  const h = Math.max(elevationDeg, 0);
+  return 1 / (Math.sin((h * Math.PI) / 180) + 0.50572 * Math.pow(h + 6.07995, -1.6364));
+}
+
+/**
+ * Magnitudes of atmospheric extinction at a given elevation.
+ *
+ * This was missing, and its absence was not a rounding error. Passes spend most
+ * of their time low in the sky, low elevations happen to be where phase angles
+ * are most favourable, and nothing offset that — so the app reported its
+ * brightest moment of a pass at the point where the atmosphere was dimming the
+ * object most. Checked against production before the fix: an ISS pass peaking at
+ * 11.9 degrees was quoted at magnitude -1.0, with the headline figure -1.4 taken
+ * from a sample lower still, through nearly five air masses of atmosphere.
+ *
+ * The coefficient is a nominal clear-sky sea-level value in V. Real extinction
+ * depends on site altitude, humidity and haze and can be half this on a
+ * mountain or double it in summer murk, so this is the right order rather than a
+ * per-night truth — which is the same standing as the standard magnitudes it
+ * corrects.
+ */
+export const EXTINCTION_MAG_PER_AIRMASS = 0.25;
+
+export function extinctionMagnitudes(elevationDeg: number): number {
+  return EXTINCTION_MAG_PER_AIRMASS * airMass(elevationDeg);
+}
+
+/**
  * Apparent visual magnitude approximation. Lower (more negative) = brighter.
- * `shadowFrac` dims the satellite as it crosses the penumbra into eclipse.
+ * `shadowFrac` dims the satellite as it crosses the penumbra into eclipse, and
+ * `elevationDeg` sets how much atmosphere it is being seen through.
  */
 function apparentMagnitude(
   name: string,
   satEci: Vec3,
   sunEciKm: Vec3,
   obsEci: Vec3,
-  shadowFrac: number
+  shadowFrac: number,
+  elevationDeg: number
 ): number {
   const satToSun = sub(sunEciKm, satEci);
   const satToObs = sub(obsEci, satEci);
@@ -184,7 +223,7 @@ function apparentMagnitude(
   // Penumbral dimming: only a fraction (1 - shadowFrac) of the Sun's disc
   // still illuminates the satellite.
   const litFraction = Math.max(1 - shadowFrac, 1e-3);
-  return base - 2.5 * Math.log10(litFraction);
+  return base - 2.5 * Math.log10(litFraction) + extinctionMagnitudes(elevationDeg);
 }
 
 function sunAltitudeDeg(date: Date, astroObserver: AstroObserver): number {
@@ -235,7 +274,7 @@ function sampleAt(
   const obsEci = satellite.ecfToEci(obsEcf, gmst);
 
   const observerDark = sunAltitudeAt(date.getTime()) < opts.sunAltitudeThresholdDeg;
-  const magnitude = apparentMagnitude(name, pv.position, sunEciKm, obsEci, shadowFrac);
+  const magnitude = apparentMagnitude(name, pv.position, sunEciKm, obsEci, shadowFrac, elevationDeg);
 
   return { date, azimuthDeg, elevationDeg, illuminated, observerDark, magnitude };
 }

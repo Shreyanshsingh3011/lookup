@@ -42143,7 +42143,15 @@ function dot(a, b) {
 function mag(a) {
   return Math.sqrt(dot(a, a));
 }
-function apparentMagnitude(name, satEci, sunEciKm, obsEci, shadowFrac) {
+function airMass(elevationDeg) {
+  const h = Math.max(elevationDeg, 0);
+  return 1 / (Math.sin(h * Math.PI / 180) + 0.50572 * Math.pow(h + 6.07995, -1.6364));
+}
+var EXTINCTION_MAG_PER_AIRMASS = 0.25;
+function extinctionMagnitudes(elevationDeg) {
+  return EXTINCTION_MAG_PER_AIRMASS * airMass(elevationDeg);
+}
+function apparentMagnitude(name, satEci, sunEciKm, obsEci, shadowFrac, elevationDeg) {
   const satToSun = sub(sunEciKm, satEci);
   const satToObs = sub(obsEci, satEci);
   const rangeKm = mag(satToObs);
@@ -42154,7 +42162,7 @@ function apparentMagnitude(name, satEci, sunEciKm, obsEci, shadowFrac) {
   const stdMag = standardMagnitude(name);
   const base = stdMag - 15 + 5 * Math.log10(rangeKm) - 2.5 * Math.log10(term);
   const litFraction = Math.max(1 - shadowFrac, 1e-3);
-  return base - 2.5 * Math.log10(litFraction);
+  return base - 2.5 * Math.log10(litFraction) + extinctionMagnitudes(elevationDeg);
 }
 function sunAltitudeDeg(date, astroObserver) {
   const eq = Astronomy.Equator(Astronomy.Body.Sun, date, astroObserver, true, true);
@@ -42180,7 +42188,7 @@ function sampleAt(satrec, name, observerGd, sunAltitudeAt, date, opts) {
   const obsEcf = satellite.geodeticToEcf(observerGd);
   const obsEci = satellite.ecfToEci(obsEcf, gmst);
   const observerDark = sunAltitudeAt(date.getTime()) < opts.sunAltitudeThresholdDeg;
-  const magnitude = apparentMagnitude(name, pv.position, sunEciKm, obsEci, shadowFrac);
+  const magnitude = apparentMagnitude(name, pv.position, sunEciKm, obsEci, shadowFrac, elevationDeg);
   return { date, azimuthDeg, elevationDeg, illuminated, observerDark, magnitude };
 }
 function toPassEvent(s) {

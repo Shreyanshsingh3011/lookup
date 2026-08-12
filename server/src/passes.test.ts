@@ -4,8 +4,10 @@ import test from "node:test";
 import * as satellite from "satellite.js";
 import { parseTle, type TleRecord } from "./celestrak.js";
 import {
+  airMass,
   computePassesForMany,
   DEFAULT_PASS_OPTIONS,
+  extinctionMagnitudes,
   MAX_SCANNED_SATELLITES,
   rankForVisibility,
   standardMagnitude,
@@ -181,4 +183,54 @@ test("the brightness ranking knows a station from a fragment", () => {
   assert.ok(standardMagnitude("ISS (ZARYA)") < standardMagnitude("STARLINK-1234"));
   assert.ok(standardMagnitude("SL-16 R/B") < standardMagnitude("COSMOS 1234 DEB"));
   assert.ok(standardMagnitude("CZ-6A DEB") > standardMagnitude("HST"));
+});
+
+// ---------------------------------------------------------------------------
+// Atmospheric extinction
+// ---------------------------------------------------------------------------
+
+/**
+ * The atmosphere was not in the brightness model at all, and its absence had a
+ * direction: passes spend most of their time low in the sky, low elevations are
+ * where phase angles happen to be most favourable, and nothing offset that. So
+ * the app reported the brightest moment of a pass at the point where the
+ * atmosphere was dimming the object most.
+ */
+test("air mass is one overhead and grows toward the horizon", () => {
+  assert.ok(Math.abs(airMass(90) - 1) < 0.01, `zenith should be 1 air mass, got ${airMass(90)}`);
+  // Published Kasten-Young values, to a per cent.
+  assert.ok(Math.abs(airMass(30) - 2.0) < 0.05, `30 deg should be about 2, got ${airMass(30)}`);
+  assert.ok(Math.abs(airMass(10) - 5.6) < 0.1, `10 deg should be about 5.6, got ${airMass(10)}`);
+  assert.ok(Math.abs(airMass(5) - 10.3) < 0.2, `5 deg should be about 10.3, got ${airMass(5)}`);
+  assert.ok(airMass(0) > 30 && airMass(0) < 45, `horizon should be tens of air masses, got ${airMass(0)}`);
+});
+
+test("air mass never diverges or goes negative, even below the horizon", () => {
+  // The naive 1/sin(elevation) is what this replaces; it goes infinite at zero
+  // and negative below it, either of which corrupts a magnitude.
+  for (const el of [-10, -1, 0, 0.5, 1, 45, 89.9, 90]) {
+    const x = airMass(el);
+    assert.ok(Number.isFinite(x) && x > 0, `air mass at ${el} deg should be finite and positive, got ${x}`);
+  }
+});
+
+test("extinction dims low passes far more than overhead ones", () => {
+  const overhead = extinctionMagnitudes(90);
+  const low = extinctionMagnitudes(10);
+  assert.ok(Math.abs(overhead - 0.25) < 0.01, `overhead should be about 0.25 mag, got ${overhead}`);
+  assert.ok(low > 1.3 && low < 1.5, `10 degrees should be about 1.4 mag, got ${low}`);
+  assert.ok(
+    low - overhead > 1,
+    "the difference between a low pass and an overhead one is more than a magnitude, " +
+      "which is the whole reason this cannot be folded into the standard magnitudes"
+  );
+});
+
+test("extinction increases monotonically as an object sinks", () => {
+  let previous = 0;
+  for (const el of [90, 60, 45, 30, 20, 15, 10, 7, 5, 3, 1]) {
+    const e = extinctionMagnitudes(el);
+    assert.ok(e > previous, `extinction should grow as elevation falls; ${el} deg gave ${e}`);
+    previous = e;
+  }
 });
