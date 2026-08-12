@@ -83,6 +83,26 @@ const FRAGMENT_RADIUS = 0.58;
 const SHARD_MIN = 0.45;
 const SHARD_MAX = 1.55;
 
+/**
+ * Overall size from the catalogue, where the catalogue says.
+ *
+ * Space-Track publishes a radar cross-section class per object: SMALL under
+ * 0.1 m², MEDIUM between 0.1 and 1, LARGE above 1. That is a measurement, and
+ * it is the only sourced fact about how big any of these things actually are —
+ * so where it exists it sets the size and the shard proportions above only
+ * decide the outline.
+ *
+ * The multipliers are ordered by those thresholds rather than proportional to
+ * them: a true area ratio would put a LARGE fragment ten times the width of a
+ * SMALL one and turn the field into a few boulders among invisible specks. So
+ * the ordering is real and the spacing is legible, which is the same compromise
+ * the planet layer makes outside "true scale" mode.
+ *
+ * Absent is not small. An object with no declared class keeps the nominal size
+ * rather than being drawn as the smallest thing on screen.
+ */
+const RCS_SCALE: Record<string, number> = { SMALL: 0.7, MEDIUM: 1, LARGE: 1.45 };
+
 const FIELD_OPACITY = 0.9;
 
 /** Propagation interval for the bulk field, in milliseconds. */
@@ -118,10 +138,13 @@ export function DebrisField({
   labelled,
   onCountChange,
   onPromotedChange,
+  rcsBySatnum,
 }: {
   tles: TleRecord[];
   observer: Observer;
   displayTime: Date;
+  /** Declared RCS class per catalogue number, where the catalogue states one. */
+  rcsBySatnum?: Map<string, string>;
   /** Zoomed in far enough that objects near the boresight become markers. */
   labelled: boolean;
   onCountChange: (visible: number, tracked: number) => void;
@@ -184,16 +207,17 @@ export function DebrisField({
       // Three independent axes, so a fragment can come out as a plate, a
       // splinter or something between, rather than a scaled copy of its
       // neighbour.
+      const size = RCS_SCALE[(rcsBySatnum?.get(parsed.ids[i]) ?? '').toUpperCase()] ?? 1;
       scales.push(
         new THREE.Vector3(
-          SHARD_MIN + a * span,
-          SHARD_MIN + d * span,
-          SHARD_MIN + c * span
+          (SHARD_MIN + a * span) * size,
+          (SHARD_MIN + d * span) * size,
+          (SHARD_MIN + c * span) * size
         )
       );
     }
     return { q, scales };
-  }, [parsed.recs.length]);
+  }, [parsed.recs.length, parsed.ids, rcsBySatnum]);
 
   useEffect(() => {
     lastTick.current = -1;

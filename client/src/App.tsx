@@ -482,6 +482,7 @@ function App() {
               satcat={satcat.byId}
               cloudRegion={cloudRegion}
               fieldTles={catalogueField.tles}
+              fieldRcs={catalogueField.rcsBySatnum}
               fieldLoading={catalogueField.loading}
               fieldError={catalogueField.error}
               fieldUnconfigured={catalogueField.unconfigured}

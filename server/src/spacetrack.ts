@@ -347,6 +347,37 @@ let cache: { catalogue: DebrisCatalogue; fetchedAt: number } | null = null;
  * answer rather than a broken screen.
  */
 /**
+ * Only the columns that are actually read.
+ *
+ * gp returns around eighty fields per object. Multiplied by the whole in-orbit
+ * catalogue that is tens of megabytes of JSON to transfer, parse and hold, and
+ * this refresh runs inside a serverless function with a thirty-second ceiling —
+ * so the columns nobody reads are the difference between finishing and being
+ * killed. satcat is trimmed the same way.
+ *
+ * Applied only to the bulk paths. If Space-Track rejects a predicate list the
+ * request fails and the untrimmed fallback below still works, which is why the
+ * fallback keeps asking for everything.
+ */
+const GP_PREDICATES = "NORAD_CAT_ID,OBJECT_NAME,TLE_LINE1,TLE_LINE2,EPOCH";
+
+/**
+ * How long a refresh may take before it gives up on purpose.
+ *
+ * The function's ceiling is 60 seconds (server/vercel.json). Being killed at the
+ * ceiling is the worst outcome available: the caller gets a 504 with no reason,
+ * the cache stays empty, and the next request repeats the whole attempt — so a
+ * deployment with working credentials could sit at the CelesTrak fallback
+ * forever while looking like it was configured correctly.
+ *
+ * Stopping short of the ceiling turns that into an ordinary unavailable-with-a-
+ * reason, which the client already handles by falling back and saying so.
+ */
+const REFRESH_BUDGET_MS = 45_000;
+const SATCAT_PREDICATES =
+  "NORAD_CAT_ID,OBJECT_NAME,OBJECT_TYPE,OPS_STATUS_CODE,DECAY,RCS_SIZE,COUNTRY,LAUNCH,PERIGEE,APOGEE,INCLINATION";
+
+/**
  * Every current element set, in one request where possible.
  *
  * The bulk form asks gp for everything still in orbit and keeps the rows that
@@ -364,7 +395,7 @@ async function fetchElements(wanted: SatcatRecord[]): Promise<GpRecord[]> {
 
   try {
     const all = (await authedGet(
-      `${QUERY}/class/gp/decay_date/null-val/orderby/NORAD_CAT_ID/format/json`
+      `${QUERY}/class/gp/decay_date/null-val/predicates/${GP_PREDICATES}/orderby/NORAD_CAT_ID/format/json`
     )) as GpRecord[];
     if (!Array.isArray(all) || all.length === 0) throw new Error("gp returned no rows.");
     const matched = all.filter((r) => keep.has(String(r.NORAD_CAT_ID)));
@@ -430,6 +461,16 @@ export async function getSpaceTrackDebris(
     };
   }
 
+  const deadline = now + REFRESH_BUDGET_MS;
+  const checkBudget = (stage: string) => {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Refresh exceeded its ${Math.round(REFRESH_BUDGET_MS / 1000)}s budget at ${stage}; ` +
+          `the catalogue is too large to fetch inside one request right now.`
+      );
+    }
+  };
+
   try {
     // 1. Object list. DECAY/null-val keeps what is still in orbit rather than
     //    the ~35,800 ever catalogued — two thirds of that file is history.
@@ -442,9 +483,19 @@ export async function getSpaceTrackDebris(
     //    the user's selected CelesTrak groups — around ninety with "visual"
     //    chosen, and exactly the eight curated ones without it — while a status
     //    line claimed to be plotting the catalogue.
-    const satcat = (await authedGet(
-      `${QUERY}/class/satcat/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
-    )) as SatcatRecord[];
+    const satcat = await (async () => {
+      try {
+        const trimmed = (await authedGet(
+          `${QUERY}/class/satcat/DECAY/null-val/predicates/${SATCAT_PREDICATES}/orderby/NORAD_CAT_ID/format/json`
+        )) as SatcatRecord[];
+        if (Array.isArray(trimmed) && trimmed.length > 0) return trimmed;
+      } catch {
+        // Fall through: a rejected predicate list must not cost the catalogue.
+      }
+      return (await authedGet(
+        `${QUERY}/class/satcat/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
+      )) as SatcatRecord[];
+    })();
     if (!Array.isArray(satcat) || satcat.length === 0) throw new Error("satcat returned no rows.");
 
     // 2. Elements. One request for every current element set, not one per
@@ -463,9 +514,12 @@ export async function getSpaceTrackDebris(
     //    catalogue size. The id-chunked path is kept below as a fallback,
     //    because a URL-length or response-size failure on the bulk form should
     //    degrade to the slow route rather than to nothing.
+    checkBudget("the object list");
+
     const wanted = nonActive(satcat);
     if (wanted.length === 0) throw new Error("satcat returned no non-active objects.");
     const gp = await fetchElements(wanted);
+    checkBudget("the element sets");
 
     // 3. Join, then rank so a capped response keeps the largest objects.
     const { joined, missingElements } = joinSatcatWithGp(wanted, gp, normaliseId);

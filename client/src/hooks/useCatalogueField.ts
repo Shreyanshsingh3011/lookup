@@ -38,6 +38,16 @@ const HARD_CEILING = 40_000;
 
 export interface CatalogueField {
   tles: TleRecord[];
+  /**
+   * Declared radar cross-section class per catalogue number, where known.
+   *
+   * Space-Track states LARGE / MEDIUM / SMALL per object. It is the only sourced
+   * fact about a fragment's physical size, so the dome draws from it rather than
+   * from an invented spread. CelesTrak's breakup groups carry no equivalent, so
+   * this is empty on that path and the dome falls back to varying shape alone —
+   * which is the honest outcome, not a degraded one.
+   */
+  rcsBySatnum: Map<string, string>;
   /** Returned by the server before filtering. */
   fetched: number;
   /** Rejected because they cannot rise at this latitude. */
@@ -71,6 +81,7 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
   const [unconfigured, setUnconfigured] = useState(false);
   const [source, setSource] = useState<FieldSource>('none');
   const [partial, setPartial] = useState(false);
+  const [rcs, setRcs] = useState<Map<string, string>>(() => new Map());
 
   useEffect(() => {
     if (!enabled || loaded) return;
@@ -96,6 +107,11 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
         setError(null);
         setSource('spacetrack');
         setObjects(primary.objects.map((o) => o.tle));
+        const sizes = new Map<string, string>();
+        for (const o of primary.objects) {
+          if (o.rcsSize) sizes.set(o.tle.satnum, o.rcsSize);
+        }
+        setRcs(sizes);
         setLoaded(true);
         return;
       }
@@ -148,5 +164,6 @@ export function useCatalogueField(observer: Observer, enabled: boolean): Catalog
     unconfigured,
     source,
     partial,
+    rcsBySatnum: rcs,
   };
 }

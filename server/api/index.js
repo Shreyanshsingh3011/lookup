@@ -43501,12 +43501,15 @@ async function authedGet(url, allowRetry = true) {
   }
 }
 var cache8 = null;
+var GP_PREDICATES = "NORAD_CAT_ID,OBJECT_NAME,TLE_LINE1,TLE_LINE2,EPOCH";
+var REFRESH_BUDGET_MS = 45e3;
+var SATCAT_PREDICATES = "NORAD_CAT_ID,OBJECT_NAME,OBJECT_TYPE,OPS_STATUS_CODE,DECAY,RCS_SIZE,COUNTRY,LAUNCH,PERIGEE,APOGEE,INCLINATION";
 async function fetchElements(wanted) {
   const ids = wanted.map((r) => r.NORAD_CAT_ID).filter(Boolean);
   const keep = new Set(ids);
   try {
     const all = await authedGet(
-      `${QUERY}/class/gp/decay_date/null-val/orderby/NORAD_CAT_ID/format/json`
+      `${QUERY}/class/gp/decay_date/null-val/predicates/${GP_PREDICATES}/orderby/NORAD_CAT_ID/format/json`
     );
     if (!Array.isArray(all) || all.length === 0) throw new Error("gp returned no rows.");
     const matched = all.filter((r) => keep.has(String(r.NORAD_CAT_ID)));
@@ -43547,14 +43550,33 @@ async function getSpaceTrackDebris(normaliseId, limit2 = 900) {
       error: "Space-Track credentials are not configured; using the curated set."
     };
   }
+  const deadline = now + REFRESH_BUDGET_MS;
+  const checkBudget = (stage) => {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Refresh exceeded its ${Math.round(REFRESH_BUDGET_MS / 1e3)}s budget at ${stage}; the catalogue is too large to fetch inside one request right now.`
+      );
+    }
+  };
   try {
-    const satcat = await authedGet(
-      `${QUERY}/class/satcat/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
-    );
+    const satcat = await (async () => {
+      try {
+        const trimmed = await authedGet(
+          `${QUERY}/class/satcat/DECAY/null-val/predicates/${SATCAT_PREDICATES}/orderby/NORAD_CAT_ID/format/json`
+        );
+        if (Array.isArray(trimmed) && trimmed.length > 0) return trimmed;
+      } catch {
+      }
+      return await authedGet(
+        `${QUERY}/class/satcat/DECAY/null-val/orderby/NORAD_CAT_ID/format/json`
+      );
+    })();
     if (!Array.isArray(satcat) || satcat.length === 0) throw new Error("satcat returned no rows.");
+    checkBudget("the object list");
     const wanted = nonActive(satcat);
     if (wanted.length === 0) throw new Error("satcat returned no non-active objects.");
     const gp = await fetchElements(wanted);
+    checkBudget("the element sets");
     const { joined, missingElements } = joinSatcatWithGp(wanted, gp, normaliseId);
     if (joined.length === 0) throw new Error("satcat and gp produced no joined objects.");
     const catalogue = {

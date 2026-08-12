@@ -236,6 +236,7 @@ interface SceneProps {
    * fragments here, spent stages and dead payloads there.
    */
   fieldTles: TleRecord[];
+  fieldRcs?: Map<string, string>;
   onFieldChange: (info: { tracked: number; visible: number }) => void;
 }
 
@@ -262,6 +263,7 @@ function SkyScene({
   labelled,
   onLabelledChange,
   fieldTles,
+  fieldRcs,
   onFieldChange,
 }: SceneProps) {
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes, 'active', satcat);
@@ -504,6 +506,7 @@ function SkyScene({
       {layers.debris && (
         <DebrisField
           tles={fieldOnlyTles}
+          rcsBySatnum={fieldRcs}
           observer={observer}
           displayTime={displayTime}
           labelled={labelled}
@@ -604,6 +607,8 @@ interface Props {
    * whatever you point at into a full marker.
    */
   fieldTles?: TleRecord[];
+  /** Declared RCS size class per catalogue number, when Space-Track supplied it. */
+  fieldRcs?: Map<string, string>;
   fieldLoading?: boolean;
   /** Why the bulk field is empty, when it is. Stated, never swallowed. */
   fieldError?: string | null;
@@ -652,6 +657,7 @@ export function SkyDome({
   satcat = EMPTY_SATCAT,
   cloudRegion = null,
   fieldTles = EMPTY_TLES,
+  fieldRcs,
   fieldLoading = false,
   fieldError = null,
   fieldUnconfigured = false,
@@ -898,6 +904,7 @@ export function SkyDome({
               labelled={labelled}
               onLabelledChange={setLabelled}
               fieldTles={fieldTles}
+              fieldRcs={fieldRcs}
               onFieldChange={onFieldChange}
             />
           </Suspense>
