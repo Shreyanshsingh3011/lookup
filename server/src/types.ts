@@ -20,7 +20,12 @@ export interface Pass {
   end: PassEvent;
   magnitude: number | null; // brightest (lowest) magnitude reached during the pass
   durationSeconds: number;
-  endReason: "set" | "shadow" | "daylight";
+  /**
+   * Why the pass stopped being visible. "window" means it had not: the
+   * satellite was still up and lit when the search ran out of window, so this
+   * pass is reported truncated rather than finished.
+   */
+  endReason: "set" | "shadow" | "daylight" | "window";
   /**
    * Forecast cloud cover percent at the pass maximum, or null when no forecast
    * covers that time. Advisory only — it never affects whether a pass is listed.

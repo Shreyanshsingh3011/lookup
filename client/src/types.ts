@@ -20,7 +20,8 @@ export interface Pass {
   end: PassEvent;
   magnitude: number | null;
   durationSeconds: number;
-  endReason: 'set' | 'shadow' | 'daylight';
+  /** "window" means the search ended while the pass was still running. */
+  endReason: 'set' | 'shadow' | 'daylight' | 'window';
   /**
    * Forecast cloud cover percent at the pass maximum, or null when no forecast
    * covers that time. Advisory only — never affects whether a pass is listed.

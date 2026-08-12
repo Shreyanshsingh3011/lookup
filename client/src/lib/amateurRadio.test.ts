@@ -253,3 +253,52 @@ test('peaks and closest approaches are no longer pinned to the coarse grid', () 
   const onGrid = passes.filter((p) => p.tca.getTime() % 30_000 === 0).length;
   assert.ok(onGrid < passes.length, `all ${passes.length} closest approaches sit on a 30 s boundary`);
 });
+
+test('a pass already under way reports the rise it actually had', () => {
+  // The case the old crossing search failed silently. It walked outward exactly
+  // thirty one-second steps and returned wherever it stopped, so a pass already
+  // in progress at the search start — the first thing you see on opening the
+  // panel mid-pass — had its rise reported as thirty seconds before the window,
+  // whatever the truth was. Measured over 259 real passes, the one that was
+  // already up came out 258.6 s late and 259 s short.
+  //
+  // Start the search from a moment the ISS is already above the horizon, found
+  // by walking a pass backwards from its own peak.
+  const passes = radioPasses(ISS, LONDON, EPOCH, 24, 0);
+  const reference = passes.find((p) => p.maxElevationDeg > 20);
+  assert.ok(reference, 'need a decent pass to start inside');
+
+  const midPass = new Date((reference.aos.getTime() + reference.tca.getTime()) / 2);
+  assert.ok(rangeSample(ISS, LONDON, midPass)!.elevationDeg > 0, 'the start instant must be mid-pass');
+
+  const fromMidPass = radioPasses(ISS, LONDON, midPass, 24, 0);
+  const inProgress = fromMidPass[0];
+  assert.ok(inProgress, 'the pass under way must still be reported');
+
+  // Its rise is in the past, and it is the same rise the full scan found.
+  assert.ok(
+    inProgress.aos.getTime() < midPass.getTime(),
+    `rise reported at ${inProgress.aos.toISOString()}, which is not before the ${midPass.toISOString()} start`
+  );
+  assert.ok(
+    Math.abs(inProgress.aos.getTime() - reference.aos.getTime()) < 1000,
+    `rise reported at ${inProgress.aos.toISOString()} against ${reference.aos.toISOString()} from a scan that saw the whole pass`
+  );
+  assert.ok(
+    Math.abs(inProgress.durationSeconds - reference.durationSeconds) <= 1,
+    `duration ${inProgress.durationSeconds}s against the full scan's ${reference.durationSeconds}s`
+  );
+});
+
+test('horizon crossings land where the satellite is actually on the horizon', () => {
+  const passes = radioPasses(ISS, LONDON, EPOCH, 24, 0);
+  for (const pass of passes) {
+    for (const [label, at] of [['rise', pass.aos], ['set', pass.los]] as const) {
+      const sample = rangeSample(ISS, LONDON, at)!;
+      assert.ok(
+        Math.abs(sample.elevationDeg) < 0.02,
+        `${label} at ${at.toISOString()} puts the satellite at ${sample.elevationDeg.toFixed(3)}°, not on the horizon`
+      );
+    }
+  }
+});

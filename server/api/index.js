@@ -42304,20 +42304,29 @@ function passesForSatellite(tle, context, opts) {
       let current = null;
       const gridStart = winStart.getTime() + Math.ceil((spanStart - winStart.getTime()) / stepMs) * stepMs;
       const resample = (date) => sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, date, opts);
+      let previousMs = null;
+      let beforeStartMs = null;
       for (let t = gridStart; t <= spanEnd; t += stepMs) {
         const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
-        if (!sample) continue;
-        const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
-        if (visible) {
-          if (!current) current = [];
+        if (!sample) {
+          previousMs = t;
+          continue;
+        }
+        if (isVisible(sample)) {
+          if (!current) {
+            current = [];
+            beforeStartMs = previousMs;
+          }
           current.push(sample);
         } else if (current) {
-          finalizePass(current, tle, opts, passes, rejected, sample, resample);
+          finalizePass(current, tle, opts, passes, rejected, sample, resample, beforeStartMs, t);
           current = null;
+          beforeStartMs = null;
         }
+        previousMs = t;
       }
       if (current) {
-        finalizePass(current, tle, opts, passes, rejected, null, resample);
+        finalizePass(current, tle, opts, passes, rejected, null, resample, beforeStartMs, null);
       }
     }
   }
@@ -42329,13 +42338,28 @@ function passesForSatellite(tle, context, opts) {
   };
 }
 function endReasonFor(terminator) {
-  if (!terminator) return "set";
+  if (!terminator) return "window";
   if (terminator.elevationDeg <= 0) return "set";
   if (!terminator.illuminated) return "shadow";
   if (!terminator.observerDark) return "daylight";
   return "set";
 }
 var PEAK_ITERATIONS = 40;
+function isVisible(sample) {
+  return sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
+}
+var BOUNDARY_TOLERANCE_MS = 50;
+function refineBoundary(resample, visibleMs, invisibleMs) {
+  let visible = visibleMs;
+  let invisible = invisibleMs;
+  while (Math.abs(invisible - visible) > BOUNDARY_TOLERANCE_MS) {
+    const mid = Math.round((visible + invisible) / 2);
+    const sample = resample(new Date(mid));
+    if (sample && isVisible(sample)) visible = mid;
+    else invisible = mid;
+  }
+  return resample(new Date(visible));
+}
 function refinePeak(resample, centre, stepMs, earliestMs, latestMs) {
   let lo = Math.max(earliestMs, centre.getTime() - stepMs);
   let hi = Math.min(latestMs, centre.getTime() + stepMs);
@@ -42352,7 +42376,17 @@ function refinePeak(resample, centre, stepMs, earliestMs, latestMs) {
   }
   return resample(new Date(Math.round((lo + hi) / 2)));
 }
-function finalizePass(samples, tle, opts, out, rejectedMagnitudes, terminator, resample) {
+function finalizePass(samples, tle, opts, out, rejectedMagnitudes, terminator, resample, beforeStartMs, afterEndMs) {
+  let start = samples[0];
+  let end = samples[samples.length - 1];
+  if (beforeStartMs !== null) {
+    const refinedStart = refineBoundary(resample, start.date.getTime(), beforeStartMs);
+    if (refinedStart) start = refinedStart;
+  }
+  if (afterEndMs !== null) {
+    const refinedEnd = refineBoundary(resample, end.date.getTime(), afterEndMs);
+    if (refinedEnd) end = refinedEnd;
+  }
   let maxSample = samples[0];
   for (const s of samples) {
     if (s.elevationDeg > maxSample.elevationDeg) maxSample = s;
@@ -42361,13 +42395,14 @@ function finalizePass(samples, tle, opts, out, rejectedMagnitudes, terminator, r
     resample,
     maxSample.date,
     opts.fineStepSeconds * 1e3,
-    samples[0].date.getTime(),
-    samples[samples.length - 1].date.getTime()
+    start.date.getTime(),
+    end.date.getTime()
   );
   if (refined && refined.elevationDeg > maxSample.elevationDeg) maxSample = refined;
+  for (const candidate of [start, end]) {
+    if (candidate.elevationDeg > maxSample.elevationDeg) maxSample = candidate;
+  }
   if (maxSample.elevationDeg < opts.minElevationDeg) return;
-  const start = samples[0];
-  const end = samples[samples.length - 1];
   const brightest = samples.reduce((min, s) => s.magnitude < min ? s.magnitude : min, maxSample.magnitude);
   if (brightest > opts.maxMagnitude) {
     rejectedMagnitudes.push(Math.round(brightest * 10) / 10);

@@ -95,7 +95,7 @@ Lives in `server/src/passes.ts`:
 - Illumination uses satellite.js's `shadowFraction`, which models the penumbra rather than a hard cylindrical shadow, so a satellite fading into eclipse mid-pass is captured.
 - Apparent magnitude approximates range, phase angle, and a per-satellite standard magnitude, then dims by the eclipsed fraction of the Sun's disc and by atmospheric extinction.
 - **Extinction was missing until 2026-08-12, and its absence had a direction.** Passes spend most of their time low in the sky, low elevations are also where phase angles are most favourable, and nothing offset that — so the app reported the brightest moment of a pass at the point where the atmosphere was dimming the object most. Checked against production before the fix: an ISS pass peaking at 11.9° was quoted at magnitude −1.0, with the headline figure −1.4 taken from a sample at 4.5°, through eleven air masses. It now reads 0.2 at the peak, and the brightest sample moves up the sky where it belongs. Air mass uses Kasten–Young (1.0 overhead, 5.6 at 10°, ~38 at the horizon) rather than 1/sin(elevation), which diverges at the horizon and is already several per cent wrong by 10° — exactly where passes live. The coefficient, 0.25 mag per air mass, is a nominal clear-sky sea-level value in V: real extinction can be half that on a mountain or double it in summer haze, so it is the right order rather than a per-night truth, which is the same standing as the standard magnitudes it corrects.
-- A pass reports *why* it ended — `set`, `shadow`, or `daylight` — taken from the first sample that failed the visibility test. It has to come from that terminating sample rather than the last visible one: every sample inside a pass is illuminated and above the horizon by construction, so inspecting the last visible sample could only ever report `set`.
+- A pass reports *why* it ended — `set`, `shadow`, `daylight`, or `window` — taken from the first sample that failed the visibility test. It has to come from that terminating sample rather than the last visible one: every sample inside a pass is illuminated and above the horizon by construction, so inspecting the last visible sample could only ever report `set`. `window` means nothing ended the pass: the search ran out of window while the satellite was still up and lit. That case used to be reported as `set`, which the detail panel rendered as "sets below horizon" — false, and measurably so; see [Where a pass peaks](#where-a-pass-peaks).
 - Sun position for satellite illumination comes from satellite.js (same TEME frame as the SGP4 output, so the two stay self-consistent); astronomy-engine handles observer twilight, where its topocentric horizon model with refraction is the better tool.
 
 ## 3D sky dome
@@ -307,6 +307,50 @@ one pass peaking at 78° was reported as peaking due west when it peaked
 west-southwest. Telling someone where to look is the pass table's whole job. Now:
 0 of 180 wrong, peak azimuth within 2.3° and that residual on an 89.5° pass where
 azimuth is ill-conditioned rather than mis-sampled.
+
+**Pass boundaries.** The start and end were the last things read straight off the
+grid. Over 19 real passes against the same scan run twenty times finer, the start
+came out up to 9 s late (4.4 s on average), the end up to 9.5 s early, and one
+pass's duration was 16 s short. The elevation reported at the boundary was wrong
+to match — passes that end by *setting* were ending at up to 0.6° rather than at
+the horizon. Both ends are bisected now: visibility is a boolean that flips once
+inside the bracket the grid supplies, so bisection finds the flip without needing
+to know which of the three conditions moved, which matters because a pass can
+start by rising, by leaving Earth's shadow, or by the sky getting dark enough.
+Now within 0.03 s, durations exact, and every setting pass ends at 0.0°.
+
+Ordering turned out to be load-bearing, and I got it wrong first. Refined
+boundaries can land outside the grid samples, so pinning the peak against the
+grid samples let a pass that ends by entering shadow *while still climbing*
+report a final elevation above its own peak — caught by an existing test
+("passes come back in time order and internally consistent") rather than by me.
+Boundaries are located first and the peak is searched over that true interval,
+with the peak taken as the maximum of the search and both endpoints so the
+invariant holds regardless.
+
+**"Sets below horizon" was sometimes false.** Chasing the boundary fix turned up
+a separate honesty bug: `endReason` used `"set"` for two different things — the
+satellite dropping below the horizon, and the search simply running out of window
+mid-pass — and the detail panel rendered both as "sets below horizon". Rare, but
+false: over ten days of the bundled catalogue from Singapore, one pass of 155 was
+still **26.7° up and sunlit** when its span closed and the app said it had set.
+Eccentric orbits produce it, since they can stay above the horizon longer than a
+scanned stretch. There is a fourth reason now, `"window"`, rendered as "still up
+when the search ended".
+
+**Radio horizon crossings.** Same defect class, worse failure. The crossing search
+walked outward exactly thirty one-second steps and returned wherever it had got
+to — fine for an interior crossing, silently wrong for a pass *already under way*,
+which is the first thing you see if you open the panel mid-pass. There the first
+sample is the search's own start instant and the rise is further back than thirty
+seconds, so the reported rise was just "thirty seconds before the window". Over
+259 real passes the one that was already up had its rise reported **258.6 s late**
+(4m19s) and its duration 259 s short — 669 s against a real 928 s — with nothing
+marking the number as a guess. The bracket is established by stepping outward
+until an instant outside the pass is found, then bisected: now within 0.03 s, and
+a pass in progress reports the rise it actually had, in the past, where it belongs.
+Worth noting my first measurement of this said 39.99 s — my own audit bracket had
+clipped it, and widening the bracket was what revealed the real 258.6 s.
 
 Two things worth recording about this audit. The refinement bracket is clamped to
 the visible stretch of the pass, which is not tidiness: a pass can end in Earth's

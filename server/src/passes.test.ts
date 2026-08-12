@@ -317,3 +317,75 @@ test("a refined peak never falls outside the visible stretch of its pass", () =>
     assert.ok(max >= start && max <= end, `peak at ${pass.max.time} is outside ${pass.start.time}..${pass.end.time}`);
   }
 });
+
+/**
+ * The boundaries were the last thing read straight off the fine grid. Measured
+ * over 19 real passes against the same scan run twenty times finer, the start
+ * came out up to 9 s late (4.4 s on average), the end up to 9.5 s early, and one
+ * pass's duration was 16 s short. The elevation reported at the boundary was
+ * wrong to match: passes that end by setting were ending at up to 0.6 degrees
+ * instead of at the horizon.
+ */
+test("a pass's start and end agree with a twenty-times-finer scan", () => {
+  const base = { days: 3, now: NOW, maxMagnitude: 99 } as const;
+  const shipped = computePassesForMany(CATALOGUE, OBSERVER, base).passes;
+  const finer = computePassesForMany(CATALOGUE, OBSERVER, { ...base, fineStepSeconds: 0.5 }).passes;
+  assert.ok(shipped.length > 0, "need passes to compare");
+
+  let compared = 0;
+  for (const pass of shipped) {
+    // Both grids pin the peak to the same instant, so it identifies the pass.
+    const twin = finer
+      .filter((p) => p.satnum === pass.satnum)
+      .find((p) => Math.abs(Date.parse(p.max.time) - Date.parse(pass.max.time)) < 60_000);
+    if (!twin) continue;
+    compared++;
+
+    const startGap = Math.abs(Date.parse(pass.start.time) - Date.parse(twin.start.time)) / 1000;
+    const endGap = Math.abs(Date.parse(pass.end.time) - Date.parse(twin.end.time)) / 1000;
+    assert.ok(startGap < 1, `${pass.name} starts ${startGap.toFixed(2)} s from where the finer scan says`);
+    assert.ok(endGap < 1, `${pass.name} ends ${endGap.toFixed(2)} s from where the finer scan says`);
+    assert.ok(
+      Math.abs(pass.durationSeconds - twin.durationSeconds) <= 1,
+      `${pass.name} lasts ${pass.durationSeconds}s against the finer scan's ${twin.durationSeconds}s`
+    );
+  }
+  assert.ok(compared > 0, "no pass could be matched between the two grids");
+});
+
+test("a pass that ends by setting ends at the horizon", () => {
+  const { passes } = computePassesForMany(CATALOGUE, OBSERVER, { days: 10, now: NOW, maxMagnitude: 99 });
+  const setting = passes.filter((p) => p.endReason === "set");
+  assert.ok(setting.length > 0, "some passes should end by setting");
+  for (const pass of setting) {
+    // Rounded to a tenth for display, so the horizon is 0.0 or 0.1 at worst.
+    assert.ok(
+      pass.end.altitudeDeg <= 0.1,
+      `${pass.name} is said to set at ${pass.end.altitudeDeg}° rather than at the horizon`
+    );
+  }
+
+  // The reason this assertion has teeth: "set" used to cover two different
+  // things, a satellite dropping below the horizon and the search simply
+  // running out of window mid-pass. The detail panel rendered both as "sets
+  // below horizon". Rare — one pass in 155 over ten days from Singapore, still
+  // 26.7 degrees up and sunlit — but false, and eccentric orbits keep producing
+  // it because they can stay above the horizon longer than a scanned stretch.
+  // Truncated passes say so now, and by construction end above the horizon.
+  for (const pass of passes.filter((p) => p.endReason === "window")) {
+    assert.ok(
+      pass.end.altitudeDeg > 0,
+      `${pass.name} is reported as cut off by the window but is already at ${pass.end.altitudeDeg}°`
+    );
+  }
+});
+
+test("boundary times are located, not snapped to the sampling grid", () => {
+  // The visible symptom of reading boundaries off the grid: every start and end
+  // separated by an exact multiple of the step.
+  const stepMs = DEFAULT_PASS_OPTIONS.fineStepSeconds * 1000;
+  const { passes } = computePassesForMany(CATALOGUE, OBSERVER, { days: 3, now: NOW, maxMagnitude: 99 });
+  assert.ok(passes.length > 2, "need a few passes for this to mean anything");
+  const onGrid = passes.filter((p) => (Date.parse(p.end.time) - Date.parse(p.start.time)) % stepMs === 0).length;
+  assert.ok(onGrid < passes.length, `all ${passes.length} pass durations are exact multiples of the ${stepMs} ms step`);
+});

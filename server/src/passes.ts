@@ -521,23 +521,36 @@ function passesForSatellite(
       const resample = (date: Date) =>
         sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, date, opts);
 
+      // The last instant looked at before the current one, whatever it showed.
+      // When a pass opens, this is the far side of the bracket its true start
+      // lies in; see refineBoundary.
+      let previousMs: number | null = null;
+      let beforeStartMs: number | null = null;
+
       for (let t = gridStart; t <= spanEnd; t += stepMs) {
         const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
-        if (!sample) continue;
+        if (!sample) {
+          previousMs = t;
+          continue;
+        }
 
-        const visible = sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
-
-        if (visible) {
-          if (!current) current = [];
+        if (isVisible(sample)) {
+          if (!current) {
+            current = [];
+            beforeStartMs = previousMs;
+          }
           current.push(sample);
         } else if (current) {
-          // This sample is why the pass ended, so it carries the reason.
-          finalizePass(current, tle, opts, passes, rejected, sample, resample);
+          // This sample is why the pass ended, so it carries the reason, and it
+          // is also the far side of the bracket the true end lies in.
+          finalizePass(current, tle, opts, passes, rejected, sample, resample, beforeStartMs, t);
           current = null;
+          beforeStartMs = null;
         }
+        previousMs = t;
       }
       if (current) {
-        finalizePass(current, tle, opts, passes, rejected, null, resample);
+        finalizePass(current, tle, opts, passes, rejected, null, resample, beforeStartMs, null);
       }
     }
   }
@@ -561,7 +574,14 @@ function passesForSatellite(
  * entered Earth's shadow looks like it vanished, and is worth flagging.
  */
 function endReasonFor(terminator: Sample | null): Pass["endReason"] {
-  if (!terminator) return "set"; // ran past the end of the search window
+  // No terminating sample means nothing ended the pass: the search window did.
+  // This used to be reported as "set", which the detail panel renders as "sets
+  // below horizon" — a statement that was simply false. Rare, but not harmless:
+  // over ten days of the bundled catalogue from Singapore, one pass of 155 was
+  // still 26.7 degrees up and sunlit when its span closed, and the app said it
+  // had set. Eccentric orbits are what produce it, since they can stay above the
+  // horizon long enough to outlast the stretch being scanned.
+  if (!terminator) return "window";
   if (terminator.elevationDeg <= 0) return "set";
   if (!terminator.illuminated) return "shadow";
   if (!terminator.observerDark) return "daylight";
@@ -570,6 +590,59 @@ function endReasonFor(terminator: Sample | null): Pass["endReason"] {
 
 /** Iterations of ternary search used to pin the peak of a pass. */
 const PEAK_ITERATIONS = 40;
+
+/**
+ * Whether a sample is a visible one: up, sunlit, and seen from darkness.
+ *
+ * Extracted so the boundary search below tests exactly the same condition the
+ * scan does. Two definitions of "visible" that drifted apart would put a pass's
+ * reported start at a moment the scan itself would not have called a start.
+ */
+function isVisible(sample: Sample): boolean {
+  return sample.elevationDeg > 0 && sample.illuminated && sample.observerDark;
+}
+
+/** Bracket tolerance for the boundary search, in milliseconds. */
+const BOUNDARY_TOLERANCE_MS = 50;
+
+/**
+ * Pin the instant a pass becomes, or stops being, visible.
+ *
+ * Visibility is a boolean that flips once inside the bracket the scan hands
+ * over — one end saw a visible sample, the other did not — so bisection finds
+ * the flip without needing to know which of the three conditions moved. That
+ * matters: a pass can start by rising, by leaving Earth's shadow, or by the sky
+ * getting dark enough, and root-finding on any single one of those would be
+ * wrong for the other two.
+ *
+ * Worth the trouble because the boundaries were the last thing still being read
+ * straight off the ten-second grid. Measured over 19 real passes against the
+ * same scan run twenty times finer, the start was reported up to 9 s late (4.4 s
+ * on average), the end up to 9.5 s early, and one pass's duration was 16 s short
+ * of the truth. The reported elevation at the boundary was wrong by as much as
+ * the timing implies: passes that end by setting were ending at up to 0.6 degrees
+ * rather than at the horizon, and one pass claimed to become visible at 10.5
+ * degrees when it really did so at 9.7.
+ *
+ * A null sample counts as not visible, matching what the scan does with one.
+ */
+function refineBoundary(
+  resample: (date: Date) => Sample | null,
+  visibleMs: number,
+  invisibleMs: number
+): Sample | null {
+  let visible = visibleMs;
+  let invisible = invisibleMs;
+
+  while (Math.abs(invisible - visible) > BOUNDARY_TOLERANCE_MS) {
+    const mid = Math.round((visible + invisible) / 2);
+    const sample = resample(new Date(mid));
+    if (sample && isVisible(sample)) visible = mid;
+    else invisible = mid;
+  }
+
+  return resample(new Date(visible));
+}
 
 /**
  * Pin the instant a pass actually peaks, rather than taking the best sample.
@@ -633,29 +706,59 @@ function finalizePass(
   out: Pass[],
   rejectedMagnitudes: number[],
   terminator: Sample | null,
-  resample: (date: Date) => Sample | null
+  resample: (date: Date) => Sample | null,
+  beforeStartMs: number | null,
+  afterEndMs: number | null
 ): void {
+  // Boundaries first, and the order is not arbitrary. The grid brackets both
+  // ends — the sample before the first visible one, and the sample that ended
+  // the pass — so bisection locates them, and they can land outside the grid
+  // samples by up to a step. The peak then has to be searched over that wider,
+  // true interval: pinning it against the grid samples instead let a pass that
+  // ends by entering Earth's shadow while still climbing report a final
+  // elevation above its own peak.
+  //
+  // Where the scan has no bracket — a pass still running when the span closed,
+  // or one already visible at its first instant — the grid sample stands, since
+  // there is nothing to bisect against.
+  let start = samples[0];
+  let end = samples[samples.length - 1];
+  if (beforeStartMs !== null) {
+    const refinedStart = refineBoundary(resample, start.date.getTime(), beforeStartMs);
+    if (refinedStart) start = refinedStart;
+  }
+  if (afterEndMs !== null) {
+    const refinedEnd = refineBoundary(resample, end.date.getTime(), afterEndMs);
+    if (refinedEnd) end = refinedEnd;
+  }
+
   let maxSample = samples[0];
   for (const s of samples) {
     if (s.elevationDeg > maxSample.elevationDeg) maxSample = s;
   }
 
-  // The grid brackets the peak; ternary search pins it. Done before the
-  // elevation gate below, so the gate tests the pass's real peak rather than
-  // whichever sample happened to land nearest it.
+  // Ternary search over the visible interval, bracketed around the best grid
+  // sample. Done before the elevation gate below, so the gate tests the pass's
+  // real peak rather than whichever sample happened to land nearest it.
   const refined = refinePeak(
     resample,
     maxSample.date,
     opts.fineStepSeconds * 1000,
-    samples[0].date.getTime(),
-    samples[samples.length - 1].date.getTime()
+    start.date.getTime(),
+    end.date.getTime()
   );
   if (refined && refined.elevationDeg > maxSample.elevationDeg) maxSample = refined;
 
+  // The peak of a pass cannot be lower than either of its ends. Ternary search
+  // converges on an endpoint when elevation is monotonic across the visible
+  // stretch, which is what a pass cut short by shadow looks like, but taking the
+  // maximum explicitly makes that hold whatever the search does.
+  for (const candidate of [start, end]) {
+    if (candidate.elevationDeg > maxSample.elevationDeg) maxSample = candidate;
+  }
+
   if (maxSample.elevationDeg < opts.minElevationDeg) return;
 
-  const start = samples[0];
-  const end = samples[samples.length - 1];
   const brightest = samples.reduce((min, s) => (s.magnitude < min ? s.magnitude : min), maxSample.magnitude);
 
   // Geometry is fine but nobody could see it: record it so the caller can say

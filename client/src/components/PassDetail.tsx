@@ -181,7 +181,9 @@ export function PassDetail({ pass, observer, tles, onClose, onShowInSky, onLogSi
                     ? 'enters Earth’s shadow'
                     : pass.endReason === 'daylight'
                       ? 'sky too bright'
-                      : 'sets below horizon'}
+                      : pass.endReason === 'window'
+                        ? 'still up when the search ended'
+                        : 'sets below horizon'}
                 </dd>
               </div>
               {decay && (

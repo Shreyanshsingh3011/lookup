@@ -139,7 +139,6 @@ export interface RadioPass {
 }
 
 const STEP_SECONDS = 30;
-const REFINE_SECONDS = 1;
 
 /**
  * Iterations of ternary search used to pin a pass's peak and closest approach.
@@ -265,11 +264,11 @@ function finalise(
   const refinedClosest = refineExtremum(satrec, observer, closest.at, (s) => s.rangeKm);
   if (refinedClosest && refinedClosest.sample.rangeKm < closest.sample.rangeKm) closest = refinedClosest;
 
-  // Refine the horizon crossings, which the thirty-second scan can only locate
-  // to within half a minute — enough to matter when you are pointing an
-  // antenna at where something is about to appear.
-  const aosMs = refineCrossing(satrec, observer, samples[0].at, minElevationDeg, -1);
-  const losMs = refineCrossing(satrec, observer, samples[samples.length - 1].at, minElevationDeg, +1);
+  // Locate the horizon crossings, which the thirty-second scan can only bracket
+  // — enough to matter when you are pointing an antenna at where something is
+  // about to appear.
+  const aosMs = findCrossing(satrec, observer, samples[0].at, minElevationDeg, -1);
+  const losMs = findCrossing(satrec, observer, samples[samples.length - 1].at, minElevationDeg, +1);
 
   const aosSample = rangeSample(satrec, observer, new Date(aosMs));
   const losSample = rangeSample(satrec, observer, new Date(losMs));
@@ -288,23 +287,72 @@ function finalise(
   };
 }
 
-/** Walk back or forward from a known in-pass sample to the horizon crossing. */
-function refineCrossing(
+/**
+ * Furthest the crossing search will walk outward looking for a bracket, in
+ * coarse steps. Two hours, which is far longer than anything in low orbit stays
+ * above a horizon, and the bound exists so a pathological orbit cannot turn one
+ * pass into an unbounded search.
+ */
+const MAX_CROSSING_STEPS = 240;
+
+/** Bracket tolerance for the crossing search, in milliseconds. */
+const CROSSING_TOLERANCE_MS = 50;
+
+/**
+ * Find the instant a pass crosses the horizon, on either side.
+ *
+ * The old version walked outward one second at a time for exactly thirty
+ * iterations and returned wherever it had got to. That is correct for an
+ * interior crossing, to within a second — but it fails silently on the case that
+ * matters most to somebody opening the app: a pass already under way. There the
+ * first sample is the search's own start instant, the crossing is further back
+ * than thirty seconds, and the walk simply ran out and reported the boundary as
+ * thirty seconds before the window. Measured over 259 real passes, the one that
+ * was already up had its rise reported 258.6 seconds late — 4m19s — and its
+ * duration 259 seconds short, 669 s against a real 928 s. Nothing in the output
+ * marked the number as a guess.
+ *
+ * So the bracket is established rather than assumed: step outward until an
+ * instant outside the pass is found, then bisect. For an interior crossing the
+ * first step already lands outside, which is why this is no more work than the
+ * fixed walk it replaces — and it lands sub-second rather than within a second.
+ *
+ * If no outside instant turns up inside the bound, the outermost instant reached
+ * is returned. That is a real limit rather than a hidden one: it means the object
+ * has been above the horizon for two hours straight, and the honest answer is
+ * that the rise is further back than this was willing to look.
+ */
+function findCrossing(
   satrec: satellite.SatRec,
   observer: Observer,
-  fromMs: number,
+  insideMs: number,
   minElevationDeg: number,
   direction: -1 | 1
 ): number {
-  const stepMs = REFINE_SECONDS * 1000 * direction;
-  let t = fromMs;
-  for (let i = 0; i < STEP_SECONDS / REFINE_SECONDS; i++) {
-    const next = t + stepMs;
-    const sample = rangeSample(satrec, observer, new Date(next));
-    if (!sample || sample.elevationDeg <= minElevationDeg) return t;
-    t = next;
+  const above = (ms: number): boolean => {
+    const sample = rangeSample(satrec, observer, new Date(ms));
+    return sample !== null && sample.elevationDeg > minElevationDeg;
+  };
+
+  const stepMs = STEP_SECONDS * 1000 * direction;
+  let inside = insideMs;
+  let outside: number | null = null;
+  for (let i = 0; i < MAX_CROSSING_STEPS; i++) {
+    const next = inside + stepMs;
+    if (!above(next)) {
+      outside = next;
+      break;
+    }
+    inside = next;
   }
-  return t;
+  if (outside === null) return inside;
+
+  while (Math.abs(outside - inside) > CROSSING_TOLERANCE_MS) {
+    const mid = Math.round((inside + outside) / 2);
+    if (above(mid)) inside = mid;
+    else outside = mid;
+  }
+  return inside;
 }
 
 /** Attach names, and drop anything that will not propagate. */
