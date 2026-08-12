@@ -42303,6 +42303,7 @@ function passesForSatellite(tle, context, opts) {
     for (const [spanStart, spanEnd] of spans) {
       let current = null;
       const gridStart = winStart.getTime() + Math.ceil((spanStart - winStart.getTime()) / stepMs) * stepMs;
+      const resample = (date) => sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, date, opts);
       for (let t = gridStart; t <= spanEnd; t += stepMs) {
         const sample = sampleAt(satrec, tle.name, observerGd, sunAltitudeAt, new Date(t), opts);
         if (!sample) continue;
@@ -42311,12 +42312,12 @@ function passesForSatellite(tle, context, opts) {
           if (!current) current = [];
           current.push(sample);
         } else if (current) {
-          finalizePass(current, tle, opts, passes, rejected, sample);
+          finalizePass(current, tle, opts, passes, rejected, sample, resample);
           current = null;
         }
       }
       if (current) {
-        finalizePass(current, tle, opts, passes, rejected, null);
+        finalizePass(current, tle, opts, passes, rejected, null, resample);
       }
     }
   }
@@ -42334,11 +42335,36 @@ function endReasonFor(terminator) {
   if (!terminator.observerDark) return "daylight";
   return "set";
 }
-function finalizePass(samples, tle, opts, out, rejectedMagnitudes, terminator) {
+var PEAK_ITERATIONS = 40;
+function refinePeak(resample, centre, stepMs, earliestMs, latestMs) {
+  let lo = Math.max(earliestMs, centre.getTime() - stepMs);
+  let hi = Math.min(latestMs, centre.getTime() + stepMs);
+  if (hi <= lo) return null;
+  for (let i = 0; i < PEAK_ITERATIONS && hi - lo > 20; i++) {
+    const third = (hi - lo) / 3;
+    const m1 = lo + third;
+    const m2 = hi - third;
+    const s1 = resample(new Date(m1));
+    const s2 = resample(new Date(m2));
+    if (!s1 || !s2) return null;
+    if (s1.elevationDeg > s2.elevationDeg) hi = m2;
+    else lo = m1;
+  }
+  return resample(new Date(Math.round((lo + hi) / 2)));
+}
+function finalizePass(samples, tle, opts, out, rejectedMagnitudes, terminator, resample) {
   let maxSample = samples[0];
   for (const s of samples) {
     if (s.elevationDeg > maxSample.elevationDeg) maxSample = s;
   }
+  const refined = refinePeak(
+    resample,
+    maxSample.date,
+    opts.fineStepSeconds * 1e3,
+    samples[0].date.getTime(),
+    samples[samples.length - 1].date.getTime()
+  );
+  if (refined && refined.elevationDeg > maxSample.elevationDeg) maxSample = refined;
   if (maxSample.elevationDeg < opts.minElevationDeg) return;
   const start = samples[0];
   const end = samples[samples.length - 1];

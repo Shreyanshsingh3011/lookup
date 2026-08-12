@@ -179,3 +179,77 @@ test('frequencies are formatted the way a radio displays them', () => {
   assert.equal(formatShift(-3456.7), '−3,457 Hz');
   assert.equal(formatShift(0), '+0 Hz');
 });
+
+/**
+ * The peak and the closest approach are the two numbers the coarse scan used to
+ * report unrefined, and they were wrong in ways an operator would feel.
+ *
+ * Sampled every thirty seconds, the reported peak elevation ran up to 6.6
+ * degrees below the truth — one near-overhead pass came out as 81.6 degrees
+ * when it reached 88.2 — and the closest approach landed on a thirty-second
+ * boundary in all 259 passes measured. That second one is the costly one, since
+ * closest approach is where the Doppler crosses zero: fifteen seconds out
+ * leaves the shift 1,490 Hz from zero at 435 MHz, against the roughly 675 Hz
+ * this file already goes to the trouble of modelling for the observer's own
+ * motion.
+ */
+function scanForExtremes(
+  from: Date,
+  to: Date,
+  dtSeconds: number
+): { maxElevationDeg: number; minRangeKm: number; tcaMs: number } {
+  let maxElevationDeg = -Infinity;
+  let minRangeKm = Infinity;
+  let tcaMs = from.getTime();
+  for (let ms = from.getTime(); ms <= to.getTime(); ms += dtSeconds * 1000) {
+    const s = rangeSample(ISS, LONDON, new Date(ms));
+    if (!s) continue;
+    if (s.elevationDeg > maxElevationDeg) maxElevationDeg = s.elevationDeg;
+    if (s.rangeKm < minRangeKm) {
+      minRangeKm = s.rangeKm;
+      tcaMs = ms;
+    }
+  }
+  return { maxElevationDeg, minRangeKm, tcaMs };
+}
+
+test('a pass peak matches a tenth-second scan rather than the coarse grid', () => {
+  const passes = radioPasses(ISS, LONDON, EPOCH, 24, 0);
+  assert.ok(passes.length > 0, 'the ISS must produce passes over London in a day');
+
+  for (const pass of passes) {
+    const truth = scanForExtremes(pass.aos, pass.los, 0.1);
+    assert.ok(
+      truth.maxElevationDeg - pass.maxElevationDeg < 0.05,
+      `peak reported as ${pass.maxElevationDeg.toFixed(3)}° when the pass reaches ${truth.maxElevationDeg.toFixed(3)}°`
+    );
+    assert.ok(
+      pass.minRangeKm - truth.minRangeKm < 0.05,
+      `closest reported as ${pass.minRangeKm.toFixed(2)} km when the pass reaches ${truth.minRangeKm.toFixed(2)} km`
+    );
+    assert.ok(
+      Math.abs(pass.tca.getTime() - truth.tcaMs) < 1000,
+      `closest approach reported ${((pass.tca.getTime() - truth.tcaMs) / 1000).toFixed(1)} s from the truth`
+    );
+  }
+});
+
+test('the reported closest approach is where the Doppler actually crosses zero', () => {
+  const passes = radioPasses(ISS, LONDON, EPOCH, 24, 0);
+  for (const pass of passes) {
+    const atTca = rangeSample(ISS, LONDON, pass.tca)!;
+    const shift = dopplerShiftHz(UHF_HZ, atTca.rangeRateKmS);
+    // Well inside the tuning step of any radio, and two orders below the
+    // 1,490 Hz the thirty-second grid was leaving on the table.
+    assert.ok(Math.abs(shift) < 50, `${Math.abs(shift).toFixed(0)} Hz from zero at closest approach`);
+  }
+});
+
+test('peaks and closest approaches are no longer pinned to the coarse grid', () => {
+  // The visible symptom of taking the best grid sample: every single reported
+  // time landing exactly on a thirty-second boundary.
+  const passes = radioPasses(ISS, LONDON, EPOCH, 48, 0);
+  assert.ok(passes.length > 2, 'need a few passes for this to mean anything');
+  const onGrid = passes.filter((p) => p.tca.getTime() % 30_000 === 0).length;
+  assert.ok(onGrid < passes.length, `all ${passes.length} closest approaches sit on a 30 s boundary`);
+});

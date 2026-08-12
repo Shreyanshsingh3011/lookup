@@ -234,3 +234,86 @@ test("extinction increases monotonically as an object sinks", () => {
     previous = e;
   }
 });
+
+/**
+ * The peak of a pass used to be whichever fine-grid sample happened to sit
+ * nearest it, and the elevation that cost was small — 0.035 degrees on average
+ * over 180 real passes from the current bright catalogue, 1.4 at worst. The
+ * direction was not small. Azimuth sweeps fastest exactly where elevation
+ * peaks, so the reported peak azimuth ran up to 65 degrees out, and 20 of those
+ * 180 passes named the wrong compass point; 15 of them below 80 degrees
+ * elevation, where a direction is still something an observer can act on. One
+ * pass peaking at 78 degrees was reported as peaking due west when it peaked
+ * west-southwest.
+ */
+function peakByFineScan(
+  tle: TleRecord,
+  observer: Observer,
+  startIso: string,
+  endIso: string
+): { elevationDeg: number; azimuthDeg: number } {
+  const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
+  const gd: satellite.GeodeticLocation = {
+    longitude: satellite.degreesToRadians(observer.longitude),
+    latitude: satellite.degreesToRadians(observer.latitude),
+    height: observer.elevation / 1000,
+  };
+  let elevationDeg = -Infinity;
+  let azimuthDeg = 0;
+  for (let ms = Date.parse(startIso); ms <= Date.parse(endIso); ms += 200) {
+    const at = new Date(ms);
+    const pv = satellite.propagate(satrec, at);
+    if (!pv || !pv.position) continue;
+    const look = satellite.ecfToLookAngles(gd, satellite.eciToEcf(pv.position, satellite.gstime(at)));
+    const el = satellite.radiansToDegrees(look.elevation);
+    if (el > elevationDeg) {
+      elevationDeg = el;
+      azimuthDeg = satellite.radiansToDegrees(look.azimuth);
+    }
+  }
+  return { elevationDeg, azimuthDeg };
+}
+
+test("the reported peak of a pass is where the pass actually peaks", () => {
+  const { passes } = computePassesForMany(CATALOGUE, OBSERVER, { days: 4, now: NOW, maxMagnitude: 99 });
+  assert.ok(passes.length > 0, "need passes to check");
+
+  let checked = 0;
+  for (const pass of passes) {
+    const tle = CATALOGUE.find((t) => t.satnum === pass.satnum);
+    if (!tle) continue;
+    checked++;
+    const truth = peakByFineScan(tle, OBSERVER, pass.start.time, pass.end.time);
+
+    // altitudeDeg is rounded to a tenth for display, so that is the tolerance.
+    assert.ok(
+      truth.elevationDeg - pass.max.altitudeDeg < 0.06,
+      `${tle.name} peak reported as ${pass.max.altitudeDeg}° when the pass reaches ${truth.elevationDeg.toFixed(3)}°`
+    );
+
+    // Azimuth is ill-conditioned within a few degrees of the zenith — at the
+    // zenith it has no value at all — so only check it where it means something.
+    if (pass.max.altitudeDeg < 85) {
+      let off = Math.abs(pass.max.azimuthDeg - truth.azimuthDeg) % 360;
+      if (off > 180) off = 360 - off;
+      assert.ok(
+        off < 3,
+        `${tle.name} peaking at ${pass.max.altitudeDeg}° reported peak azimuth ${pass.max.azimuthDeg}° against a true ${truth.azimuthDeg.toFixed(1)}°`
+      );
+    }
+  }
+  assert.ok(checked > 0, "no pass could be matched back to its element set");
+});
+
+test("a refined peak never falls outside the visible stretch of its pass", () => {
+  // The refinement searches either side of the best sample, and a pass can end
+  // in Earth's shadow well before the geometry peaks. Reaching past the last
+  // visible sample would report a peak the observer never saw lit.
+  const { passes } = computePassesForMany(CATALOGUE, OBSERVER, { days: 4, now: NOW, maxMagnitude: 99 });
+  for (const pass of passes) {
+    const start = Date.parse(pass.start.time);
+    const max = Date.parse(pass.max.time);
+    const end = Date.parse(pass.end.time);
+    assert.ok(max >= start && max <= end, `peak at ${pass.max.time} is outside ${pass.start.time}..${pass.end.time}`);
+  }
+});

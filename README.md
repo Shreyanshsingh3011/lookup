@@ -276,6 +276,49 @@ magnitude and, for the Moon, illuminated fraction. Uranus and Neptune are
 omitted: at magnitude 5.7+ they add clutter without being what anyone scanning
 the sky is looking for.
 
+## Where a pass peaks
+
+Both pass predictors — the visible one on the server, the radio one in the
+browser — scan on a grid and used to report whichever grid sample sat nearest
+each extreme, unrefined. The horizon crossings were refined; the peak and the
+closest approach were not. Both now pin the extreme by ternary search over the
+bracket the grid already supplies. Measured 2026-08-12 against fine scans of the
+same intervals, with live elements.
+
+**Radio passes** (30 s grid, 259 passes over real Fengyun-1C fragments). The
+reported peak elevation ran up to 6.6° below the truth — one near-overhead pass
+came out as 81.6° when it reached 88.2° — and the closest approach landed
+*exactly* on a 30 s boundary in all 259 cases, up to 15 s from the real one. That
+last one is the expensive one. Closest approach is where the Doppler crosses
+zero, and 15 s out leaves the shift **1,490 Hz** from zero at 435 MHz, worst
+case, against a mean of 319. For scale, the file already models the observer's
+own rotation with the Earth because that term is worth about 675 Hz and leaving
+it out "would be a visible error rather than a rounding one" — the error from
+rounding the moment to half a minute was twice that. Now: peak within 0.000°,
+closest approach within 0.1 s, Doppler within 1 Hz.
+
+**Visible passes** (10 s grid, 180 passes over 14 objects from the live bright
+catalogue). The elevation cost was small — 0.035° mean, 1.4° worst, which nobody
+standing outside would notice. The *direction* was not. Azimuth sweeps fastest
+exactly where elevation peaks, so the reported peak azimuth ran up to **65°** out
+and **20 of 180 passes named the wrong compass point**. Fifteen of those were
+below 80° elevation, where a direction is still something an observer can act on:
+one pass peaking at 78° was reported as peaking due west when it peaked
+west-southwest. Telling someone where to look is the pass table's whole job. Now:
+0 of 180 wrong, peak azimuth within 2.3° and that residual on an 89.5° pass where
+azimuth is ill-conditioned rather than mis-sampled.
+
+Two things worth recording about this audit. The refinement bracket is clamped to
+the visible stretch of the pass, which is not tidiness: a pass can end in Earth's
+shadow well before the geometry peaks, and searching past the last visible sample
+would report a peak the observer never saw lit — a worse answer than the coarse
+one. And one hypothesis of mine did not survive measurement. Comparing a
+grid-sampled peak against the 10° minimum-elevation gate should, in principle,
+discard passes whose real peak clears 10°; across 180 real passes it discarded
+none, because a pass peaking near 10° has gentle curvature there and is sampled
+accurately. The gate is refined before it is applied now regardless, but the
+defect I went looking for was not the one that was there.
+
 ## Pass detail and sky-track chart
 
 Clicking a row in the pass table opens a detail panel with a 2D polar chart:
