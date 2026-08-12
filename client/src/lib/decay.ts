@@ -2,7 +2,28 @@ import * as satellite from 'satellite.js';
 import { parseSatrec } from './sky';
 import type { TleRecord } from '../types';
 
-const EARTH_RADIUS_KM = 6371;
+/**
+ * Equatorial radius, WGS84, used to turn an orbital radius into an altitude.
+ *
+ * This was the mean radius, 6371, which is a defensible number for a sphere and
+ * the wrong one for this. Every catalogue a user might compare against — the
+ * Space-Track and CelesTrak SATCATs, and the sites built on them — quotes
+ * apogee and perigee as a(1 ± e) minus the *equatorial* radius, so using the
+ * mean radius put every altitude this app reports 7.1 km above the published
+ * figure for the same object, for no reason anyone could have discovered from
+ * the app itself.
+ *
+ * It is worth being clear about what the corrected number is and is not. Height
+ * above a sphere is not height above the ground: the ellipsoid runs from 6378 km
+ * at the equator to 6357 at the poles, so a satellite's true geodetic altitude
+ * swings about 21 km over one orbit and neither sphere captures that. Measured
+ * against the WGS84 geodetic height that subSatellitePoint reports, the quoted
+ * perigee sits up to 9 km high and the quoted apogee up to 21 km low. That is
+ * the cost of a closed form over mean elements, and it is worth paying — the
+ * conjunction screen calls this for every pair it filters — but the figures are
+ * catalogue-convention numbers rather than the altitude at any given instant.
+ */
+const EARTH_RADIUS_KM = 6378.137;
 /** Earth's standard gravitational parameter, km^3/s^2. */
 const MU_EARTH = 398600.4418;
 

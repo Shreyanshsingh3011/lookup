@@ -243,7 +243,45 @@ Four layers had never been verified against anything outside the app. Audited
   `360 - compassHeading` conversion; twelve existing tests cover the hand-checked
   cases.
 
-That audit found one real gap, since fixed: the rendered view ignored roll. The
+Audited again 2026-08-12, two more layers that had never been checked outside the
+app:
+
+- **The ground track**, against geometry rather than against itself. An observer
+  standing at the sub-satellite point must see the satellite at 90°, which links
+  `subSatellitePoint` to the look-angle path and breaks on any frame or GMST
+  error: across 468 samples over 12 real objects it comes out **90.00000°**. An
+  observer at the footprint edge must see it on the horizon: within 0.073°, about
+  8 km on the ground, which is the spherical-Earth approximation `footprintRadiusDeg`
+  makes and is well below what the map can show. The subsolar point lands on the
+  Sun's declination at both equinoxes (0.000°, −0.000°) and both solstices (23.439°,
+  −23.437°), and its longitude at 12:00 UTC traces the equation of time across a
+  year, peaking at 4.10° — 16.4 minutes, in early November, the correct sign and
+  magnitude. Nothing wrong found; it is recorded because "checked" and "never
+  looked at" had been indistinguishable.
+- **The altitude convention**, which was wrong. `orbitalElementsFromTle` subtracted
+  the mean Earth radius, 6371 km, where the Space-Track and CelesTrak SATCATs and
+  everything built on them subtract the *equatorial* radius. Every perigee and
+  apogee the app reported was 7.1 km above the published figure for the same
+  object, and nothing in the app could have revealed it. The anchor is
+  geostationary altitude: canonically 35,786 km, a figure *defined* as 42,164 −
+  6,378, so a GEO element set says outright which radius is in use — it was
+  reading 35,793. Fixed, with the canonical value pinned by a test. Worth being
+  precise about what the corrected number is not: height above a sphere is not
+  height above the ground, the ellipsoid runs from 6378 km at the equator to 6357
+  at the poles, and measured against the WGS84 geodetic height `subSatellitePoint`
+  reports, the quoted perigee still sits up to 9 km high and the quoted apogee up
+  to 21 km low. Those are catalogue-convention figures, not the altitude at an
+  instant.
+
+One hypothesis in that pass did not survive contact. The perigee bias runs in the
+direction that under-reports decay risk, and it feeds the 600 km "stable" gate, so
+I expected to find objects declared stable that were not. Across 644 real
+fragments, 60 of them in the 560–640 km band where a bias of that size could flip
+the verdict, exactly one crossed it — quoted at 600.8 km against a lowest geodetic
+altitude of 599.5. A kilometre either side of a rule-of-thumb threshold is not a
+defect, and the convention fix stands on the convention, not on that.
+
+The earlier audit found one real gap, since fixed: the rendered view ignored roll. The
 camera was aimed through OrbitControls, which parameterises it by azimuth and
 polar angle about a fixed world up — so there was nowhere in that description to
 put a rotation about the view axis. The dome pointed correctly at any attitude

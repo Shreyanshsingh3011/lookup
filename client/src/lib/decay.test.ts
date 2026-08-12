@@ -93,3 +93,46 @@ test('estimateDecay reports "decayed" once the reference date is already past SG
 test('estimateDecay does not throw on a garbage TLE', () => {
   assert.doesNotThrow(() => estimateDecay({ name: 'BAD', satnum: '1', line1: 'garbage', line2: 'garbage' }, EPOCH));
 });
+
+/**
+ * The altitude convention, anchored to a number that does not depend on this
+ * code being right.
+ *
+ * Geostationary altitude is canonically 35,786 km, and that figure is *defined*
+ * against Earth's equatorial radius: a sidereal-period circular orbit has a
+ * semi-major axis of 42,164 km, and 42,164 − 6,378 = 35,786. So a GEO element
+ * set is a direct test of which radius this module subtracts. Against the mean
+ * radius it had been using, 6,371, the same orbit comes out at 35,793 km — seven
+ * kilometres above the published value, as was every other altitude the app
+ * reported.
+ */
+test('a geostationary orbit comes out at the canonical 35,786 km', () => {
+  const elements = orbitalElementsFromTle(GEO_LIKE);
+  const mean = (elements.perigeeAltitudeKm + elements.apogeeAltitudeKm) / 2;
+  assert.ok(
+    Math.abs(mean - 35_786) < 5,
+    `geostationary altitude came out ${mean.toFixed(1)} km against the canonical 35,786`
+  );
+});
+
+test('perigee and apogee follow the catalogue convention: a(1 ± e) minus the equatorial radius', () => {
+  // Recomputed here from first principles rather than reusing the module's own
+  // constants, so a change to either one has to be deliberate.
+  const MU = 398600.4418;
+  const EQUATORIAL_RADIUS = 6378.137;
+  for (const tle of [ISS, GEO_LIKE, LOW_ORBIT_200KM]) {
+    const elements = orbitalElementsFromTle(tle);
+    const n = (elements.meanMotionRevPerDay * 2 * Math.PI) / 86_400;
+    const semiMajorAxis = Math.cbrt(MU / (n * n));
+    const expectedPerigee = semiMajorAxis * (1 - elements.eccentricity) - EQUATORIAL_RADIUS;
+    const expectedApogee = semiMajorAxis * (1 + elements.eccentricity) - EQUATORIAL_RADIUS;
+    assert.ok(
+      Math.abs(elements.perigeeAltitudeKm - expectedPerigee) < 0.001,
+      `${tle.name} perigee ${elements.perigeeAltitudeKm} against ${expectedPerigee}`
+    );
+    assert.ok(
+      Math.abs(elements.apogeeAltitudeKm - expectedApogee) < 0.001,
+      `${tle.name} apogee ${elements.apogeeAltitudeKm} against ${expectedApogee}`
+    );
+  }
+});
