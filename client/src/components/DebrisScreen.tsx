@@ -215,12 +215,27 @@ export function DebrisScreen({
                     about objects it cannot presently propagate. Showing only
                     the first read as the present and overstated every cloud —
                     Cosmos 1408 by four hundred fold. */}
+                {/* The as-of date is not decoration. These two counts are a
+                    SATCAT snapshot the server carries as `countsAsOf`, and the
+                    panel used to state them in bare present tense — "2,317 still
+                    in orbit" — while the panel directly above it was correctly
+                    saying the catalogue could not be reached. Drag removes
+                    fragments continuously, so the number was true on a date and
+                    is only approximately true now; a reader had no way to tell
+                    that from the app, and the field was already there. */}
                 <p className="text-[11px] text-space-400 mt-1">
                   <span className="text-amber-glow">
                     {cloud.stillInOrbit.toLocaleString()} still in orbit
                   </span>{' '}
                   of {cloud.peakCatalogued.toLocaleString()} ever catalogued —{' '}
-                  {(cloud.peakCatalogued - cloud.stillInOrbit).toLocaleString()} have reentered.
+                  {(cloud.peakCatalogued - cloud.stillInOrbit).toLocaleString()} have reentered, as
+                  counted on{' '}
+                  {new Date(cloud.countsAsOf).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                  .
                   {openCloud?.cloud.id === cloud.id && (
                     <> {openCloud.count.toLocaleString()} of them have current element sets.</>
                   )}{' '}

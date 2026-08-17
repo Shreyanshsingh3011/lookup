@@ -411,3 +411,31 @@ test("every cloud records when its counts were taken", () => {
     assert.match(cloud.countsAsOf, /^\d{4}-\d{2}-\d{2}$/, `${cloud.label}: countsAsOf`);
   }
 });
+
+/**
+ * The counts are a snapshot, and the snapshot date has to survive to the client.
+ *
+ * `countsAsOf` existed, was validated here for format, and was rendered nowhere:
+ * the debris screen stated "2,317 still in orbit" in bare present tense while the
+ * panel directly above it correctly reported that the catalogue could not be
+ * reached. Drag removes fragments continuously, so that number was true on a date
+ * rather than now. The UI shows the date now, which means the field has to keep
+ * crossing the wire — trimming it from the payload would silently return the
+ * panel to stating a stale figure as current fact.
+ */
+test("every cloud carries a counts-as-of date that is usable and not in the future", () => {
+  for (const cloud of DEBRIS_CLOUDS) {
+    const asOf = Date.parse(cloud.countsAsOf);
+    assert.ok(Number.isFinite(asOf), `${cloud.label}: countsAsOf ${cloud.countsAsOf} does not parse`);
+    assert.ok(
+      asOf > Date.parse(cloud.eventDate),
+      `${cloud.label}: counted ${cloud.countsAsOf}, before the event on ${cloud.eventDate}`
+    );
+    // A date in the future would mean the snapshot was mislabelled, and the UI
+    // would render "as counted on" a day that has not happened.
+    assert.ok(
+      asOf <= Date.now() + 86_400_000,
+      `${cloud.label}: countsAsOf ${cloud.countsAsOf} is in the future`
+    );
+  }
+});

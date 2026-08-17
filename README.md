@@ -487,6 +487,25 @@ grows from the 11,538 km it starts at. Two objects in low orbit are not obliged 
 meet within any given 24 hours, which is worth stating because assuming otherwise
 is what made that empty result look like a bug at first.
 
+## A snapshot said in the present tense
+
+The breakup-event panel reports three counts per cloud — ever catalogued, still in
+orbit, and how many have current element sets — and the first two are a
+Space-Track SATCAT snapshot the server carries with a `countsAsOf` date. The field
+was populated, was type-checked on both sides, was validated by a test, and was
+rendered nowhere. So the screen said "2,317 still in orbit of 3,531 ever
+catalogued" in bare present tense.
+
+Found by reading the live app rather than the code, and what made it obvious was
+the panel immediately above: that one correctly said "the catalogue could not be
+reached for this one, so it is unknown whether it is still up there." Two panels,
+same screen, same unreachable catalogue, and one of them was quoting precise
+figures as current fact. Drag removes fragments continuously — that is the whole
+point the panel is making — so the count was true on a date and is only
+approximately true now. The date is shown now, and a test pins it as
+non-future and after the event, because the fix depends on the field continuing
+to cross the wire.
+
 ## Time scrubber
 
 `useTimeControl` decouples display time from wall-clock time. In live mode an anchor follows the real clock each second; scrubbing or playing freezes the anchor and moves an offset over a 24-hour range. Playback advances at 1×/60×/300×/1800×, throttled to 25 Hz so propagation isn't recomputed 60 times a second.
