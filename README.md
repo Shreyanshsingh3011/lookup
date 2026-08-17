@@ -506,6 +506,49 @@ approximately true now. The date is shown now, and a test pins it as
 non-future and after the event, because the fix depends on the field continuing
 to cross the wire.
 
+## Animating the catalogue without propagating it
+
+The bulk debris field was propagation-bound, and the app said so in its own UI:
+the whole catalogue is "more than half an animation frame of propagation before
+anything is drawn." Every tick re-ran SGP4 for every object.
+
+SGP4 returns a velocity with every position, which is the part worth exploiting:
+two calls bracketing a short window give both endpoints *and* both derivatives —
+exactly the input a cubic Hermite needs — so every tick inside the window becomes
+arithmetic instead of a propagation. Measured over 1,200 real Fengyun-1C fragments
+at the field's 250 ms tick:
+
+| Window | Worst error | Mean error | SGP4 calls per object |
+| --- | --- | --- | --- |
+| 2 s | 2.92 m | 0.07 m | 2 instead of 9 |
+| 4 s | 5.72 m | 0.10 m | 2 instead of 17 |
+| **8 s** (shipped) | **11.44 m** | **0.09 m** | **2 instead of 33** |
+| 16 s | 22.63 m | 0.11 m | 2 instead of 65 |
+| 32 s | 45.28 m | 0.18 m | 2 instead of 129 |
+
+Eight seconds of ticks went from 31 ms to 3 ms — 9.2× — the remainder being the
+Hermite arithmetic rather than the propagator. In a browser, 12,500 objects render
+at 10.6 fps under a software rasteriser.
+
+Eleven metres needs context to be judged rather than just quoted. At a typical
+800 km slant range it subtends 0.003°, roughly a twentieth of a pixel on this
+dome, and the TLE that produced it carries kilometres of along-track error in its
+own right. The interpolation error sits about three orders of magnitude below the
+error already present in the input, which is the only reason this is a fair trade
+and not a shortcut.
+
+Two details are load-bearing. Windows are aligned to a grid rather than to first
+use, so scrubbing backwards and forwards across an instant cannot shift the field.
+And the grid phase is offset **per object**, because on a shared boundary every
+object would re-bracket on the same tick — turning a steady cost into a periodic
+stall of exactly the size this was meant to remove. A test asserts the steady-state
+spread, and that test failed on first writing while the code was correct: it
+measured from cold, where the first tick necessarily brackets everything.
+
+None of this is novel — Hermite interpolation of state vectors is standardised
+prior art (SPICE SPK types 9/13/18/19, CCSDS OEM `INTERPOLATION_METHOD`). See
+[docs/IP-ASSESSMENT.md](docs/IP-ASSESSMENT.md).
+
 ## Time scrubber
 
 `useTimeControl` decouples display time from wall-clock time. In live mode an anchor follows the real clock each second; scrubbing or playing freezes the anchor and moves an offset over a 24-hour range. Playback advances at 1×/60×/300×/1800×, throttled to 25 Hz so propagation isn't recomputed 60 times a second.
