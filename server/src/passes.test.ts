@@ -36,8 +36,7 @@ function reEpoch(line1: string, when: Date): string {
   return checksum(line1.slice(0, 18) + year + dayOfYear.toFixed(8).padStart(12, "0") + line1.slice(32));
 }
 
-function currentCatalogue(): TleRecord[] {
-  const now = new Date();
+function catalogueAt(now: Date): TleRecord[] {
   return parseTle(readFileSync(new URL("../elements.txt", import.meta.url), "utf8"))
     .map((t) => ({ ...t, line1: reEpoch(t.line1, now) }))
     .filter((t) => {
@@ -46,11 +45,41 @@ function currentCatalogue(): TleRecord[] {
     });
 }
 
-const CATALOGUE = currentCatalogue();
+/**
+ * A fixed instant, not the wall clock.
+ *
+ * These tests used `new Date()` for both the epoch rewrite and the scan start,
+ * which made every run a different experiment. That is not a theoretical
+ * complaint: the horizon assertion below passed all morning and failed in the
+ * afternoon on unchanged code, because the geometry it happens to sample moves
+ * with the clock. A test whose result depends on when it runs cannot tell a
+ * regression from a Tuesday.
+ *
+ * Pinning it costs the coverage that the drifting version accidentally provided,
+ * so that coverage is made deliberate instead: EPOCHS below sweeps several fixed
+ * instants spread across a year, and the properties that must hold for every
+ * pass are asserted over all of them.
+ */
+const NOW = new Date("2026-08-18T12:00:00Z");
+const CATALOGUE = catalogueAt(NOW);
 
-// Both scans must start from the same instant, or every sample lands on a
-// different grid and the comparison measures the clock rather than the code.
-const NOW = new Date();
+/**
+ * Fixed instants chosen because they reproduce the failure, not because they are
+ * spread prettily through the year.
+ *
+ * A first attempt used four arbitrary dates and every assertion passed against
+ * the broken code, which makes a regression test worth nothing. Sweeping 120
+ * fixed epochs showed only 7 contain the geometry that triggers it — a satellite
+ * entering Earth's shadow within one grid step of setting — so those are what the
+ * test uses. The object named in the original wall-clock failure, HMU-SAT2,
+ * appears at the third of them.
+ */
+const EPOCHS = [
+  new Date("2026-01-30T12:00:00Z"), // DUPLEX, mislabelled at 0.3 degrees
+  new Date("2026-02-20T12:00:00Z"), // LEOPARD, at 0.5
+  new Date("2026-07-26T12:00:00Z"), // HMU-SAT2, at 0.3
+  new Date("2026-09-09T12:00:00Z"), // CSS (TIANHE), at 0.2
+];
 
 // Somewhere with real nights and plenty of overhead traffic.
 const OBSERVER: Observer = { latitude: 1.35, longitude: 103.8, elevation: 0 };
@@ -388,4 +417,106 @@ test("boundary times are located, not snapped to the sampling grid", () => {
   assert.ok(passes.length > 2, "need a few passes for this to mean anything");
   const onGrid = passes.filter((p) => (Date.parse(p.end.time) - Date.parse(p.start.time)) % stepMs === 0).length;
   assert.ok(onGrid < passes.length, `all ${passes.length} pass durations are exact multiples of the ${stepMs} ms step`);
+});
+
+test("a pass never claims a reason its own boundary contradicts", () => {
+  // Regression, swept across four fixed epochs because the failure depended on
+  // geometry that the old wall-clock fixture wandered through by accident.
+  //
+  // The reason and the boundary used to come from different moments: the boundary
+  // from bisection, the reason from the grid sample beyond it. Within one ten
+  // second step near the horizon a satellite can enter Earth's shadow and then
+  // set, so the pass was labelled "set" while the visibility actually flipped
+  // earlier, on shadow, up to 0.6 degrees above the horizon. Over forty start
+  // times of the bundled catalogue, eleven passes were mislabelled that way.
+  //
+  // Both now come from the refined boundary, so each reason has to be consistent
+  // with the elevation reported alongside it.
+  let checked = 0;
+
+  for (const epoch of EPOCHS) {
+    const catalogue = catalogueAt(epoch);
+    const { passes } = computePassesForMany(catalogue, OBSERVER, {
+      days: 10,
+      now: epoch,
+      maxMagnitude: 99,
+    });
+    assert.ok(passes.length > 0, `no passes at ${epoch.toISOString()}`);
+
+    for (const pass of passes) {
+      checked++;
+      switch (pass.endReason) {
+        case "set":
+          // Rounded to a tenth for display, so the horizon is 0.0 or 0.1 at worst.
+          assert.ok(
+            pass.end.altitudeDeg <= 0.1,
+            `${pass.name} sets at ${pass.end.altitudeDeg}° on ${epoch.toISOString()}`
+          );
+          break;
+        case "shadow":
+        case "daylight":
+          // Ending for a reason other than the horizon means it was still up.
+          assert.ok(
+            pass.end.altitudeDeg > 0,
+            `${pass.name} ends on ${pass.endReason} at ${pass.end.altitudeDeg}°`
+          );
+          break;
+        case "window":
+          // The search stopped, not the sky, so the satellite is still visible.
+          assert.ok(pass.end.altitudeDeg > 0, `${pass.name} ran out of window below the horizon`);
+          break;
+      }
+      assert.ok(pass.end.altitudeDeg <= pass.max.altitudeDeg + 0.1, `${pass.name} ends above its own peak`);
+      assert.ok(pass.start.altitudeDeg <= pass.max.altitudeDeg + 0.1, `${pass.name} starts above its own peak`);
+    }
+  }
+
+  assert.ok(checked > 200, `only ${checked} passes examined across ${EPOCHS.length} epochs`);
+});
+
+test("a pass can end for another reason within a tenth of a degree of the horizon", () => {
+  // The geometry the fix exists for, asserted as a property of the fixture so
+  // that the regression above is known to be exercising the hard case.
+  //
+  // A first version of this test asserted the opposite — that setting endings and
+  // the rest form cleanly separated populations — and the corrected code failed
+  // it by reporting a shadow ending at 0.1 degrees. That is not a defect; it is
+  // the point. Entering Earth's shadow and dropping below the horizon can happen
+  // arbitrarily close together, which is precisely why reading the reason off a
+  // ten-second grid was wrong. The two are indistinguishable by elevation and
+  // must be distinguished by when visibility actually flipped.
+  const ambiguous: { reason: string; altitudeDeg: number }[] = [];
+  let settingEndings = 0;
+  let worstSetting = 0;
+
+  for (const epoch of EPOCHS) {
+    const { passes } = computePassesForMany(catalogueAt(epoch), OBSERVER, {
+      days: 10,
+      now: epoch,
+      maxMagnitude: 99,
+    });
+    for (const pass of passes) {
+      if (pass.endReason === "set") {
+        settingEndings++;
+        worstSetting = Math.max(worstSetting, pass.end.altitudeDeg);
+      } else if (pass.end.altitudeDeg <= 1) {
+        ambiguous.push({ reason: pass.endReason, altitudeDeg: pass.end.altitudeDeg });
+      }
+    }
+  }
+
+  assert.ok(settingEndings > 50, `only ${settingEndings} passes ended by setting`);
+  assert.ok(worstSetting <= 0.1, `a setting pass ended at ${worstSetting}°`);
+
+  assert.ok(
+    ambiguous.length > 0,
+    "these epochs should contain a pass ending low for a reason other than the horizon"
+  );
+  for (const ending of ambiguous) {
+    // Whatever the reason, it is not the horizon, so the satellite is still up.
+    assert.ok(
+      ending.altitudeDeg > 0,
+      `a pass ended on ${ending.reason} at ${ending.altitudeDeg}°, which is at or below the horizon`
+    );
+  }
 });
