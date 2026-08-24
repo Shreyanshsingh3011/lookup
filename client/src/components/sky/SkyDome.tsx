@@ -22,6 +22,7 @@ import { toExplainSubject } from '../../lib/identify';
 import { useAircraft } from '../../hooks/useAircraft';
 import { useCameraStream } from '../../hooks/useCameraStream';
 import { useDeviceOrientation } from '../../hooks/useDeviceOrientation';
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 import { useSkyObjects } from '../../hooks/useSkyObjects';
 import { usePlanetPositions } from '../../hooks/usePlanetPositions';
 import type { LiveAircraft } from '../../hooks/useAircraft';
@@ -266,6 +267,11 @@ function SkyScene({
   fieldRcs,
   onFieldChange,
 }: SceneProps) {
+  // Damping is the part of this scene that reads as motion sickness rather than
+  // as polish: the sky keeps turning after the hand has stopped. Off when the
+  // viewer has asked the system for less motion, so a drag ends where it is
+  // released. The CSS half of the preference cannot reach inside the canvas.
+  const reducedMotion = usePrefersReducedMotion();
   const allSatellites = useSkyObjects(tles, observer, displayTime, passes, 'active', satcat);
   const satellites = layers.satellites ? allSatellites : EMPTY_SATELLITES;
 
@@ -554,7 +560,7 @@ function SkyScene({
         target={[0, 0, 0]}
         enablePan={false}
         enableZoom={false}
-        enableDamping
+        enableDamping={!reducedMotion}
         dampingFactor={0.08}
         rotateSpeed={0.4}
         minDistance={CAMERA_DISTANCE}

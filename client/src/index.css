@@ -66,6 +66,43 @@ body {
   text-shadow: 0 0 16px rgba(45, 212, 191, 0.5);
 }
 
+/* --- Keyboard focus ---------------------------------------------------------
+   Eighteen controls across six components carry `focus:outline-none` paired
+   with a border-colour change, which leaves a keyboard user with a focus
+   indicator made of colour alone — and buttons, which have no border to
+   recolour, with no indicator at all. Rather than edit each site, the ring is
+   restored here: this rule is unlayered, and unlayered CSS beats Tailwind's
+   layered utilities regardless of source order, so it wins over the
+   `outline-style: none` those classes emit.
+
+   `:focus-visible` rather than `:focus`, so a mouse click does not leave a ring
+   behind — which is why the utility was reached for in the first place. */
+:focus-visible {
+  outline: 2px solid var(--color-glow-400);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* --- Reduced motion ---------------------------------------------------------
+   This app moves a great deal: a dome that damps as it turns, satellites
+   crossing it, meteors, and panels that slide. For a viewer with a vestibular
+   disorder that is not a flourish but a reason to close the tab.
+
+   Transitions are reduced to near-zero rather than removed, because several
+   components rely on a transition ending to settle state, and `none` cancels
+   the event that would have fired. The 3D scene cannot be reached from CSS and
+   is handled separately — see `usePrefersReducedMotion`. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* --- Polar sky chart / ground track map -------------------------------------
    Styled here rather than inline so the print rules below can restate the
    whole palette in one place. Shared chart-* classes are used by both
