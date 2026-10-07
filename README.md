@@ -2,6 +2,8 @@
 
 A Heavens-Above-style satellite tracker: visible pass predictions, an interactive 3D sky dome, and (coming soon) a planetarium star chart.
 
+**Project lead:** [Shreyansh Singh](https://shreyanshsingh.in/) · [Defence & navigation profile](https://shreyanshsingh.in/defence-technology/)
+
 ## Live
 
 | | |
