@@ -55,7 +55,6 @@ function subtract(a: Vec3M, b: Vec3M): Vec3M {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
 }
 function norm(v: Vec3M): number { return Math.hypot(v.x, v.y, v.z); }
-function clamp(value: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, value)); }
 type Matrix3 = number[][];
 
 /** Pivoted elimination: fail closed for singular or badly conditioned geometry. */
