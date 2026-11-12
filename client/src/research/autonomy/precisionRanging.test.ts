@@ -36,10 +36,14 @@ test('lower-quality sensors visibly lose precision', () => {
   assert.ok(degraded.rms3dMm > 10 * ideal.rms3dMm);
 });
 
-test('gross outlier is detected and does not silently improve the score', () => {
-  const metrics = runPrecisionBenchmark('outlier', 128);
-  assert.ok(metrics.rejectedMeasurements > 0 || metrics.accepted < metrics.trials);
-  assert.ok(metrics.rms3dMm === null || metrics.rms3dMm >= 0);
+test('redundant 3-D geometry isolates a gross outlier without a false fix', () => {
+  const metrics = runPrecisionBenchmark('outlier', 256);
+  assert.equal(metrics.accepted, metrics.trials);
+  assert.equal(metrics.rejectedMeasurements, metrics.trials);
+  assert.ok(metrics.rms3dMm !== null && metrics.rms3dMm < 1,
+    'one 12 mm bad reading must not become an apparently accurate position fix');
+  assert.ok(metrics.p95ErrorMm !== null && metrics.p95ErrorMm < 1);
+  assert.ok(metrics.envelopeCoveragePercent !== null && metrics.envelopeCoveragePercent >= 90);
 });
 
 test('unobservable geometry is held rather than returning false certainty', () => {
