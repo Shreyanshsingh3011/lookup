@@ -8,7 +8,7 @@ A Heavens-Above-style satellite tracker: visible pass predictions, an interactiv
 
 Sthapana Technologies is exploring an **integrity-aware optical navigation, computer-vision perception, and spacecraft safety platform**. [Read the non-confidential vision](AUTONOMOUS_SPACECRAFT_VISION.md) and [simulation-first engineering roadmap](AUTONOMY_ENGINEERING_ROADMAP.md), benchmarked against the public objectives of [NASA AstroNav](https://www.nasa.gov/mission/astronav/).
 
-**Important:** These are *future research objectives*, not currently delivered Lookup features. The app's celestial overlays, satellite tracking and geometric close-approach screens are educational/analytical tools, **not** flight software, live camera collision detection, or an autonomous spacecraft controller. The underlying patent-sensitive work is not published here.
+**Research milestone WP1 (simulation only):** Lookup now includes an [Optical navigation & integrity lab](https://lookup-client.vercel.app/?screen=research) with deterministic synthetic bearings to known 2-D landmarks, a geometric least-squares estimator, an illustrative uncertainty radius, and integrity HOLD scenarios for occlusion, stale readings, inconsistent detections and poor geometry. Seven research regression tests are included. **This is not real camera vision, flight-calibrated celestial navigation, collision warning, or an autonomous spacecraft controller.** The existing celestial overlays, satellite tracking and geometric close-approach screens remain educational/analytical tools. Patent-sensitive implementations are not published here.
 
 ## Live
 
