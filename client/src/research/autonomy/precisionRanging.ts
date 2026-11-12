@@ -1,7 +1,7 @@
 /**
  * Non-operational short-range cooperative ranging benchmark.
  *
- * Deliberate assumptions: six known stationary range transponders in a local
+ * Deliberate assumptions: ten known stationary range transponders in a local
  * frame, synchronous calibrated range measurements, a coarse initial region,
  * no clock ambiguity or relative attitude errors, and no orbital dynamics.
  * Precision achieved under these synthetic assumptions IS NOT flight accuracy
@@ -49,6 +49,13 @@ export const PRECISION_ANCHORS: RangingAnchor[] = [
   { id: 'D', positionM: { x: 0, y: 5, z: 0 } },
   { id: 'E', positionM: { x: 0, y: 0, z: -5 } },
   { id: 'F', positionM: { x: 0, y: 0, z: 5 } },
+  // Diagonal viewpoints provide residual redundancy after any one receiver
+  // is rejected. Axis-only geometry can falsely explain a bad +X reading
+  // as a genuine -X position change when its opposite range is removed.
+  { id: 'G', positionM: { x: 4, y: 4, z: 4 } },
+  { id: 'H', positionM: { x: -4, y: 4, z: -4 } },
+  { id: 'I', positionM: { x: 4, y: -4, z: -4 } },
+  { id: 'J', positionM: { x: -4, y: -4, z: 4 } },
 ];
 
 function subtract(a: Vec3M, b: Vec3M): Vec3M {
