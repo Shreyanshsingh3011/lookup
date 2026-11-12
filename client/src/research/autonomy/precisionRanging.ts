@@ -158,12 +158,32 @@ export function solveCooperativeRanges(
   }
   let result = fit(current, validAnchors, startingGuess);
   if (!result) return hold('Unobservable or ill-conditioned 3-D ranging geometry.');
-  const worst = Math.max(...result.residuals.map(v => Math.abs(v)));
-  if (worst > 5 && current.length >= 6) {
-    const index = result.residuals.findIndex(v => Math.abs(v) === worst);
-    current = current.filter((_, i) => i !== index);
-    result = fit(current, validAnchors, result.estimate);
-    if (!result) return hold('Unable to recover a consistent 3-D position after rejecting one outlier.');
+  const initialWorst = Math.max(...result.residuals.map(v => Math.abs(v)));
+  // Never trust the largest post-fit residual alone: ordinary least squares can
+  // shift a gross error onto innocent measurements. Test every possible single
+  // exclusion, and require a well-fitting subset PLUS a strongly inconsistent
+  // excluded measurement. Otherwise fail closed rather than publish a fix.
+  if ((initialWorst > 4 || result.normalizedResidualRms > 3) && current.length >= 6) {
+    let best: { index: number; subset: ReturnType<typeof fit>; score: number } | null = null;
+    for (let index = 0; index < current.length; index++) {
+      const candidateReadings = current.filter((_, i) => i !== index);
+      const subset = fit(candidateReadings, validAnchors, result.estimate);
+      if (!subset) continue;
+      const keptWorst = Math.max(...subset.residuals.map(v => Math.abs(v)));
+      const excluded = current[index];
+      const anchor = validAnchors.get(excluded.anchorId)!;
+      const excludedError = Math.abs(excluded.distanceM -
+        norm(subtract(subset.estimate, anchor))) / excluded.sigmaM;
+      if (keptWorst >= 4 || subset.normalizedResidualRms >= 3 || excludedError <= 6) continue;
+      const score = subset.normalizedResidualRms;
+      if (!best || score < best.score) best = { index, subset, score };
+    }
+    if (best) {
+      current = current.filter((_, i) => i !== best!.index);
+      result = best.subset!;
+    } else {
+      return hold('Gross mismatch cannot be safely attributed to one range; navigation HOLD.');
+    }
   }
   const maxResidual = Math.max(...result.residuals.map(v => Math.abs(v)));
   if (maxResidual > 4 || result.normalizedResidualRms > 3) {
