@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { PredictiveTrajectory } from './PredictiveTrajectory';
 import {
   estimateOpticalPosition,
   makeScenario,
@@ -140,12 +141,16 @@ export function AutonomyResearch() {
         </section>
       </div>
 
+      <PredictiveTrajectory />
+
       <section className="glass-panel rounded-xl p-4">
         <h3 className="font-medium text-space-100 text-sm">What comes next</h3>
         <p className="text-sm text-space-200 mt-2">
-          This is a synthetic bearing-line estimator, not computer vision or NASA AstroNav.
-          Actual image processing, three-dimensional navigation, IMU fusion, calibrated error
-          bounds, collision-risk modelling and autonomous guidance are future research milestones.
+          This research lab now includes the original 2D synthetic bearing-line estimator
+          and a separate simplified 3D position-and-velocity prediction simulator.
+          Neither uses live cameras, spacecraft sensors or certified orbital dynamics.
+          True multi-angle image processing, IMU fusion, calibrated uncertainty,
+          collision-risk analysis and autonomous guidance remain future milestones.
         </p>
         <p className="text-xs text-space-300 mt-3">
           <a className="text-glow-400 underline" href="https://github.com/Shreyanshsingh3011/lookup/blob/claude/satellite-tracking-3d-sky-ues006/AUTONOMY_ENGINEERING_ROADMAP.md" target="_blank" rel="noreferrer">Engineering roadmap</a>
