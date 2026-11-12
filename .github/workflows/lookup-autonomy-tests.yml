@@ -1,0 +1,46 @@
+name: Lookup autonomy research tests
+
+on:
+  push:
+    branches:
+      - claude/satellite-tracking-3d-sky-ues006
+    paths:
+      - 'client/src/research/autonomy/**'
+      - 'client/src/components/PrecisionBenchmark.tsx'
+      - 'client/src/components/AutonomyResearch.tsx'
+      - 'client/package.json'
+      - 'package-lock.json'
+      - '.github/workflows/lookup-autonomy-tests.yml'
+  pull_request:
+    paths:
+      - 'client/src/research/autonomy/**'
+      - 'client/src/components/PrecisionBenchmark.tsx'
+      - 'client/src/components/AutonomyResearch.tsx'
+      - 'client/package.json'
+      - 'package-lock.json'
+      - '.github/workflows/lookup-autonomy-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  research-validation:
+    name: Repeatable synthetic navigation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run research tests
+        run: node --import tsx --test client/src/research/autonomy/*.test.ts
+      - name: Type-check and build client
+        run: npm run build -w client
