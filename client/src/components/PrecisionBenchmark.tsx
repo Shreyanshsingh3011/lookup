@@ -32,7 +32,7 @@ export function PrecisionBenchmark() {
           <p className="uppercase text-xs tracking-wide text-glow-400">WP1.6 · precision research benchmark</p>
           <h3 className="text-lg font-semibold mt-1 text-space-100">Can we beat a 1 mm simulation target?</h3>
           <p className="text-sm mt-1 text-space-200">
-            Deterministic 3-D trilateration from six simulated cooperative ranging transponders.
+            Deterministic 3-D trilateration from ten simulated cooperative ranging transponders.
             Each scenario repeats 256 seeded trials with separately hidden ground truth.
           </p>
         </div>
