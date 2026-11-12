@@ -34,6 +34,14 @@
 
 **Acceptance:** automated deterministic regression tests, failure cases, documented error distributions and known observability limits.
 
+### WP1.5 — Synthetic 3-D predictive tracking (implemented in public research UI)
+
+**Current demonstrator:** `client/src/research/autonomy/predictiveNavigation.ts` and `client/src/components/PredictiveTrajectory.tsx`. A hypothetical initial calibrated XYZ fix and velocity prior are propagated with a constant-velocity motion model and independent 2x2 position/velocity covariance blocks along each axis. The UI shows present XYZ state, future coordinates, a model-dependent uncertainty radius, and a 360° rotatable **visualisation** (not a physical multi-camera sensor). A second synthetic position measurement demonstrates the benefit of an update; an unannounced acceleration demonstrates model mismatch. Eight source regression tests accompany the module.
+
+**Scope/limitations:** No raw-image processing, no measured 360° sensor coverage, no inertial-sensor fusion, no camera-derived absolute range from one monocular image, no orbital propagator, no independently calibrated probability coverage, no collision-warning service and no spacecraft control. The forecast-envelope radius assumes independent Gaussian errors and process-noise assumptions; actual coverage is not proven.
+
+**Follow-on acceptance gate:** Replace synthetic measurements with documented and reproducible simulated images/ranging/IMU inputs, recover an observable 3D position and velocity from independent observations, establish realistic 6-DoF sensor error and reference-frame models, then benchmark calibrated uncertainty against simulated truth. Do not claim flight-level precision or 100% prediction accuracy.
+
 ### WP2 — Perception and multi-sensor fusion
 - Add frame-by-frame association, object/landmark tracking and simulated IMU measurements.
 - Fuse measurement streams with explicit timestamps, source provenance and uncertainty.
