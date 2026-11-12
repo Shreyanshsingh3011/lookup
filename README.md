@@ -4,6 +4,12 @@ A Heavens-Above-style satellite tracker: visible pass predictions, an interactiv
 
 **Project lead:** [Shreyansh Singh](https://shreyanshsingh.in/) · [Defence & navigation profile](https://shreyanshsingh.in/defence-technology/)
 
+## Autonomous spacecraft navigation — long-term R&D vision
+
+Sthapana Technologies is exploring an **integrity-aware optical navigation, computer-vision perception, and spacecraft safety platform**. [Read the non-confidential vision](AUTONOMOUS_SPACECRAFT_VISION.md) and [simulation-first engineering roadmap](AUTONOMY_ENGINEERING_ROADMAP.md), benchmarked against the public objectives of [NASA AstroNav](https://www.nasa.gov/mission/astronav/).
+
+**Important:** These are *future research objectives*, not currently delivered Lookup features. The app's celestial overlays, satellite tracking and geometric close-approach screens are educational/analytical tools, **not** flight software, live camera collision detection, or an autonomous spacecraft controller. The underlying patent-sensitive work is not published here.
+
 ## Live
 
 | | |
