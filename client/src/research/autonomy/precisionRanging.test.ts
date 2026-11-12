@@ -76,3 +76,15 @@ test('input bounds and non-finite initial estimate are rejected', () => {
   const invalid = solveCooperativeRanges(a.anchors, a.readings, {x:NaN,y:0,z:0});
   assert.equal(invalid.status, 'HOLD');
 });
+
+test('sub-mm ideal and one-outlier results generalise across multiple independent deterministic seeds', () => {
+  for (const seed of [7, 41, 2027, 0xc0ffee]) {
+    for (const mode of ['ideal', 'outlier'] as const) {
+      const result = runPrecisionBenchmark(mode, 256, seed);
+      assert.equal(result.accepted, 256, mode + ' seed ' + seed + ' lost valid solutions');
+      assert.ok(result.rms3dMm !== null && result.rms3dMm < 1,
+        mode + ' seed ' + seed + ' missed the synthetic 1 mm RMS threshold');
+      if (mode === 'outlier') assert.equal(result.rejectedMeasurements, 256);
+    }
+  }
+});
