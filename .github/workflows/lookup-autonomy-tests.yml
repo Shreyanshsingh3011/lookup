@@ -9,6 +9,7 @@ on:
       - 'client/src/components/PrecisionBenchmark.tsx'
       - 'client/src/components/AutonomyResearch.tsx'
       - 'client/package.json'
+      - 'client/scripts/report-precision.ts'
       - 'package-lock.json'
       - '.github/workflows/lookup-autonomy-tests.yml'
   pull_request:
@@ -42,5 +43,7 @@ jobs:
         run: npm ci
       - name: Run research tests
         run: node --import tsx --test client/src/research/autonomy/*.test.ts
+      - name: Print reproducible precision report
+        run: node --import tsx client/scripts/report-precision.ts
       - name: Type-check and build client
         run: npm run build -w client
