@@ -16,11 +16,12 @@ import type { Observer } from '../types';
  */
 
 /** Which top-level screen the link opens. */
-export type ScreenId = 'sky' | 'debris';
+export type ScreenId = 'sky' | 'debris' | 'research';
 
 export const SCREENS: Array<{ id: ScreenId; label: string }> = [
   { id: 'sky', label: 'Sky' },
   { id: 'debris', label: 'Debris' },
+  { id: 'research', label: 'Research lab' },
 ];
 
 export interface ShareState {
