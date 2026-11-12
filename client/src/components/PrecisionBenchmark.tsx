@@ -99,6 +99,15 @@ export function PrecisionBenchmark() {
         </div>
       </div>
 
+      <p className="text-xs text-space-300">
+        Rejected individual readings: <strong className="text-space-100">{active.rejectedMeasurements}</strong>
+        {' · '}Rejected complete fixes: <strong className="text-space-100">{active.trials - active.accepted}</strong>
+        {' · '}Stretch target: <strong className="text-space-100">
+          {active.rms3dMm !== null && active.rms3dMm < PRECISION_STRETCH_RMS_MM && active.accepted === active.trials
+            ? 'Passed under this synthetic setup' : 'Not demonstrated'}
+        </strong>
+      </p>
+
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs min-w-[610px]">
           <thead className="text-space-300 border-b border-space-700">
