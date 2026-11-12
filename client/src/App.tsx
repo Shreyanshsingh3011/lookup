@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCustomPasses, fetchPasses, fetchTles } from './api/client';
 import { AddSatellite } from './components/AddSatellite';
 import { ConjunctionScan } from './components/ConjunctionScan';
+import { AutonomyResearch } from './components/AutonomyResearch';
 import { ConnectionNotice } from './components/ConnectionNotice';
 import { CatalogueSearch } from './components/CatalogueSearch';
 import { DebrisScreen } from './components/DebrisScreen';
@@ -423,6 +424,8 @@ function App() {
         <SourceBanner source={dataSource} epoch={dataEpoch} />
         <ConnectionNotice {...connection} />
 
+        {screen === 'research' && <AutonomyResearch />}
+
         {screen === 'debris' && (
           <DebrisScreen
             observer={observer}
@@ -573,6 +576,8 @@ function App() {
           </>
         )}
 
+        {screen !== 'research' && (
+          <>
         <div ref={logbookRef} className="scroll-mt-24">
           <Logbook
             observer={observer}
@@ -602,6 +607,8 @@ function App() {
           </div>
           <OrbitAdvisor observer={observer} />
         </section>
+          </>
+        )}
       </main>
     </div>
   );
