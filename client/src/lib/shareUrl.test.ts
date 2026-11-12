@@ -132,6 +132,10 @@ test('a screen travels in the link, and an unknown one does not break it', () =>
 
   // A link from a later version naming a screen this build lacks must still
   // show somebody a sky rather than a blank page.
+  // A research scenario remains reachable as a shareable, non-default screen.
+  const research: ShareState = { ...EMPTY_SHARE_STATE, screen: 'research' };
+  assert.equal(decodeShareState(encodeShareState(research)).screen, 'research');
+
   assert.equal(decodeShareState('screen=telescopes').screen, null);
   assert.equal(decodeShareState('screen=').screen, null);
   assert.equal(decodeShareState('screen=<script>').screen, null);
