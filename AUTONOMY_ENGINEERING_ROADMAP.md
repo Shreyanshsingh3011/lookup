@@ -42,6 +42,18 @@
 
 **Follow-on acceptance gate:** Replace synthetic measurements with documented and reproducible simulated images/ranging/IMU inputs, recover an observable 3D position and velocity from independent observations, establish realistic 6-DoF sensor error and reference-frame models, then benchmark calibrated uncertainty against simulated truth. Do not claim flight-level precision or 100% prediction accuracy.
 
+### WP1.6 — Precision relative-ranging research benchmark (implemented, simulation-only)
+
+**Objective:** Develop a falsifiable path to `<1 mm` three-dimensional relative-position RMS in a defined short-baseline **cooperative** scenario, with a stretch goal of `<0.1 mm` only if realistic sensor and calibration evidence justifies it. The number is a research target, not achieved physical spacecraft precision.
+
+**Code:** `client/src/research/autonomy/precisionRanging.ts` (a 3-D weighted nonlinear least-squares range solver with observability and freshness checks, residual-based single-outlier rejection, approximate covariance) and `client/src/components/PrecisionBenchmark.tsx` (seeded 256-trial summary).
+
+**Benchmark conditions:** Six stationary, known transponders spanning approximately ten metres in a shared local frame; synthetic 0.35 mm independent Gaussian ranging noise for the ideal case, a coarse known starting region, synchronous observations and perfect calibration. Other cases use 20 mm noise, one gross outlier, a 3 mm common range bias, or unobservable geometry. These assumptions must not be presented as a physical commercial sensor specification.
+
+**Acceptance gate for a future credible claim:** record measured sensor noise distributions and systematic errors; use independently collected reference truth, realistic time synchronisation, motion, geometry, thermal and clock errors; report 3-D RMS, P95 and maximum error, coverage, rejected samples, data age and latency; repeat over multiple separations, environmental conditions and independent hardware campaigns. **Flight-comparable performance must be demonstrated on real data.** Millimetre-class GNSS carrier-phase relative orbit determination and StarFOX's optical angles-only autonomous navigation are distinct modalities and cannot be directly ranked against this idealised local trilateration exercise.
+
+**Useful independent research:** [Low & D'Amico, ION 2026 Galileo HAS](https://www.ion.org/publications/abstract.cfm?articleID=20605); [GRACE-FO GPS double-differenced orbit study](https://link.springer.com/article/10.1007/s40295-024-00444-9); [NASA StarFOX](https://ntrs.nasa.gov/citations/20240007230).
+
 ### WP2 — Perception and multi-sensor fusion
 - Add frame-by-frame association, object/landmark tracking and simulated IMU measurements.
 - Fuse measurement streams with explicit timestamps, source provenance and uncertainty.
