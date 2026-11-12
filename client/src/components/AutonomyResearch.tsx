@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { PredictiveTrajectory } from './PredictiveTrajectory';
+import { PrecisionBenchmark } from './PrecisionBenchmark';
 import {
   estimateOpticalPosition,
   makeScenario,
@@ -142,6 +143,8 @@ export function AutonomyResearch() {
       </div>
 
       <PredictiveTrajectory />
+
+      <PrecisionBenchmark />
 
       <section className="glass-panel rounded-xl p-4">
         <h3 className="font-medium text-space-100 text-sm">What comes next</h3>
